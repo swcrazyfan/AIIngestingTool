@@ -112,7 +112,8 @@ class TechnicalMetadata(BaseModel):
     frame_rate: Optional[float] = None
     bit_rate_kbps: Optional[int] = None
     duration_seconds: Optional[float] = None
-    quality_score: Optional[float] = None
+    exposure_warning: Optional[bool] = None
+    exposure_stops: Optional[float] = None
     overexposed_percentage: Optional[float] = None
     underexposed_percentage: Optional[float] = None
     bit_depth: Optional[int] = None
@@ -455,7 +456,7 @@ def generate_thumbnails(file_path: str, output_dir: str, count: int = 5) -> List
         logger.error("Thumbnail generation failed", path=file_path, error=str(e))
         return []
 
-def analyze_exposure(thumbnail_path: str) -> Dict[str, float]:
+def analyze_exposure(thumbnail_path: str) -> Dict[str, Any]:
     """
     Analyze exposure in an image.
     
@@ -463,7 +464,7 @@ def analyze_exposure(thumbnail_path: str) -> Dict[str, float]:
         thumbnail_path: Path to the thumbnail image
         
     Returns:
-        Dict: Exposure analysis results
+        Dict: Exposure analysis results including warning flag and exposure deviation in stops
     """
     logger.info("Analyzing exposure", path=thumbnail_path)
     try:
@@ -477,7 +478,21 @@ def analyze_exposure(thumbnail_path: str) -> Dict[str, float]:
         overexposed = sum(hist[240:])
         underexposed = sum(hist[:16])
         
+        # Calculate exposure warning flag
+        exposure_warning = overexposed > 0.05 or underexposed > 0.05
+        
+        # Estimate exposure deviation in stops
+        exposure_stops = 0.0
+        if overexposed > underexposed and overexposed > 0.05:
+            # Rough approximation of stops overexposed
+            exposure_stops = math.log2(overexposed * 20)
+        elif underexposed > 0.05:
+            # Rough approximation of stops underexposed (negative value)
+            exposure_stops = -math.log2(underexposed * 20)
+        
         result = {
+            'exposure_warning': exposure_warning,
+            'exposure_stops': exposure_stops,
             'overexposed_percentage': float(overexposed * 100),
             'underexposed_percentage': float(underexposed * 100)
         }
@@ -488,48 +503,12 @@ def analyze_exposure(thumbnail_path: str) -> Dict[str, float]:
     except Exception as e:
         logger.error("Exposure analysis failed", path=thumbnail_path, error=str(e))
         return {
+            'exposure_warning': False,
+            'exposure_stops': 0.0,
             'overexposed_percentage': 0.0,
             'underexposed_percentage': 0.0
         }
 
-def estimate_quality_score(metadata: Dict[str, Any], exposure_data: Dict[str, float]) -> float:
-    """
-    Estimate video quality score based on technical parameters.
-    
-    Args:
-        metadata: Technical metadata
-        exposure_data: Exposure analysis results
-        
-    Returns:
-        float: Quality score (0-10)
-    """
-    score = 5.0
-    
-    width = metadata.get('width', 0)
-    height = metadata.get('height', 0)
-    if width and height:
-        resolution = width * height
-        if resolution >= 1920 * 1080:
-            score += 2.0
-        elif resolution >= 1280 * 720:
-            score += 1.0
-        else:
-            score -= 1.0
-    
-    frame_rate = metadata.get('frame_rate', 0)
-    if frame_rate >= 30:
-        score += 1.0
-    elif frame_rate >= 24:
-        score += 0.5
-    
-    overexposed = exposure_data.get('overexposed_percentage', 0)
-    underexposed = exposure_data.get('underexposed_percentage', 0)
-    if overexposed > 10 or underexposed > 10:
-        score -= 1.5
-    elif overexposed > 5 or underexposed > 5:
-        score -= 0.5
-    
-    return max(0.0, min(10.0, score))
 
 def process_video_file(file_path: str, thumbnails_dir: str) -> VideoFile:
     """
@@ -563,8 +542,6 @@ def process_video_file(file_path: str, thumbnails_dir: str) -> VideoFile:
     
     aspect_ratio_str = calculate_aspect_ratio_str(metadata.get('width'), metadata.get('height'))
     
-    quality_score = estimate_quality_score(metadata, exposure_data)
-    
     technical_metadata = TechnicalMetadata(
         codec=metadata.get('codec'),
         container=metadata.get('container'),
@@ -574,7 +551,8 @@ def process_video_file(file_path: str, thumbnails_dir: str) -> VideoFile:
         frame_rate=metadata.get('frame_rate'),
         bit_rate_kbps=int(metadata.get('overall_bit_rate') / 1000) if metadata.get('overall_bit_rate') else None,
         duration_seconds=metadata.get('duration_seconds'),
-        quality_score=quality_score,
+        exposure_warning=exposure_data.get('exposure_warning'),
+        exposure_stops=exposure_data.get('exposure_stops'),
         overexposed_percentage=exposure_data.get('overexposed_percentage'),
         underexposed_percentage=exposure_data.get('underexposed_percentage'),
         bit_depth=metadata.get('bit_depth'),
