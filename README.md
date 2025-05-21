@@ -16,8 +16,6 @@ This is an alpha version of the AI-Powered Video Ingest & Catalog Tool, which au
   - ExifTool
 - Thumbnail generation at specified intervals
 - Basic exposure analysis
-- Shot type estimation
-- Quality score calculation
 - Rich terminal output with progress tracking
 - Comprehensive logging to timestamped files
 - JSON output for each processed file and summary
@@ -30,6 +28,8 @@ This is an alpha version of the AI-Powered Video Ingest & Catalog Tool, which au
 - Required Python packages (see requirements.txt)
 
 ## Installation
+
+### Method 1: Standard Installation
 
 1. Clone this repository:
    ```
@@ -48,16 +48,49 @@ This is an alpha version of the AI-Powered Video Ingest & Catalog Tool, which au
    pip install -r requirements.txt
    ```
 
+### Method 2: Install as a Package (Development Mode)
+
+1. Clone this repository:
+   ```
+   git clone <repository-url>
+   cd AIIngestingTool
+   ```
+
+2. Create and activate a virtual environment:
+   ```
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+3. Install the package in development mode:
+   ```
+   pip install -e .
+   ```
+
 4. Ensure FFmpeg and ExifTool are installed:
    - **FFmpeg**: [Download from ffmpeg.org](https://ffmpeg.org/download.html)
    - **ExifTool**: [Download from exiftool.org](https://exiftool.org/)
 
 ## Usage
 
-Run the tool with a directory containing video files:
-
+### Option 1: Run as a Script
 ```
 python video_ingestor.py /path/to/videos
+```
+
+### Option 2: Run as a Module
+```
+python -m video_ingest_tool /path/to/videos
+```
+
+### Option 3: Use the Executable Script
+```
+./run_video_ingest.sh /path/to/videos
+```
+
+### Option 4: Use the Entry Point (if installed as a package)
+```
+video-ingest /path/to/videos
 ```
 
 ### Options
@@ -69,7 +102,7 @@ python video_ingestor.py /path/to/videos
 ### Example
 
 ```
-python video_ingestor.py /path/to/videos --output-dir my_output --limit 5
+python -m video_ingest_tool /path/to/videos --output-dir my_output --limit 5
 ```
 
 ## Output

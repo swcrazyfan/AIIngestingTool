@@ -50,3 +50,8 @@ output/
 ehthumbs.db
 Thumbs.db
 /test
+/output_depthpro
+/output_depthpro_hf
+/output_huggingface
+/output_poselib
+/test_poselib_output
