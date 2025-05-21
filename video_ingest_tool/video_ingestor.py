@@ -185,6 +185,51 @@ def categorize_focal_length(focal_length: Optional[Union[str, int, float]]) -> O
         return None
 
 # Define our data models with Pydantic
+class HDRMetadata(BaseModel):
+    """HDR-related metadata extracted from video files"""
+    hdr_format: Optional[str] = None  # HDR10, Dolby Vision, HLG, etc.
+    master_display: Optional[str] = None  # Display primaries
+    max_cll: Optional[int] = None  # Maximum Content Light Level
+    max_fall: Optional[int] = None  # Maximum Frame Average Light Level
+    color_primaries: Optional[str] = None
+    transfer_characteristics: Optional[str] = None
+    matrix_coefficients: Optional[str] = None
+    color_range: Optional[str] = None
+
+class AudioTrack(BaseModel):
+    """Audio track metadata"""
+    track_id: Optional[str] = None
+    codec: Optional[str] = None
+    codec_id: Optional[str] = None
+    channels: Optional[int] = None
+    channel_layout: Optional[str] = None
+    sample_rate: Optional[int] = None
+    bit_depth: Optional[int] = None
+    bit_rate_kbps: Optional[int] = None
+    language: Optional[str] = None
+    duration_seconds: Optional[float] = None
+    
+class SubtitleTrack(BaseModel):
+    """Subtitle track metadata"""
+    track_id: Optional[str] = None
+    format: Optional[str] = None
+    language: Optional[str] = None
+    codec_id: Optional[str] = None
+    embedded: Optional[bool] = None
+
+class CodecParameters(BaseModel):
+    """Detailed codec parameters"""
+    profile: Optional[str] = None  # e.g., 'High', 'Main', 'Baseline' for H.264
+    level: Optional[str] = None  # e.g., '4.0', '5.1'
+    pixel_format: Optional[str] = None  # e.g., 'yuv420p'
+    chroma_subsampling: Optional[str] = None  # e.g., '4:2:0', '4:2:2', '4:4:4'
+    bitrate_mode: Optional[str] = None  # e.g., 'VBR', 'CBR'
+    cabac: Optional[bool] = None  # Context-adaptive binary arithmetic coding
+    ref_frames: Optional[int] = None  # Number of reference frames
+    gop_size: Optional[int] = None  # Group of pictures size
+    scan_type: Optional[str] = None  # Interlaced, Progressive
+    field_order: Optional[str] = None  # Top Field First, Bottom Field First
+
 class TechnicalMetadata(BaseModel):
     """Technical metadata extracted from video files"""
     codec: Optional[str] = None
@@ -207,19 +252,35 @@ class TechnicalMetadata(BaseModel):
     focal_length_category: Optional[str] = None  # Categorized focal length: ULTRA-WIDE, WIDE, MEDIUM, etc.
     # Deprecated field - kept for backward compatibility but will be removed in future versions
     focal_length: Optional[str] = None  # DEPRECATED
+    
+    # Extended metadata
+    hdr_metadata: Optional[HDRMetadata] = None
+    codec_parameters: Optional[CodecParameters] = None
+    
+    # GPS information
+    gps_latitude: Optional[float] = None
+    gps_longitude: Optional[float] = None
+    gps_altitude: Optional[float] = None
+    location_name: Optional[str] = None
+    
+    # Camera metadata - removed camera_serial_number
+    lens_model: Optional[str] = None
+    iso: Optional[int] = None
+    shutter_speed: Optional[str] = None
+    f_stop: Optional[float] = None
+    exposure_mode: Optional[str] = None
+    white_balance: Optional[str] = None
 
 class VideoFile(BaseModel):
-    """Video file model with basic information and technical metadata"""
+    """Video file model with comprehensive metadata"""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    file_path: str
-    file_name: str
-    file_checksum: str
-    file_size_bytes: int
-    created_at: Optional[datetime.datetime] = None
-    processed_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
-    duration_seconds: Optional[float] = None
-    technical_metadata: Optional[TechnicalMetadata] = None
-    thumbnail_paths: List[str] = []
+    file_info: Dict[str, Any]
+    video: Optional[Dict[str, Any]] = None
+    audio_tracks: List[AudioTrack] = []
+    subtitle_tracks: List[SubtitleTrack] = []
+    camera: Optional[Dict[str, Any]] = None
+    thumbnails: List[str] = []
+    analysis: Optional[Dict[str, Any]] = None
 
 # Utility Functions
 def parse_datetime_string(date_str: Optional[str]) -> Optional[datetime.datetime]:
@@ -227,8 +288,32 @@ def parse_datetime_string(date_str: Optional[str]) -> Optional[datetime.datetime
     if not date_str:
         return None
     try:
-        parsable_date_str = date_str.replace(":", "-", 2) if date_str.count(':') > 1 else date_str
-        dt = dateutil_parser.parse(parsable_date_str)
+        # Clean up string first
+        # Replace colons in date part (keep colons in time part)
+        cleaned_date_str = date_str
+        
+        # Handle common date formats with timezone info
+        if 'UTC' in cleaned_date_str:
+            # Try to handle formats like "2026-04-18 04:54:32 UTC" or "2026-04-18 04-54-32 UTC"
+            cleaned_date_str = cleaned_date_str.replace(' UTC', 'Z')
+            # Replace all hyphens in time part with colons
+            if ' ' in cleaned_date_str:
+                date_part, time_part = cleaned_date_str.split(' ', 1)
+                time_part = time_part.replace('-', ':')
+                cleaned_date_str = f"{date_part} {time_part}"
+        # Handle formats with colons in date part (2022:01:01 12:30:00)
+        elif cleaned_date_str.count(':') > 2:
+            parts = cleaned_date_str.split(' ', 1)
+            date_part = parts[0].replace(':', '-')
+            
+            if len(parts) > 1:
+                time_part = parts[1]
+                cleaned_date_str = f"{date_part} {time_part}"
+            else:
+                cleaned_date_str = date_part
+            
+        # Parse the cleaned string
+        dt = dateutil_parser.parse(cleaned_date_str)
         return dt
     except (ValueError, TypeError) as e:
         logger.warning(f"Could not parse date string: {date_str}", error=str(e))
@@ -273,6 +358,91 @@ def calculate_aspect_ratio_str(width: Optional[int], height: Optional[int]) -> O
         return None
     common_divisor = math.gcd(width, height)
     return f"{width // common_divisor}:{height // common_divisor}"
+
+def extract_extended_exif_metadata(file_path: str) -> Dict[str, Any]:
+    """
+    Extract extended EXIF metadata from video files.
+    
+    Args:
+        file_path: Path to the video file
+        
+    Returns:
+        Dict: Extended EXIF metadata including GPS and advanced camera settings
+    """
+    logger.info("Extracting extended EXIF metadata", path=file_path)
+    
+    try:
+        with exiftool.ExifToolHelper() as et:
+            metadata = et.get_metadata(file_path)[0]
+            
+            # Initialize the result dict
+            extended_metadata = {}
+            
+            # Extract GPS coordinates
+            if 'EXIF:GPSLatitude' in metadata and 'EXIF:GPSLongitude' in metadata:
+                try:
+                    extended_metadata['gps_latitude'] = float(metadata['EXIF:GPSLatitude'])
+                    extended_metadata['gps_longitude'] = float(metadata['EXIF:GPSLongitude'])
+                    
+                    # Add altitude if available
+                    if 'EXIF:GPSAltitude' in metadata:
+                        extended_metadata['gps_altitude'] = float(metadata['EXIF:GPSAltitude'])
+                        
+                    # Try to get location name if available
+                    if 'XMP:Location' in metadata:
+                        extended_metadata['location_name'] = metadata['XMP:Location']
+                    elif 'IPTC:City' in metadata:
+                        city = metadata['IPTC:City']
+                        country = metadata.get('IPTC:Country', '')
+                        if country:
+                            extended_metadata['location_name'] = f"{city}, {country}"
+                        else:
+                            extended_metadata['location_name'] = city
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Error parsing GPS coordinates: {e}", path=file_path)
+            
+            # Advanced camera metadata
+            # Camera serial number
+            if 'EXIF:SerialNumber' in metadata:
+                extended_metadata['camera_serial_number'] = str(metadata['EXIF:SerialNumber'])
+                
+            # Lens model
+            if 'EXIF:LensModel' in metadata:
+                extended_metadata['lens_model'] = metadata['EXIF:LensModel']
+                
+            # ISO
+            if 'EXIF:ISO' in metadata:
+                try:
+                    extended_metadata['iso'] = int(metadata['EXIF:ISO'])
+                except (ValueError, TypeError):
+                    pass
+                    
+            # Shutter speed
+            if 'EXIF:ShutterSpeedValue' in metadata:
+                extended_metadata['shutter_speed'] = str(metadata['EXIF:ShutterSpeedValue'])
+                
+            # Aperture (f-stop)
+            if 'EXIF:FNumber' in metadata:
+                try:
+                    extended_metadata['f_stop'] = float(metadata['EXIF:FNumber'])
+                except (ValueError, TypeError):
+                    pass
+                    
+            # Exposure mode
+            if 'EXIF:ExposureMode' in metadata:
+                extended_metadata['exposure_mode'] = str(metadata['EXIF:ExposureMode'])
+                
+            # White balance
+            if 'EXIF:WhiteBalance' in metadata:
+                extended_metadata['white_balance'] = str(metadata['EXIF:WhiteBalance'])
+                
+            logger.info("Extended EXIF metadata extraction successful", path=file_path)
+            return extended_metadata
+            
+    except Exception as e:
+        logger.error("Extended EXIF metadata extraction failed", path=file_path, error=str(e))
+        return {}
+            
 
 def scan_directory(directory: str, recursive: bool = True) -> List[str]:
     """
@@ -434,6 +604,119 @@ def detect_focal_length_with_ai(image_path: str) -> Tuple[Optional[str], Optiona
     except Exception as e:
         logger.error("Error using AI to detect focal length", path=image_path, error=str(e))
         return None, None
+
+
+def generate_thumbnails(file_path: str, output_dir: str, count: int = 5) -> List[str]:
+    """
+    Generate thumbnails from video file using PyAV.
+    
+    Args:
+        file_path: Path to the video file
+        output_dir: Directory to save thumbnails
+        count: Number of thumbnails to generate
+        
+    Returns:
+        List[str]: Paths to generated thumbnails
+    """
+    logger.info("Generating thumbnails", path=file_path, count=count)
+    thumbnail_paths = []
+    
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+        
+        with av.open(file_path) as container:
+            duration = float(container.duration / 1000000) if container.duration else 0
+            
+            if duration <= 0:
+                logger.error("Could not determine video duration", path=file_path)
+                return []
+            
+            positions = [duration * i / (count + 1) for i in range(1, count + 1)]
+            
+            if not container.streams.video:
+                logger.error("No video stream found", path=file_path)
+                return []
+                
+            stream = container.streams.video[0]
+            
+            for i, position in enumerate(positions):
+                output_path = os.path.join(output_dir, f"{os.path.basename(file_path)}_{i}.jpg")
+                
+                container.seek(int(position * 1000000), stream=stream)
+                
+                for frame in container.decode(video=0):
+                    img = frame.to_image()
+                    
+                    width, height = img.size
+                    new_width = 640
+                    new_height = int(height * new_width / width)
+                    img = img.resize((new_width, new_height), Image.LANCZOS)
+                    
+                    img.save(output_path, quality=95)
+                    
+                    thumbnail_paths.append(output_path)
+                    logger.info("Generated thumbnail", path=output_path, position=position)
+                    break
+        
+        logger.info("Thumbnail generation complete", path=file_path, count=len(thumbnail_paths))
+        return thumbnail_paths
+    
+    except Exception as e:
+        logger.error("Thumbnail generation failed", path=file_path, error=str(e))
+        return []
+
+def analyze_exposure(thumbnail_path: str) -> Dict[str, Any]:
+    """
+    Analyze exposure in an image.
+    
+    Args:
+        thumbnail_path: Path to the thumbnail image
+        
+    Returns:
+        Dict: Exposure analysis results including warning flag and exposure deviation in stops
+    """
+    logger.info("Analyzing exposure", path=thumbnail_path)
+    try:
+        image = cv2.imread(thumbnail_path)
+        
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+        hist = hist.flatten() / (gray.shape[0] * gray.shape[1])
+        
+        overexposed = sum(hist[240:])
+        underexposed = sum(hist[:16])
+        
+        # Calculate exposure warning flag
+        exposure_warning = overexposed > 0.05 or underexposed > 0.05
+        
+        # Estimate exposure deviation in stops
+        exposure_stops = 0.0
+        if overexposed > underexposed and overexposed > 0.05:
+            # Rough approximation of stops overexposed
+            exposure_stops = math.log2(overexposed * 20)
+        elif underexposed > 0.05:
+            # Rough approximation of stops underexposed (negative value)
+            exposure_stops = -math.log2(underexposed * 20)
+        
+        result = {
+            'exposure_warning': exposure_warning,
+            'exposure_stops': exposure_stops,
+            'overexposed_percentage': float(overexposed * 100),
+            'underexposed_percentage': float(underexposed * 100)
+        }
+        
+        logger.info("Exposure analysis complete", path=thumbnail_path, result=result)
+        return result
+    
+    except Exception as e:
+        logger.error("Exposure analysis failed", path=thumbnail_path, error=str(e))
+        return {
+            'exposure_warning': False,
+            'exposure_stops': 0.0,
+            'overexposed_percentage': 0.0,
+            'underexposed_percentage': 0.0
+        }
 
 def extract_mediainfo(file_path: str) -> Dict[str, Any]:
     """
@@ -626,117 +909,328 @@ def extract_exiftool_info(file_path: str) -> Dict[str, Any]:
         logger.error("ExifTool extraction failed", path=file_path, error=str(e))
         return {}
 
-def generate_thumbnails(file_path: str, output_dir: str, count: int = 5) -> List[str]:
+def extract_codec_parameters(file_path: str) -> Dict[str, Any]:
     """
-    Generate thumbnails from video file using PyAV.
+    Extract detailed codec parameters from video files.
     
     Args:
         file_path: Path to the video file
-        output_dir: Directory to save thumbnails
-        count: Number of thumbnails to generate
         
     Returns:
-        List[str]: Paths to generated thumbnails
+        Dict: Detailed codec parameters
     """
-    logger.info("Generating thumbnails", path=file_path, count=count)
-    thumbnail_paths = []
+    logger.info("Extracting codec parameters", path=file_path)
     
     try:
-        os.makedirs(output_dir, exist_ok=True)
+        # Try MediaInfo first for more detailed codec parameters
+        media_info = pymediainfo.MediaInfo.parse(file_path)
+        video_track = next((track for track in media_info.tracks if track.track_type == 'Video'), None)
         
-        with av.open(file_path) as container:
-            duration = float(container.duration / 1000000) if container.duration else 0
-            
-            if duration <= 0:
-                logger.error("Could not determine video duration", path=file_path)
-                return []
-            
-            positions = [duration * i / (count + 1) for i in range(1, count + 1)]
-            
-            if not container.streams.video:
-                logger.error("No video stream found", path=file_path)
-                return []
-                
-            stream = container.streams.video[0]
-            
-            for i, position in enumerate(positions):
-                output_path = os.path.join(output_dir, f"{os.path.basename(file_path)}_{i}.jpg")
-                
-                container.seek(int(position * 1000000), stream=stream)
-                
-                for frame in container.decode(video=0):
-                    img = frame.to_image()
-                    
-                    width, height = img.size
-                    new_width = 640
-                    new_height = int(height * new_width / width)
-                    img = img.resize((new_width, new_height), Image.LANCZOS)
-                    
-                    img.save(output_path, quality=95)
-                    
-                    thumbnail_paths.append(output_path)
-                    logger.info("Generated thumbnail", path=output_path, position=position)
-                    break
+        codec_params = {}
         
-        logger.info("Thumbnail generation complete", path=file_path, count=len(thumbnail_paths))
-        return thumbnail_paths
+        if video_track:
+            # Extract profile info
+            if hasattr(video_track, 'format_profile') and video_track.format_profile:
+                parts = str(video_track.format_profile).split('@')
+                if len(parts) > 0:
+                    codec_params['profile'] = parts[0].strip()
+                    if len(parts) > 1 and 'L' in parts[1]:
+                        level_part = parts[1].strip()
+                        codec_params['level'] = level_part.replace('L', '')
+            
+            # Extract pixel format
+            if hasattr(video_track, 'pixel_format'):
+                codec_params['pixel_format'] = video_track.pixel_format
+            
+            # Extract chroma subsampling
+            if hasattr(video_track, 'chroma_subsampling'):
+                codec_params['chroma_subsampling'] = video_track.chroma_subsampling
+            
+            # Extract bitrate mode
+            if hasattr(video_track, 'bit_rate_mode'):
+                codec_params['bitrate_mode'] = video_track.bit_rate_mode
+            
+            # Extract scan type and field order
+            if hasattr(video_track, 'scan_type'):
+                codec_params['scan_type'] = video_track.scan_type
+                
+            if hasattr(video_track, 'scan_order'):
+                codec_params['field_order'] = video_track.scan_order
+        
+        # Try PyAV for additional codec parameters if MediaInfo doesn't provide enough
+        if not codec_params or len(codec_params) < 3:
+            try:
+                with av.open(file_path) as container:
+                    for stream in container.streams.video:
+                        if not 'profile' in codec_params and hasattr(stream.codec_context, 'profile'):
+                            codec_params['profile'] = stream.codec_context.profile
+                            
+                        if not 'pixel_format' in codec_params and hasattr(stream.codec_context, 'pix_fmt'):
+                            codec_params['pixel_format'] = stream.codec_context.pix_fmt
+                            
+                        # Get GOP size if available
+                        if hasattr(stream.codec_context, 'gop_size'):
+                            codec_params['gop_size'] = stream.codec_context.gop_size
+                            
+                        # Get reference frames if available
+                        if hasattr(stream.codec_context, 'refs'):
+                            codec_params['ref_frames'] = stream.codec_context.refs
+                            
+                        # Check for CABAC (H.264 specific)
+                        if hasattr(stream.codec_context, 'flags') and \
+                           hasattr(stream.codec_context.flags, 'CABAC'):
+                            codec_params['cabac'] = bool(stream.codec_context.flags.CABAC)
+                        
+                        break  # Only process the first video stream
+            except Exception as av_error:
+                logger.warning("PyAV codec parameter extraction failed", path=file_path, error=str(av_error))
+                
+        logger.info("Codec parameter extraction successful", path=file_path, params_count=len(codec_params))
+        return codec_params
     
     except Exception as e:
-        logger.error("Thumbnail generation failed", path=file_path, error=str(e))
-        return []
+        logger.error("Codec parameter extraction failed", path=file_path, error=str(e))
+        return {}
 
-def analyze_exposure(thumbnail_path: str) -> Dict[str, Any]:
+def extract_hdr_metadata(file_path: str) -> Dict[str, Any]:
     """
-    Analyze exposure in an image.
+    Extract HDR-related metadata from video files.
     
     Args:
-        thumbnail_path: Path to the thumbnail image
+        file_path: Path to the video file
         
     Returns:
-        Dict: Exposure analysis results including warning flag and exposure deviation in stops
+        Dict: HDR metadata including format, mastering display info, and light levels
     """
-    logger.info("Analyzing exposure", path=thumbnail_path)
+    logger.info("Extracting HDR metadata", path=file_path)
     try:
-        image = cv2.imread(thumbnail_path)
+        media_info = pymediainfo.MediaInfo.parse(file_path)
         
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        video_track = next((track for track in media_info.tracks if track.track_type == 'Video'), None)
         
-        hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
-        hist = hist.flatten() / (gray.shape[0] * gray.shape[1])
+        hdr_metadata = {}
         
-        overexposed = sum(hist[240:])
-        underexposed = sum(hist[:16])
+        if video_track:
+            # Check for HDR format based on transfer characteristics
+            if hasattr(video_track, 'transfer_characteristics') and video_track.transfer_characteristics:
+                transfer = str(video_track.transfer_characteristics).lower()
+                hdr_metadata['transfer_characteristics'] = video_track.transfer_characteristics
+                
+                if 'pq' in transfer or 'smpte st 2084' in transfer or 'smpte2084' in transfer:
+                    hdr_metadata['hdr_format'] = 'HDR10'
+                elif 'hlg' in transfer or 'hybrid log' in transfer or 'arib std b67' in transfer:
+                    hdr_metadata['hdr_format'] = 'HLG'
+            
+            # Check for HDR10+ and Dolby Vision
+            commercial_id = ''
+            if hasattr(video_track, 'hdr_format_commercial') and video_track.hdr_format_commercial:
+                commercial_id = str(video_track.hdr_format_commercial).lower()
+                if 'dolby vision' in commercial_id:
+                    hdr_metadata['hdr_format'] = 'Dolby Vision'
+                elif 'hdr10+' in commercial_id:
+                    hdr_metadata['hdr_format'] = 'HDR10+'
+            
+            # Store color info
+            if hasattr(video_track, 'color_primaries'):
+                hdr_metadata['color_primaries'] = video_track.color_primaries
+                
+            if hasattr(video_track, 'matrix_coefficients'):
+                hdr_metadata['matrix_coefficients'] = video_track.matrix_coefficients
+                
+            if hasattr(video_track, 'color_range'):
+                hdr_metadata['color_range'] = video_track.color_range
+                
+            # Get master display information (typically for HDR10)
+            if hasattr(video_track, 'mastering_display_color_primaries'):
+                hdr_metadata['master_display'] = video_track.mastering_display_color_primaries
+                
+            # Get content light level
+            if hasattr(video_track, 'maximum_content_light_level'):
+                try:
+                    hdr_metadata['max_cll'] = int(video_track.maximum_content_light_level)
+                except (ValueError, TypeError):
+                    pass
+                    
+            if hasattr(video_track, 'maximum_frame_light_level'):
+                try:
+                    hdr_metadata['max_fall'] = int(video_track.maximum_frame_light_level)
+                except (ValueError, TypeError):
+                    pass
         
-        # Calculate exposure warning flag
-        exposure_warning = overexposed > 0.05 or underexposed > 0.05
-        
-        # Estimate exposure deviation in stops
-        exposure_stops = 0.0
-        if overexposed > underexposed and overexposed > 0.05:
-            # Rough approximation of stops overexposed
-            exposure_stops = math.log2(overexposed * 20)
-        elif underexposed > 0.05:
-            # Rough approximation of stops underexposed (negative value)
-            exposure_stops = -math.log2(underexposed * 20)
-        
-        result = {
-            'exposure_warning': exposure_warning,
-            'exposure_stops': exposure_stops,
-            'overexposed_percentage': float(overexposed * 100),
-            'underexposed_percentage': float(underexposed * 100)
-        }
-        
-        logger.info("Exposure analysis complete", path=thumbnail_path, result=result)
-        return result
+        if hdr_metadata:
+            logger.info("HDR metadata extraction successful", path=file_path, format=hdr_metadata.get('hdr_format', 'unknown'))
+        else:
+            logger.info("No HDR metadata found", path=file_path)
+            
+        return hdr_metadata
     
     except Exception as e:
-        logger.error("Exposure analysis failed", path=thumbnail_path, error=str(e))
-        return {
-            'exposure_warning': False,
-            'exposure_stops': 0.0,
-            'overexposed_percentage': 0.0,
-            'underexposed_percentage': 0.0
-        }
+        logger.error("HDR metadata extraction failed", path=file_path, error=str(e))
+        return {}
+
+def extract_audio_tracks(file_path: str) -> List[Dict[str, Any]]:
+    """
+    Extract audio track information from video files.
+    
+    Args:
+        file_path: Path to the video file
+        
+    Returns:
+        List[Dict]: List of audio track metadata
+    """
+    logger.info("Extracting audio tracks", path=file_path)
+    audio_tracks = []
+    
+    try:
+        media_info = pymediainfo.MediaInfo.parse(file_path)
+        
+        for track in media_info.tracks:
+            if track.track_type == 'Audio':
+                audio_track = {
+                    'track_id': str(track.track_id) if hasattr(track, 'track_id') and track.track_id is not None else None,
+                    'codec': track.format if hasattr(track, 'format') else None,
+                    'codec_id': track.codec_id if hasattr(track, 'codec_id') else None,
+                    'duration_seconds': float(track.duration) / 1000 if hasattr(track, 'duration') and track.duration else None,
+                    'bit_rate_kbps': int(float(str(track.bit_rate).replace('kb/s', '').strip())) if hasattr(track, 'bit_rate') and track.bit_rate else None,
+                    'channels': int(track.channel_s) if hasattr(track, 'channel_s') and track.channel_s else None,
+                    'channel_layout': track.channel_layout if hasattr(track, 'channel_layout') else None,
+                    'sample_rate': int(float(str(track.sampling_rate).replace('Hz', '').strip())) if hasattr(track, 'sampling_rate') and track.sampling_rate else None,
+                    'bit_depth': int(track.bit_depth) if hasattr(track, 'bit_depth') and track.bit_depth else None,
+                    'language': track.language if hasattr(track, 'language') else None
+                }
+                
+                # Filter out None values
+                audio_track = {k: v for k, v in audio_track.items() if v is not None}
+                
+                audio_tracks.append(audio_track)
+        
+        logger.info("Audio track extraction successful", path=file_path, track_count=len(audio_tracks))
+        return audio_tracks
+    
+    except Exception as e:
+        logger.error("Audio track extraction failed", path=file_path, error=str(e))
+        return []
+
+def extract_subtitle_tracks(file_path: str) -> List[Dict[str, Any]]:
+    """
+    Extract subtitle track information from video files.
+    
+    Args:
+        file_path: Path to the video file
+        
+    Returns:
+        List[Dict]: List of subtitle track metadata
+    """
+    logger.info("Extracting subtitle tracks", path=file_path)
+    subtitle_tracks = []
+    
+    try:
+        media_info = pymediainfo.MediaInfo.parse(file_path)
+        
+        for track in media_info.tracks:
+            if track.track_type == 'Text':
+                subtitle_track = {
+                    'track_id': str(track.track_id) if hasattr(track, 'track_id') and track.track_id is not None else None,
+                    'format': track.format if hasattr(track, 'format') else None,
+                    'codec_id': track.codec_id if hasattr(track, 'codec_id') else None,
+                    'language': track.language if hasattr(track, 'language') else None,
+                    'embedded': True if hasattr(track, 'muxing_mode') and track.muxing_mode == 'muxed' else None
+                }
+                
+                # Filter out None values
+                subtitle_track = {k: v for k, v in subtitle_track.items() if v is not None}
+                
+                subtitle_tracks.append(subtitle_track)
+        
+        logger.info("Subtitle track extraction successful", path=file_path, track_count=len(subtitle_tracks))
+        return subtitle_tracks
+    
+    except Exception as e:
+        logger.error("Subtitle track extraction failed", path=file_path, error=str(e))
+        return []
+
+def extract_codec_parameters(file_path: str) -> Dict[str, Any]:
+    """
+    Extract detailed codec parameters from video files.
+    
+    Args:
+        file_path: Path to the video file
+        
+    Returns:
+        Dict: Detailed codec parameters
+    """
+    logger.info("Extracting codec parameters", path=file_path)
+    
+    try:
+        # Try MediaInfo first for more detailed codec parameters
+        media_info = pymediainfo.MediaInfo.parse(file_path)
+        video_track = next((track for track in media_info.tracks if track.track_type == 'Video'), None)
+        
+        codec_params = {}
+        
+        if video_track:
+            # Extract profile info
+            if hasattr(video_track, 'format_profile') and video_track.format_profile:
+                parts = str(video_track.format_profile).split('@')
+                if len(parts) > 0:
+                    codec_params['profile'] = parts[0].strip()
+                    if len(parts) > 1 and 'L' in parts[1]:
+                        level_part = parts[1].strip()
+                        codec_params['level'] = level_part.replace('L', '')
+            
+            # Extract pixel format
+            if hasattr(video_track, 'pixel_format'):
+                codec_params['pixel_format'] = video_track.pixel_format
+            
+            # Extract chroma subsampling
+            if hasattr(video_track, 'chroma_subsampling'):
+                codec_params['chroma_subsampling'] = video_track.chroma_subsampling
+            
+            # Extract bitrate mode
+            if hasattr(video_track, 'bit_rate_mode'):
+                codec_params['bitrate_mode'] = video_track.bit_rate_mode
+            
+            # Extract scan type and field order
+            if hasattr(video_track, 'scan_type'):
+                codec_params['scan_type'] = video_track.scan_type
+                
+            if hasattr(video_track, 'scan_order'):
+                codec_params['field_order'] = video_track.scan_order
+        
+        # Try PyAV for additional codec parameters if MediaInfo doesn't provide enough
+        if not codec_params or len(codec_params) < 3:
+            try:
+                with av.open(file_path) as container:
+                    for stream in container.streams.video:
+                        if not 'profile' in codec_params and hasattr(stream.codec_context, 'profile'):
+                            codec_params['profile'] = stream.codec_context.profile
+                            
+                        if not 'pixel_format' in codec_params and hasattr(stream.codec_context, 'pix_fmt'):
+                            codec_params['pixel_format'] = stream.codec_context.pix_fmt
+                            
+                        # Get GOP size if available
+                        if hasattr(stream.codec_context, 'gop_size'):
+                            codec_params['gop_size'] = stream.codec_context.gop_size
+                            
+                        # Get reference frames if available
+                        if hasattr(stream.codec_context, 'refs'):
+                            codec_params['ref_frames'] = stream.codec_context.refs
+                            
+                        # Check for CABAC (H.264 specific)
+                        if hasattr(stream.codec_context, 'flags') and \
+                           hasattr(stream.codec_context.flags, 'CABAC'):
+                            codec_params['cabac'] = bool(stream.codec_context.flags.CABAC)
+                        
+                        break  # Only process the first video stream
+            except Exception as av_error:
+                logger.warning("PyAV codec parameter extraction failed", path=file_path, error=str(av_error))
+                
+        logger.info("Codec parameter extraction successful", path=file_path, params_count=len(codec_params))
+        return codec_params
+    
+    except Exception as e:
+        logger.error("Codec parameter extraction failed", path=file_path, error=str(e))
+        return {}
 
 
 def process_video_file(file_path: str, thumbnails_dir: str) -> VideoFile:
@@ -756,15 +1250,88 @@ def process_video_file(file_path: str, thumbnails_dir: str) -> VideoFile:
     
     file_size = os.path.getsize(file_path)
     
+    # Extract metadata from different sources
     mediainfo_data = extract_mediainfo(file_path)
     ffprobe_data = extract_ffprobe_info(file_path)
     exiftool_data = extract_exiftool_info(file_path)
     
-    metadata = {**exiftool_data, **ffprobe_data, **mediainfo_data}
+    # Extract extended metadata
+    # Try adding new extraction functions if they're defined
+    hdr_metadata = {}
+    audio_tracks = []
+    subtitle_tracks = []
+    codec_parameters = {}
+    extended_exif = {}
     
+    try:
+        # Only execute these if the functions have been defined earlier
+        if 'extract_hdr_metadata' in globals():
+            hdr_metadata = extract_hdr_metadata(file_path)
+            
+        if 'extract_audio_tracks' in globals():
+            audio_tracks = extract_audio_tracks(file_path)
+            
+        if 'extract_subtitle_tracks' in globals():
+            subtitle_tracks = extract_subtitle_tracks(file_path)
+            
+        if 'extract_codec_parameters' in globals():
+            codec_parameters = extract_codec_parameters(file_path)
+            
+        if 'extract_extended_exif_metadata' in globals():
+            extended_exif = extract_extended_exif_metadata(file_path)
+    except Exception as e:
+        logger.error(f"Error extracting extended metadata: {e}", path=file_path)
+    
+    # Implement category-specific merging instead of simple dictionary merge
+    metadata = {}
+    
+    # Technical video properties - prioritize MediaInfo > FFprobe > ExifTool
+    tech_keys = ['codec', 'width', 'height', 'frame_rate', 'bit_rate_kbps', 'bit_depth', 'color_space',
+                'container', 'duration_seconds']
+    for key in tech_keys:
+        if key in mediainfo_data and mediainfo_data[key] is not None:
+            metadata[key] = mediainfo_data[key]
+        elif key in ffprobe_data and ffprobe_data[key] is not None:
+            metadata[key] = ffprobe_data[key]
+        elif key in exiftool_data and exiftool_data[key] is not None:
+            metadata[key] = exiftool_data[key]
+    
+    # Camera and lens info - prioritize ExifTool > MediaInfo
+    camera_keys = ['camera_make', 'camera_model', 'focal_length_mm', 'focal_length_category', 'focal_length']
+    for key in camera_keys:
+        if key in exiftool_data and exiftool_data[key] is not None:
+            metadata[key] = exiftool_data[key]
+        elif key in mediainfo_data and mediainfo_data[key] is not None:
+            metadata[key] = mediainfo_data[key]
+        elif key in ffprobe_data and ffprobe_data[key] is not None:
+            metadata[key] = ffprobe_data[key]
+            
+    # Dates and timeline info - prioritize ExifTool > MediaInfo
+    date_keys = ['created_at']
+    for key in date_keys:
+        if key in exiftool_data and exiftool_data[key] is not None:
+            metadata[key] = exiftool_data[key]
+        elif key in mediainfo_data and mediainfo_data[key] is not None:
+            metadata[key] = mediainfo_data[key]
+        elif key in ffprobe_data and ffprobe_data[key] is not None:
+            metadata[key] = ffprobe_data[key]
+    
+    # Add remaining keys from all sources
+    for data in [ffprobe_data, mediainfo_data, exiftool_data]:
+        for key, value in data.items():
+            if key not in metadata and value is not None:
+                metadata[key] = value
+    
+    # Extended metadata (add from separate extraction functions)
+    # Merge in extended EXIF data
+    for key, value in extended_exif.items():
+        metadata[key] = value
+    
+    # Generate thumbnails
     thumbnail_dir = os.path.join(thumbnails_dir, checksum)
     thumbnail_paths = generate_thumbnails(file_path, thumbnail_dir)
     
+    # Analyze exposure from thumbnails
     exposure_data = {}
     if thumbnail_paths:
         exposure_data = analyze_exposure(thumbnail_paths[0])
@@ -785,6 +1352,17 @@ def process_video_file(file_path: str, thumbnails_dir: str) -> VideoFile:
     
     aspect_ratio_str = calculate_aspect_ratio_str(metadata.get('width'), metadata.get('height'))
     
+    # Create HDR metadata if available
+    hdr_metadata_obj = None
+    if hdr_metadata:
+        hdr_metadata_obj = HDRMetadata(**hdr_metadata)
+    
+    # Create codec parameters if available
+    codec_params_obj = None
+    if codec_parameters:
+        codec_params_obj = CodecParameters(**codec_parameters)
+    
+    # Create technical metadata object with safe defaults
     technical_metadata = TechnicalMetadata(
         codec=metadata.get('codec'),
         container=metadata.get('container'),
@@ -792,7 +1370,7 @@ def process_video_file(file_path: str, thumbnails_dir: str) -> VideoFile:
         resolution_height=metadata.get('height'),
         aspect_ratio=aspect_ratio_str,
         frame_rate=metadata.get('frame_rate'),
-        bit_rate_kbps=metadata.get('bit_rate_kbps'),  # Directly use the bit_rate_kbps that was already calculated
+        bit_rate_kbps=metadata.get('bit_rate_kbps'),
         duration_seconds=metadata.get('duration_seconds'),
         exposure_warning=exposure_data.get('exposure_warning'),
         exposure_stops=exposure_data.get('exposure_stops'),
@@ -804,10 +1382,39 @@ def process_video_file(file_path: str, thumbnails_dir: str) -> VideoFile:
         camera_model=metadata.get('camera_model'),
         focal_length_mm=metadata.get('focal_length_mm'),
         focal_length_category=metadata.get('focal_length_category'),
-        # Keep this for backward compatibility
-        focal_length=metadata.get('focal_length')
+        focal_length=metadata.get('focal_length'),  # For backward compatibility
+        
+        # Extended metadata fields
+        hdr_metadata=hdr_metadata_obj,
+        codec_parameters=codec_params_obj,
+        
+        # GPS info - all default to None in model definition
+        gps_latitude=metadata.get('gps_latitude'),
+        gps_longitude=metadata.get('gps_longitude'),
+        gps_altitude=metadata.get('gps_altitude'),
+        location_name=metadata.get('location_name'),
+        
+        # Additional camera info - all default to None in model definition
+        camera_serial_number=metadata.get('camera_serial_number', None),
+        lens_model=metadata.get('lens_model', None),
+        iso=metadata.get('iso'),
+        shutter_speed=metadata.get('shutter_speed', None),
+        f_stop=metadata.get('f_stop'),
+        exposure_mode=metadata.get('exposure_mode', None),
+        white_balance=metadata.get('white_balance', None)
     )
     
+    # Convert audio tracks to model objects
+    audio_track_objects = []
+    for track in audio_tracks:
+        audio_track_objects.append(AudioTrack(**track))
+    
+    # Convert subtitle tracks to model objects
+    subtitle_track_objects = []
+    for track in subtitle_tracks:
+        subtitle_track_objects.append(SubtitleTrack(**track))
+    
+    # Create the video file object
     video_file = VideoFile(
         file_path=file_path,
         file_name=os.path.basename(file_path),
@@ -816,21 +1423,9 @@ def process_video_file(file_path: str, thumbnails_dir: str) -> VideoFile:
         created_at=metadata.get('created_at'),
         duration_seconds=metadata.get('duration_seconds'),
         technical_metadata=technical_metadata,
-        thumbnail_paths=thumbnail_paths
-    )
-    
-    logger.info("Video processing complete", path=file_path, id=video_file.id)
-    return video_file
-    
-    video_file = VideoFile(
-        file_path=file_path,
-        file_name=os.path.basename(file_path),
-        file_checksum=checksum,
-        file_size_bytes=file_size,
-        created_at=metadata.get('created_at'),
-        duration_seconds=metadata.get('duration_seconds'),
-        technical_metadata=technical_metadata,
-        thumbnail_paths=thumbnail_paths
+        thumbnail_paths=thumbnail_paths,
+        audio_tracks=audio_track_objects,
+        subtitle_tracks=subtitle_track_objects
     )
     
     logger.info("Video processing complete", path=file_path, id=video_file.id)
