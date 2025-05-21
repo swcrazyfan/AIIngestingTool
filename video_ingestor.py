@@ -5,9 +5,11 @@ AI-Powered Video Ingest & Catalog Tool - Alpha Test Implementation
 This script implements the initial steps of the video ingestion and cataloging process:
 1. Content Discovery Phase - Scan directories for video files and create checksums
 2. Technical Metadata Extraction - Extract detailed information about video files
+3. Task Queue System - Asynchronous processing with Procrastinate
 
-No task queuing or DB is used for this alpha version. All processing steps are 
-logged to the terminal and to timestamped log files, and data is saved to JSON.
+Videos are processed asynchronously through a pipeline of tasks managed by Procrastinate.
+All processing steps are logged to the terminal and to timestamped log files, 
+and data is saved to JSON while the DB integration is pending.
 """
 
 import os
@@ -23,8 +25,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import mimetypes
 import shutil
 import glob
+import asyncio
 from polyfile.magic import MagicMatcher
-
 import av
 import pymediainfo
 import typer
@@ -38,13 +40,28 @@ import structlog
 import numpy as np
 import cv2
 from PIL import Image
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 import exiftool
 import logging
 from logging import FileHandler
 from rich.logging import RichHandler
 from dateutil import parser as dateutil_parser
 import math
+
+# Import task queue (will be available if procrastinate and PostgreSQL are installed)
+try:
+    print("DEBUG VIDEO_INGESTOR: Attempting to import task_queue")
+    import task_queue
+    print(f"DEBUG VIDEO_INGESTOR: task_queue imported successfully, PROCRASTINATE_AVAILABLE={task_queue.PROCRASTINATE_AVAILABLE}")
+    HAS_TASK_QUEUE = task_queue.PROCRASTINATE_AVAILABLE
+    print(f"DEBUG VIDEO_INGESTOR: HAS_TASK_QUEUE set to {HAS_TASK_QUEUE}")
+except Exception as e:
+    print(f"DEBUG VIDEO_INGESTOR: Error importing task_queue: {e}")
+    HAS_TASK_QUEUE = False
+
+# Define 'app' for Procrastinate CLI after task_queue has been imported and initialized.
+# This 'app' will be picked up by 'procrastinate --app video_ingestor.app'
+app = task_queue.app if HAS_TASK_QUEUE else None
 
 # Initialize console for rich output
 console = Console()
@@ -97,6 +114,9 @@ std_root_logger.addHandler(rich_console_handler)
 std_root_logger.addHandler(file_log_handler)
 std_root_logger.setLevel(logging.INFO)
 
+# Set Procrastinate's own loggers to DEBUG for more verbose output
+logging.getLogger("procrastinate").setLevel(logging.DEBUG)
+
 # Create a logger instance using structlog
 logger = structlog.get_logger(__name__)
 logger.info("Logging configured successfully for console and file.")
@@ -120,7 +140,19 @@ class TechnicalMetadata(BaseModel):
     color_space: Optional[str] = None
     camera_make: Optional[str] = None
     camera_model: Optional[str] = None
-    focal_length: Optional[str] = None
+    focal_length: Optional[Union[str, float, int]] = None
+    
+    @field_validator('focal_length', mode='before')
+    def validate_focal_length(cls, v):
+        """Convert focal_length to string if it's a number, or None if it's invalid"""
+        if v is None:
+            return None
+        try:
+            if isinstance(v, (int, float)):
+                return str(v)
+            return str(v)
+        except:
+            return None
 
 class VideoFile(BaseModel):
     """Video file model with basic information and technical metadata"""
@@ -596,14 +628,16 @@ def save_to_json(data: Any, filename: str) -> None:
     logger.info("Data saved to JSON", filename=filename)
 
 # CLI Application
-app = typer.Typer(help="AI-Powered Video Ingest & Catalog Tool - Alpha Test")
+cli = typer.Typer(help="AI-Powered Video Ingest & Catalog Tool - Alpha Test")
 
-@app.command()
+
+@cli.command()
 def ingest(
     directory: str = typer.Argument(..., help="Directory to scan for video files"),
     recursive: bool = typer.Option(True, "--recursive/--no-recursive", "-r/-nr", help="Scan subdirectories"),
     output_dir: str = typer.Option("output", "--output-dir", "-o", help="Output directory for thumbnails and JSON"),
-    limit: int = typer.Option(0, "--limit", "-l", help="Limit number of files to process (0 = no limit)")
+    limit: int = typer.Option(0, "--limit", "-l", help="Limit number of files to process (0 = no limit)"),
+    use_queue: bool = typer.Option(False, "--queue/--no-queue", "-q/-nq", help="Use task queue for processing")
 ):
     """
     Scan a directory for video files and extract metadata.
@@ -614,7 +648,8 @@ def ingest(
                 directory=directory, 
                 recursive=recursive,
                 output_dir=output_dir,
-                limit=limit)
+                limit=limit,
+                use_queue=use_queue)
     
     os.makedirs(output_dir, exist_ok=True)
     thumbnails_dir = os.path.join(output_dir, "thumbnails")
@@ -626,6 +661,7 @@ def ingest(
         f"[cyan]Recursive:[/cyan] {recursive}\n"
         f"[cyan]Output Directory:[/cyan] {output_dir}\n"
         f"[cyan]File Limit:[/cyan] {limit if limit > 0 else 'No limit'}\n"
+        f"[cyan]Use Task Queue:[/cyan] {use_queue}\n"
         f"[cyan]Log File:[/cyan] {log_file}",
         title="Alpha Test",
         border_style="green"
@@ -640,37 +676,83 @@ def ingest(
     
     console.print(f"[green]Found {len(video_files)} video files[/green]")
     
-    console.print(f"[bold yellow]Step 2:[/bold yellow] Processing video files...")
-    processed_files = []
-    
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        TimeRemainingColumn(),
-        console=console,  
-        transient=True    
-    ) as progress:
-        task = progress.add_task("[green]Processing videos...", total=len(video_files))
+    if use_queue and HAS_TASK_QUEUE:
+        console.print(f"[bold yellow]Step 2:[/bold yellow] Queueing video files for processing...")
+        processed_files = []
         
-        for file_path in video_files:
-            progress.update(task, advance=0, description=f"[cyan]Processing {os.path.basename(file_path)}")
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeRemainingColumn(),
+            console=console,
+            transient=True
+        ) as progress:
+            task = progress.add_task("[green]Queueing videos...", total=len(video_files))
             
-            try:
-                video_file = process_video_file(file_path, thumbnails_dir)
-                processed_files.append(video_file)
-                
-                individual_json_path = os.path.join(json_dir, f"{video_file.id}.json")
-                save_to_json(video_file, individual_json_path)
-                
-            except Exception as e:
-                logger.error("Error processing video file", path=file_path, error=str(e))
+            with task_queue.app.open():
+                for file_path in video_files:
+                    progress.update(task, advance=0, description=f"[cyan]Queueing {os.path.basename(file_path)}")
+                    
+                    try:
+                        # Generate a job ID
+                        job_id = str(uuid.uuid4())
+                        
+                        # Queue the video processing task
+                        task_queue.validate_video_file.defer(
+                            file_path=file_path,
+                            job_id=job_id
+                        )
+                        
+                        processed_files.append({
+                            "file_path": file_path,
+                            "job_id": job_id
+                        })
+                        
+                        logger.info("Video queued for processing", 
+                                   path=file_path, 
+                                   job_id=job_id)
+                    except Exception as e:
+                        logger.error("Error queueing video file", path=file_path, error=str(e))
+                    
+                    progress.update(task, advance=1)
+        
+        console.print(f"[green]Queued {len(processed_files)} videos for processing[/green]")
+        console.print(f"[cyan]To process queued videos, run:[/cyan] python -m task_queue worker")
+    else:
+        # Original direct processing logic
+        console.print(f"[bold yellow]Step 2:[/bold yellow] Processing video files...")
+        processed_files = []
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeRemainingColumn(),
+            console=console,  
+            transient=True    
+        ) as progress:
+            task = progress.add_task("[green]Processing videos...", total=len(video_files))
             
-            progress.update(task, advance=1)
-    
-    all_data_json_path = os.path.join(json_dir, f"all_videos_{timestamp}.json")
-    save_to_json(processed_files, all_data_json_path)
+            for file_path in video_files:
+                progress.update(task, advance=0, description=f"[cyan]Processing {os.path.basename(file_path)}")
+                
+                try:
+                    video_file = process_video_file(file_path, thumbnails_dir)
+                    processed_files.append(video_file)
+                    
+                    individual_json_path = os.path.join(json_dir, f"{video_file.id}.json")
+                    save_to_json(video_file, individual_json_path)
+                    
+                except Exception as e:
+                    logger.error("Error processing video file", path=file_path, error=str(e))
+                
+                progress.update(task, advance=1)
+        
+        all_data_json_path = os.path.join(json_dir, f"all_videos_{timestamp}.json")
+        save_to_json(processed_files, all_data_json_path)
     
     end_time = time.time()
     processing_time = end_time - start_time
@@ -679,10 +761,18 @@ def ingest(
     summary_table.add_column("Metric", style="cyan")
     summary_table.add_column("Value", style="green")
     
-    summary_table.add_row("Total files processed", str(len(processed_files)))
-    summary_table.add_row("Processing time", f"{processing_time:.2f} seconds")
-    summary_table.add_row("Average time per file", f"{processing_time / len(processed_files):.2f} seconds" if processed_files else "N/A")
-    summary_table.add_row("Summary JSON", all_data_json_path)
+    summary_table.add_row("Total files", str(len(video_files)))
+    
+    if use_queue and HAS_TASK_QUEUE:
+        summary_table.add_row("Files queued", str(len(processed_files)))
+        summary_table.add_row("Queue time", f"{processing_time:.2f} seconds")
+        summary_table.add_row("Average time per file", f"{processing_time / len(processed_files):.2f} seconds" if processed_files else "N/A")
+    else:
+        summary_table.add_row("Files processed", str(len(processed_files)))
+        summary_table.add_row("Processing time", f"{processing_time:.2f} seconds")
+        summary_table.add_row("Average time per file", f"{processing_time / len(processed_files):.2f} seconds" if processed_files else "N/A")
+        summary_table.add_row("Summary JSON", all_data_json_path if 'all_data_json_path' in locals() else "None")
+    
     summary_table.add_row("Log file", log_file)
     
     console.print(summary_table)
@@ -691,5 +781,111 @@ def ingest(
                 files_processed=len(processed_files),
                 processing_time=processing_time)
 
+@cli.command()
+def worker(
+    queues: Optional[List[str]] = typer.Option(None, "--queue", "-q", help="Queue names to process (empty for all)"),
+    concurrency: int = typer.Option(1, "--concurrency", "-c", help="Number of concurrent jobs to process")
+):
+    """
+    Run a worker to process queued tasks from PostgreSQL.
+    """
+    print("DEBUG: WORKER SCRIPT LAUNCHED (direct print)") # Added for debugging console output
+    if not HAS_TASK_QUEUE:
+        console.print("[bold red]Error:[/bold red] Task queue is not available. Please install Procrastinate and psycopg2-binary.")
+        return
+    
+    # Show information about the database
+    db_config = task_queue.DB_CONFIG.copy()
+    db_config["password"] = "********"  # Hide password
+    db_str = f"{db_config['user']}@{db_config['host']}:{db_config['port']}/{db_config['dbname']}"
+    
+    console.print(Panel.fit(
+        "[bold blue]AI-Powered Video Ingest & Catalog Tool - Worker[/bold blue]\n"
+        f"[cyan]Database:[/cyan] {db_str}\n"
+        f"[cyan]Queues:[/cyan] {', '.join(queues) if queues else 'All'}\n"
+        f"[cyan]Concurrency:[/cyan] {concurrency}\n"
+        f"[cyan]Log File:[/cyan] {log_file}",
+        title="Worker",
+        border_style="green"
+    ))
+    
+    console.print("[green]Starting worker...[/green]")
+    
+    try:
+        task_queue.run_worker(queues=queues, concurrency=concurrency)
+    except KeyboardInterrupt:
+        console.print("[yellow]Worker stopped by user[/yellow]")
+    except Exception as e:
+        console.print(f"[bold red]Worker error:[/bold red] {str(e)}")
+
+@cli.command()
+def schema():
+    """
+    Initialize or update the database schema using Procrastinate's programmatic apply.
+    For more robust schema management or troubleshooting, prefer the Procrastinate CLI:
+    'conda run -n video-ingest env PYTHONPATH=. procrastinate --app=video_ingestor.app schema --apply'
+    """
+    if not HAS_TASK_QUEUE:
+        console.print("[red]Task queue module not available. Procrastinate is required.[/red]")
+        return
+
+    if app is None: # This is the Procrastinate app instance from task_queue
+        console.print("[red]Procrastinate app not initialized. Cannot apply schema.[/red]")
+        return
+
+    console.print("Attempting to apply/verify Procrastinate schema programmatically...")
+    if task_queue.ensure_schema(app): # Call the simplified ensure_schema
+        console.print("[green]Schema apply/verify command executed successfully via script.[/green]")
+    else:
+        console.print("[bold red]Schema apply/verify command failed via script.[/bold red]")
+        console.print("This might indicate an issue with the database or schema state.")
+        console.print("For robust schema management, especially if issues persist, please use the Procrastinate CLI:")
+        console.print("  [blue]conda run -n video-ingest env PYTHONPATH=. procrastinate --app=video_ingestor.app schema --apply[/blue]")
+
+@cli.command()
+def db_status():
+    """Check the database connection status"""
+    try:
+        import psycopg2
+        from task_queue import get_db_config
+        
+        # Get database configuration
+        db_config = get_db_config()
+        console.print("\n[bold]Database Configuration:[/bold]")
+        console.print(f"Host: {db_config['host']}")
+        console.print(f"Port: {db_config['port']}")
+        console.print(f"Database: {db_config['dbname']}")
+        console.print(f"User: {db_config['user']}")
+        
+        # Try to connect
+        console.print("\n[bold]Testing Connection...[/bold]")
+        try:
+            conn = psycopg2.connect(**db_config)
+            cursor = conn.cursor()
+            cursor.execute("SELECT version();")
+            version = cursor.fetchone()[0]
+            cursor.close()
+            conn.close()
+            console.print(f"[green]Connection successful![/green]")
+            console.print(f"PostgreSQL version: {version}")
+        except Exception as e:
+            console.print(f"[red]Connection failed: {str(e)}[/red]")
+            console.print("\n[bold]Troubleshooting:[/bold]")
+            console.print("1. Ensure PostgreSQL is running in Docker")
+            console.print("2. Check that the database exists")
+            console.print("3. Verify the connection settings in .env file")
+            console.print("\n[bold]Environment Variables:[/bold]")
+            console.print("VIDEOINGESTOR_DB_HOST - Database hostname (default: localhost)")
+            console.print("VIDEOINGESTOR_DB_PORT - Database port (default: 5432)")
+            console.print("VIDEOINGESTOR_DB_NAME - Database name (default: videoingestor)")
+            console.print("VIDEOINGESTOR_DB_USER - Database username (default: postgres)")
+            console.print("VIDEOINGESTOR_DB_PASSWORD - Database password (default: password)")
+    except ImportError:
+        console.print("[red]Required modules not available. Cannot check database status.[/red]")
+    except Exception as e:
+        console.print(f"[red]Error checking database status: {str(e)}[/red]")
+
+
+
 if __name__ == "__main__":
-    app()
+    cli()
