@@ -383,6 +383,43 @@ def calculate_aspect_ratio_str(width: Optional[int], height: Optional[int]) -> O
         return None
     common_divisor = math.gcd(width, height)
     return f"{width // common_divisor}:{height // common_divisor}"
+def map_exposure_mode(mode_val: Optional[Union[str, int]]) -> Optional[str]:
+    """Map EXIF ExposureMode numerical value to a human-readable string."""
+    if mode_val is None:
+        return None
+    try:
+        val = int(str(mode_val).strip())
+        if val == 0:
+            return "AUTO_EXPOSURE"
+        elif val == 1:
+            return "MANUAL_EXPOSURE"
+        elif val == 2:
+            return "AUTO_BRACKET"
+        else:
+            logger.warning(f"Unknown ExposureMode value: {mode_val}")
+            return str(mode_val) # Return original value if unknown
+    except ValueError:
+        logger.warning(f"Could not parse ExposureMode value: {mode_val}")
+        return str(mode_val) # Return original string if not an int
+
+def map_white_balance(wb_val: Optional[Union[str, int]]) -> Optional[str]:
+    """Map EXIF WhiteBalance numerical value to a human-readable string."""
+    if wb_val is None:
+        return None
+    try:
+        val = int(str(wb_val).strip())
+        if val == 0:
+            return "AUTO_WHITE_BALANCE"
+        elif val == 1:
+            return "MANUAL_WHITE_BALANCE"
+        else:
+            # Many more values exist for white balance, but these are the most common.
+            # For others, we'll return the numerical value as a string.
+            logger.warning(f"Unknown or unmapped WhiteBalance value: {wb_val}")
+            return str(wb_val) # Return original value if unknown or unmapped
+    except ValueError:
+        logger.warning(f"Could not parse WhiteBalance value: {wb_val}")
+        return str(wb_val) # Return original string if not an int
 
 def extract_extended_exif_metadata(file_path: str) -> Dict[str, Any]:
     """
@@ -455,11 +492,11 @@ def extract_extended_exif_metadata(file_path: str) -> Dict[str, Any]:
                     
             # Exposure mode
             if 'EXIF:ExposureMode' in metadata:
-                extended_metadata['exposure_mode'] = str(metadata['EXIF:ExposureMode'])
+                extended_metadata['exposure_mode'] = map_exposure_mode(metadata.get('EXIF:ExposureMode'))
                 
             # White balance
             if 'EXIF:WhiteBalance' in metadata:
-                extended_metadata['white_balance'] = str(metadata['EXIF:WhiteBalance'])
+                extended_metadata['white_balance'] = map_white_balance(metadata.get('EXIF:WhiteBalance'))
                 
             logger.info("Extended EXIF metadata extraction successful", path=file_path)
             return extended_metadata
