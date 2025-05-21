@@ -102,3 +102,51 @@ try:
     HAS_TRANSFORMERS = True
 except ImportError:
     HAS_TRANSFORMERS = False
+
+class Config:
+    """
+    A simple configuration class to hold and provide settings.
+    """
+    def __init__(self, config_data: dict = None):
+        self._config = config_data if config_data is not None else {}
+
+    def get_setting(self, key: str, default=None):
+        """
+        Retrieves a setting value by key.
+        Uses dot notation for nested keys (e.g., 'processors.video.enabled').
+        """
+        keys = key.split('.')
+        value = self._config
+        try:
+            for k in keys:
+                value = value[k]
+            return value
+        except (KeyError, TypeError):
+            return default
+
+    def set_setting(self, key: str, value):
+        """
+        Sets a setting value by key.
+        Uses dot notation for nested keys.
+        """
+        keys = key.split('.')
+        d = self._config
+        for k in keys[:-1]:
+            d = d.setdefault(k, {})
+        d[keys[-1]] = value
+
+    def update_config(self, new_config_data: dict):
+        """
+        Merges new configuration data into the existing configuration.
+        """
+        def _deep_update(source, overrides):
+            for key, value in overrides.items():
+                if isinstance(value, dict) and key in source and isinstance(source[key], dict):
+                    _deep_update(source[key], value)
+                else:
+                    source[key] = value
+            return source
+        self._config = _deep_update(self._config, new_config_data)
+
+    def __repr__(self):
+        return f"Config(config_data={self._config})"
