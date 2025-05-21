@@ -22,6 +22,8 @@ The system combines modern computer vision, audio analysis, and multimodal AI to
 - Technical Metadata Extraction ✅
 - Thumbnail Generation ✅
 - Basic Computer Vision Analysis ✅
+- Modular Pipeline Framework ✅ ⭐
+- Configurable Processing Steps ✅ ⭐ 
 - Multimodal AI Analysis ⏳ (Planned)
 - Database Integration ⏳ (Planned)
 - Task Queue System ⏳ (Planned)
@@ -38,6 +40,7 @@ The system combines modern computer vision, audio analysis, and multimodal AI to
 - **Scalable processing** - Handle dozens to thousands of clips in a single operation
 - **Format agnostic** - Support for professional (ProRes, DNxHD) and consumer formats (MP4, MOV)
 - **Automation-ready** - Scriptable interface for inclusion in larger workflows
+- **Configurable pipeline** ✅ ⭐ - Enable/disable specific processing steps via command line or config files
 
 ### 2.2. Technical Metadata Extraction ✅
 - **Camera identification** - Make, model, serial number (when available)
@@ -58,6 +61,7 @@ The system combines modern computer vision, audio analysis, and multimodal AI to
 - **Visual quality scoring** - Technical assessment of blur, noise, and compression artifacts ⏳
 - **Scene complexity metrics** - Analysis of visual information density ⏳
 - **Shot type estimation** - Wide, medium, close-up based on composition heuristics ⏳
+- **AI-based focal length detection** ✅ ⭐ - Detect focal length category when EXIF data is unavailable
 
 ### 2.5. Multimodal AI Analysis ⏳
 - **Integrated video processing** - End-to-end analysis via Gemini Flash 2.0
@@ -126,8 +130,18 @@ The system combines modern computer vision, audio analysis, and multimodal AI to
 2. **Exposure calculation** - Histogram analysis for over/under exposure percentage ✅
 3. **Quality metrics** - Analyze blur, noise, and compression artifacts ⏳
 4. **Shot classification** - Determine shot types and composition characteristics ⏳
+5. **AI Focal Length Detection** ✅ ⭐ - Use AI to detect focal length when EXIF data is unavailable
 
-### 3.5. Multimodal AI Analysis ⏳
+### 3.5. Pipeline Configuration ✅ ⭐
+1. **Step Registration** - Pipeline steps registered with name, description, and default status
+2. **Conditional Execution** - Steps can be individually enabled or disabled
+3. **Configuration Methods**:
+   - Command-line parameters (`--enable`, `--disable`)
+   - JSON configuration files
+   - Programmatic API
+4. **Documentation** - Self-documenting pipeline with `list_steps` command
+
+### 3.6. Multimodal AI Analysis ⏳
 1. **Video preparation** - Format video and thumbnails for API submission
 2. **Gemini Flash 2.0 processing** - Send full video plus metadata for comprehensive analysis:
    - Full speech transcription
@@ -138,12 +152,12 @@ The system combines modern computer vision, audio analysis, and multimodal AI to
 3. **Structured data extraction** - Parse API response into standardized schema
 4. **Quality validation** - Verify completeness and usefulness of generated content
 
-### 3.6. Vector Embedding Generation ⏳
+### 3.7. Vector Embedding Generation ⏳
 1. **Text preparation** - Combine summary text and keywords
 2. **Vector generation** - Process through embedding model
 3. **Dimension verification** - Ensure compatibility with vector database
 
-### 3.7. Database Integration ⏳
+### 3.8. Database Integration ⏳
 1. **Schema validation** - Verify all required fields are present
 2. **Transaction preparation** - Group related operations
 3. **Database upsert** - Insert or update all tables in proper sequence:
@@ -170,7 +184,7 @@ The system combines modern computer vision, audio analysis, and multimodal AI to
 │ - Metadata Extractor│     │ - Embedding     │     │ - pgvector         │
 │ - Thumbnail Gen     │     │   Service       │     │   Extension        │
 │ - CV Analysis       │     │                 │     │ - Supabase         │
-│                     │     │                 │     │   Storage          │
+│ - Pipeline System   │     │                 │     │   Storage          │
 └─────────────────────┘     └─────────────────┘     └────────────────────┘
           │                                                   ▲
           │                                                   │
@@ -189,6 +203,7 @@ The system combines modern computer vision, audio analysis, and multimodal AI to
 
 #### 4.2.1. Core Processing Engine
 - **Language**: Python (3.9+)
+- **Pipeline Framework**: ✅ ⭐ Custom pipeline system with configurable steps
 - **Concurrency**: asyncio + ProcessPoolExecutor for CPU-bound tasks (future)
 - **API Wrapper**: Custom client for AI service integration (future)
 - **Database Client**: Supabase Python client (future)
@@ -205,6 +220,7 @@ The system combines modern computer vision, audio analysis, and multimodal AI to
 - **Framework**: OpenCV (Python) ✅
 - **Image Processing**: Pillow for thumbnail generation and manipulation ✅
 - **Image Quality**: Basic exposure analysis via histograms ✅
+- **AI Models**: Focal length detection using transformers ✅ ⭐
 - **Advanced Analysis**: Shot type detection, blur detection, noise analysis ⏳
 
 #### 4.2.4. AI Integration Layer ⏳
@@ -226,6 +242,7 @@ The system combines modern computer vision, audio analysis, and multimodal AI to
 #### 4.2.7. Command-Line Interface ✅
 - **Framework**: Typer for rich CLI experience
 - **Output Formatting**: Rich for colored terminal output and progress bars
+- **Pipeline Configuration**: ✅ ⭐ Command-line parameters and JSON config files for steps
 - **Configuration**: YAML-based config files with CLI overrides (future)
 - **Query Interface**: Natural language parsing for content searches (future)
 - **Extensibility**: Plugin architecture for future commands
@@ -262,7 +279,7 @@ The system combines modern computer vision, audio analysis, and multimodal AI to
 
 #### 4.3.3. Per-File Task Pipeline 🔄
 - **Task Graph**: Each file processed through a simplified directed acyclic graph (DAG) of tasks
-- **Implementation**: ✅ Procrastinate tasks with explicit dependencies
+- **Implementation**: Modular pipeline with configurable steps ✅ ⭐
 - **Standard Pipeline Stages**:
   1. ✅ **Validation**: Format check, corruption detection, checksum generation
   2. ✅ **Metadata Extraction**: Technical parameters, container analysis
@@ -272,10 +289,10 @@ The system combines modern computer vision, audio analysis, and multimodal AI to
   6. ⏳ **Vector Embedding**: Semantic embedding generation
   7. ⏳ **Database Integration**: Final results stored in JSON (will be updated to Supabase)
 - **Execution Properties**:
-  - Stage dependencies managed via Procrastinate locks
-  - Parallel execution where possible using worker concurrency
-  - Built-in checkpointing via job status tracking
-  - Failure handling with automatic retries and queueing locks
+  - Pipeline step configuration via CLI or config files ✅ ⭐
+  - Parallel execution where possible using worker concurrency (future)
+  - Built-in checkpointing via job status tracking (future)
+  - Failure handling with automatic retries and queueing locks (future)
 
 #### 4.3.4. Task Status Tracking
 - **Status States**: Mapped to Procrastinate job states
@@ -333,16 +350,24 @@ video-catalog config set --thumbnails=20 --analysis-depth=full
 ### 5.2. Content Ingestion ✅
 ```bash
 # Basic directory scan and process
-python video_ingestor.py /path/to/videos/
+python -m video_ingest_tool ingest /path/to/videos/
 
 # With custom parameters
-python video_ingestor.py /path/to/videos/ --recursive --output-dir=output
+python -m video_ingest_tool ingest /path/to/videos/ --recursive --output-dir=output
 
 # Monitor progress with detailed output (built-in)
-python video_ingestor.py /path/to/videos/ --limit=5
+python -m video_ingest_tool ingest /path/to/videos/ --limit=5
+
+# Configure processing pipeline ✅ ⭐
+python -m video_ingest_tool ingest /path/to/videos/ --disable=hdr_extraction,ai_focal_length
+python -m video_ingest_tool ingest /path/to/videos/ --enable=thumbnail_generation --disable=exposure_analysis
+python -m video_ingest_tool ingest /path/to/videos/ --config=pipeline_config.json
+
+# List all available pipeline steps ✅ ⭐
+python -m video_ingest_tool list_steps
 
 # Future parameters (planned)
-python video_ingestor.py /path/to/videos/ --focus=audio-analysis --skip-visual
+python -m video_ingest_tool ingest /path/to/videos/ --focus=audio-analysis --skip-visual
 ```
 
 ### 5.3. Content Query ⏳
@@ -407,40 +432,17 @@ video-catalog config backup my-settings.yml
 ### 6.1. Data Model
 
 #### 6.1.1. Current Implementation ✅
-**VideoFile (Pydantic Model)**
+**VideoIngestOutput (Pydantic Model)** ✅ ⭐
 ```python
-class VideoFile(BaseModel):
-    """Video file model with basic information and technical metadata"""
+class VideoIngestOutput(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    file_path: str
-    file_name: str
-    file_checksum: str
-    file_size_bytes: int
-    created_at: Optional[datetime.datetime] = None
-    processed_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
-    duration_seconds: Optional[float] = None
-    technical_metadata: Optional[TechnicalMetadata] = None
-    thumbnail_paths: List[str] = []
-
-class TechnicalMetadata(BaseModel):
-    """Technical metadata extracted from video files"""
-    codec: Optional[str] = None
-    container: Optional[str] = None
-    resolution_width: Optional[int] = None
-    resolution_height: Optional[int] = None
-    aspect_ratio: Optional[str] = None
-    frame_rate: Optional[float] = None
-    bit_rate_kbps: Optional[int] = None
-    duration_seconds: Optional[float] = None
-    exposure_warning: Optional[bool] = None
-    exposure_stops: Optional[float] = None
-    overexposed_percentage: Optional[float] = None
-    underexposed_percentage: Optional[float] = None
-    bit_depth: Optional[int] = None
-    color_space: Optional[str] = None
-    camera_make: Optional[str] = None
-    camera_model: Optional[str] = None
-    focal_length: Optional[str] = None
+    file_info: FileInfo
+    video: VideoDetails
+    audio_tracks: List[AudioTrack] = Field(default_factory=list)
+    subtitle_tracks: List[SubtitleTrack] = Field(default_factory=list)
+    camera: CameraDetails
+    thumbnails: List[str] = Field(default_factory=list)
+    analysis: AnalysisDetails
 ```
 
 #### 6.1.2. Future Database Schema ⏳
@@ -559,277 +561,173 @@ CREATE TABLE procrastinate_events (
 );
 ```
 
-### 6.2. Current Implementation Details ✅
+### 6.2. Current Implementation Details
 
-#### 6.2.1. File Processing Pipeline
+#### 6.2.1. Pipeline Architecture ✅ ⭐
 ```python
-def process_video_file(file_path: str, thumbnails_dir: str) -> VideoFile:
-    """
-    Process a video file to extract metadata and generate thumbnails.
+# Define the pipeline and register steps
+pipeline = ProcessingPipeline()
+
+@pipeline.register_step(
+    name="checksum_generation", 
+    enabled=True,
+    description="Calculate file checksum for deduplication"
+)
+def generate_checksum(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
+    # Implementation of the step
+    # ...
+
+# Main processing function using the pipeline
+def process_video_file(file_path: str, thumbnails_dir: str, logger=None, config: Dict[str, bool] = None) -> VideoIngestOutput:
+    # Configure pipeline if config is provided
+    if config:
+        pipeline.configure_steps(config)
     
-    Args:
-        file_path: Path to the video file
-        thumbnails_dir: Directory to save thumbnails
-        
-    Returns:
-        VideoFile: Processed video file object
-    """
-    # Calculate checksum for deduplication
-    checksum = calculate_checksum(file_path)
+    # Initial data
+    initial_data = {
+        'file_path': file_path,
+        'processed_at': datetime.datetime.now()
+    }
     
-    # Extract metadata from multiple sources
-    mediainfo_data = extract_mediainfo(file_path)
-    ffprobe_data = extract_ffprobe_info(file_path)
-    exiftool_data = extract_exiftool_info(file_path)
-    
-    # Combine and normalize metadata
-    metadata = {**exiftool_data, **ffprobe_data, **mediainfo_data}
-    
-    # Generate thumbnails
-    thumbnail_dir = os.path.join(thumbnails_dir, checksum)
-    thumbnail_paths = generate_thumbnails(file_path, thumbnail_dir)
-    
-    # Analyze exposure using the first thumbnail
-    exposure_data = {}
-    if thumbnail_paths:
-        exposure_data = analyze_exposure(thumbnail_paths[0])
-    
-    # Calculate aspect ratio
-    aspect_ratio_str = calculate_aspect_ratio_str(
-        metadata.get('width'), 
-        metadata.get('height')
+    # Execute pipeline
+    result = pipeline.execute_pipeline(
+        initial_data, 
+        thumbnails_dir=thumbnails_dir,
+        logger=logger
     )
     
-    # Create structured technical metadata
-    technical_metadata = TechnicalMetadata(
-        codec=metadata.get('codec'),
-        container=metadata.get('container'),
-        resolution_width=metadata.get('width'),
-        resolution_height=metadata.get('height'),
-        aspect_ratio=aspect_ratio_str,
-        frame_rate=metadata.get('frame_rate'),
-        bit_rate_kbps=int(metadata.get('overall_bit_rate') / 1000) if metadata.get('overall_bit_rate') else None,
-        duration_seconds=metadata.get('duration_seconds'),
-        exposure_warning=exposure_data.get('exposure_warning'),
-        exposure_stops=exposure_data.get('exposure_stops'),
-        overexposed_percentage=exposure_data.get('overexposed_percentage'),
-        underexposed_percentage=exposure_data.get('underexposed_percentage'),
-        bit_depth=metadata.get('bit_depth'),
-        color_space=metadata.get('color_space'),
-        camera_make=metadata.get('camera_make'),
-        camera_model=metadata.get('camera_model'),
-        focal_length=metadata.get('focal_length')
-    )
+    # Return the output model
+    output = result.get('output')
     
-    # Create complete video file object
-    video_file = VideoFile(
-        file_path=file_path,
-        file_name=os.path.basename(file_path),
-        file_checksum=checksum,
-        file_size_bytes=os.path.getsize(file_path),
-        created_at=metadata.get('created_at'),
-        duration_seconds=metadata.get('duration_seconds'),
-        technical_metadata=technical_metadata,
-        thumbnail_paths=thumbnail_paths
-    )
-    
-    return video_file
+    return output
 ```
 
 #### 6.2.2. Technical Metadata Extraction
 
 ```python
-def extract_mediainfo(file_path: str) -> Dict[str, Any]:
-    """
-    Extract technical metadata using pymediainfo.
-    """
-    media_info = pymediainfo.MediaInfo.parse(file_path)
+@pipeline.register_step(
+    name="mediainfo_extraction", 
+    enabled=True,
+    description="Extract metadata using MediaInfo"
+)
+def extract_mediainfo_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
+    """Extract metadata using MediaInfo."""
+    file_path = data.get('file_path')
+    mediainfo_data = extract_mediainfo(file_path, logger)
     
-    general_track = next((track for track in media_info.tracks if track.track_type == 'General'), None)
-    video_track = next((track for track in media_info.tracks if track.track_type == 'Video'), None)
-    
-    metadata = {}
-    
-    if general_track:
-        metadata.update({
-            'container': general_track.format,
-            'duration_seconds': float(general_track.duration) / 1000 if general_track.duration else None,
-            'file_size_bytes': general_track.file_size,
-            'created_at': parse_datetime_string(general_track.encoded_date)
-        })
-    
-    if video_track:
-        metadata.update({
-            'codec': video_track.codec_id or video_track.format,
-            'width': video_track.width,
-            'height': video_track.height,
-            'frame_rate': float(video_track.frame_rate) if video_track.frame_rate else None,
-            'bit_depth': video_track.bit_depth,
-            'color_space': video_track.color_space
-        })
-    
-    return metadata
+    return {
+        'mediainfo_data': mediainfo_data
+    }
 
-def extract_ffprobe_info(file_path: str) -> Dict[str, Any]:
-    """
-    Extract technical metadata using PyAV (which uses FFmpeg libraries).
-    """
-    with av.open(file_path) as container:
-        duration_seconds = None
-        if container.duration is not None:
-            duration_seconds = float(container.duration) / 1000000.0
-        
-        metadata = {
-            'duration_seconds': duration_seconds,
-            'file_size_bytes': os.path.getsize(file_path)
-        }
-        
-        video_streams = [s for s in container.streams.video if s.type == 'video']
-        if video_streams:
-            video_stream = video_streams[0]
-            
-            # Extract codec information
-            codec_ctx = getattr(video_stream, 'codec_context', None)
-            codec_name_val = 'unknown'
-            if codec_ctx:
-                codec_name_val = getattr(codec_ctx, 'name', None)
-                if not codec_name_val:
-                    codec_name_val = getattr(codec_ctx, 'long_name', 'unknown')
+@pipeline.register_step(
+    name="ffprobe_extraction", 
+    enabled=True,
+    description="Extract metadata using FFprobe/PyAV"
+)
+def extract_ffprobe_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
+    """Extract metadata using FFprobe/PyAV."""
+    file_path = data.get('file_path')
+    ffprobe_data = extract_ffprobe_info(file_path, logger)
+    
+    return {
+        'ffprobe_data': ffprobe_data
+    }
 
-            # Extract frame rate
-            frame_rate = None
-            if video_stream.average_rate:
-                frame_rate = float(video_stream.average_rate)
-            
-            metadata.update({
-                'format_name': container.format.name,
-                'format_long_name': container.format.long_name,
-                'codec': codec_name_val,
-                'width': video_stream.width,
-                'height': video_stream.height,
-                'frame_rate': frame_rate,
-                'bit_depth': getattr(video_stream, 'bits_per_coded_sample', None)
-            })
-        
-        return metadata
-
-def extract_exiftool_info(file_path: str) -> Dict[str, Any]:
-    """
-    Extract metadata using ExifTool.
-    """
-    with exiftool.ExifToolHelper() as et:
-        metadata = et.get_metadata(file_path)[0]
-        
-        exif_data = {
-            'camera_make': metadata.get('EXIF:Make'),
-            'camera_model': metadata.get('EXIF:Model'),
-            'focal_length': metadata.get('EXIF:FocalLength'),
-            'created_at': parse_datetime_string(
-                metadata.get('EXIF:CreateDate') or 
-                metadata.get('QuickTime:CreateDate') or 
-                metadata.get('QuickTime:CreationDate')
-            ),
-            'gps_latitude': metadata.get('EXIF:GPSLatitude'),
-            'gps_longitude': metadata.get('EXIF:GPSLongitude'),
-        }
-        
-        exif_data = {k: v for k, v in exif_data.items() if v is not None}
-        return exif_data
+@pipeline.register_step(
+    name="exiftool_extraction", 
+    enabled=True,
+    description="Extract EXIF metadata"
+)
+def extract_exiftool_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
+    """Extract metadata using ExifTool."""
+    file_path = data.get('file_path')
+    exiftool_data = extract_exiftool_info(file_path, logger)
+    
+    return {
+        'exiftool_data': exiftool_data
+    }
 ```
 
 #### 6.2.3. Thumbnail Generation
 
 ```python
-def generate_thumbnails(file_path: str, output_dir: str, count: int = 5) -> List[str]:
-    """
-    Generate thumbnails from video file using PyAV.
-    """
-    thumbnail_paths = []
+@pipeline.register_step(
+    name="thumbnail_generation", 
+    enabled=True,
+    description="Generate thumbnails from video"
+)
+def generate_thumbnails_step(data: Dict[str, Any], thumbnails_dir=None, logger=None) -> Dict[str, Any]:
+    """Generate thumbnails for a video file."""
+    file_path = data.get('file_path')
+    checksum = data.get('checksum')
     
-    # Create output directory
-    os.makedirs(output_dir, exist_ok=True)
+    thumbnail_dir_for_file = os.path.join(thumbnails_dir, checksum)
+    thumbnail_paths = generate_thumbnails(file_path, thumbnail_dir_for_file, logger=logger)
     
-    with av.open(file_path) as container:
-        # Calculate duration
-        duration = float(container.duration / 1000000) if container.duration else 0
-        
-        if duration <= 0:
-            return []
-        
-        # Calculate evenly distributed positions
-        positions = [duration * i / (count + 1) for i in range(1, count + 1)]
-        
-        if not container.streams.video:
-            return []
-            
-        stream = container.streams.video[0]
-        
-        for i, position in enumerate(positions):
-            output_path = os.path.join(output_dir, f"{os.path.basename(file_path)}_{i}.jpg")
-            
-            # Seek to position
-            container.seek(int(position * 1000000), stream=stream)
-            
-            # Extract and save frame
-            for frame in container.decode(video=0):
-                img = frame.to_image()
-                
-                # Resize for thumbnail
-                width, height = img.size
-                new_width = 640
-                new_height = int(height * new_width / width)
-                img = img.resize((new_width, new_height), Image.LANCZOS)
-                
-                img.save(output_path, quality=95)
-                
-                thumbnail_paths.append(output_path)
-                break
-    
-    return thumbnail_paths
+    return {
+        'thumbnail_paths': thumbnail_paths
+    }
 ```
 
 #### 6.2.4. Exposure Analysis
 
 ```python
-def analyze_exposure(thumbnail_path: str) -> Dict[str, Any]:
-    """
-    Analyze exposure in an image using OpenCV.
-    Returns exposure warning flag and exposure deviation in stops.
-    """
-    image = cv2.imread(thumbnail_path)
+@pipeline.register_step(
+    name="exposure_analysis", 
+    enabled=True,
+    description="Analyze exposure in thumbnails"
+)
+def analyze_exposure_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
+    """Analyze exposure in thumbnails."""
+    thumbnail_paths = data.get('thumbnail_paths', [])
     
-    # Convert to grayscale
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    if not thumbnail_paths:
+        return {'exposure_data': {}}
+        
+    exposure_data = analyze_exposure(thumbnail_paths[0], logger)
     
-    # Calculate histogram
-    hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
-    hist = hist.flatten() / (gray.shape[0] * gray.shape[1])
-    
-    # Calculate over/under exposure
-    overexposed = sum(hist[240:])
-    underexposed = sum(hist[:16])
-    
-    # Calculate exposure warning
-    exposure_warning = overexposed > 0.05 or underexposed > 0.05
-    
-    # Estimate exposure deviation in stops
-    # (This would be calculated based on histogram distribution)
-    exposure_stops = 0.0
-    if overexposed > underexposed and overexposed > 0.05:
-        # Rough approximation of stops overexposed
-        exposure_stops = math.log2(overexposed * 20)
-    elif underexposed > 0.05:
-        # Rough approximation of stops underexposed (negative value)
-        exposure_stops = -math.log2(underexposed * 20)
-    
-    result = {
-        'exposure_warning': exposure_warning,
-        'exposure_stops': exposure_stops,
-        'overexposed_percentage': float(overexposed * 100),
-        'underexposed_percentage': float(underexposed * 100)
+    return {
+        'exposure_data': exposure_data
     }
+```
+
+#### 6.2.5. AI Focal Length Detection ✅ ⭐
+
+```python
+@pipeline.register_step(
+    name="ai_focal_length", 
+    enabled=True,
+    description="Detect focal length using AI when EXIF data is not available"
+)
+def detect_focal_length_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
+    """Detect focal length using AI when EXIF data is not available."""
+    # Check if we already have focal length information
+    exiftool_data = data.get('exiftool_data', {})
     
-    return result
+    if exiftool_data.get('focal_length_mm') or exiftool_data.get('focal_length_category'):
+        # We already have focal length data, no need for AI detection
+        return {}
+    
+    thumbnail_paths = data.get('thumbnail_paths', [])
+    
+    if not thumbnail_paths:
+        return {}
+    
+    category, approx_value = detect_focal_length_with_ai(
+        thumbnail_paths[0], 
+        FOCAL_LENGTH_RANGES, 
+        has_transformers=HAS_TRANSFORMERS,
+        logger=logger
+    )
+    
+    if category and approx_value:
+        return {
+            'ai_focal_length_category': category,
+            'ai_focal_length_mm': approx_value,
+            'focal_length_source': 'AI'
+        }
+    
+    return {}
 ```
 
 ### 6.3. Future Procrastinate Integration ⏳
@@ -870,38 +768,6 @@ def process_video_file(file_path, config=None):
     except Exception as e:
         logger.error(f"Error processing {file_path}: {str(e)}")
         raise  # This will trigger Procrastinate's retry mechanism
-```
-
-#### 6.3.2. Task Pipeline Orchestration
-```python
-# Metadata extraction task
-@app.task(queue="processing", lock="{file_path}")
-def extract_metadata(file_path, checksum, config=None):
-    """
-    Extract metadata as a separate Procrastinate task.
-    The lock ensures only one instance can process the same file at a time.
-    """
-    try:
-        # Extract metadata from multiple sources
-        mediainfo_data = extract_mediainfo(file_path)
-        ffprobe_data = extract_ffprobe_info(file_path)
-        exiftool_data = extract_exiftool_info(file_path)
-        
-        # Combine and normalize metadata
-        metadata = {**exiftool_data, **ffprobe_data, **mediainfo_data}
-        
-        # Queue thumbnail generation as the next step
-        generate_thumbnails.defer(
-            file_path=file_path, 
-            checksum=checksum, 
-            metadata=metadata,
-            config=config
-        )
-        
-        return {"status": "success", "file": file_path, "metadata": "extracted"}
-    except Exception as e:
-        logger.error(f"Error extracting metadata from {file_path}: {str(e)}")
-        raise
 ```
 
 ### 6.4. Future AI Integration ⏳
@@ -1000,8 +866,8 @@ async def analyze_video_content(video_file_path, thumbnails, metadata, job_id):
    - ⏳ Convert current JSON storage to database storage
 
 3. **Refactor Current Code:**
-   - ⏳ Modify VideoFile model to match database schema
-   - ⏳ Update process_video_file to store in database
+   - ✅ Ensure Pydantic models match future database schema
+   - ⏳ Update pipeline to store in database
    - ⏳ Implement functions to query and update database records
 
 ### 7.2. Task Queue Implementation Phase ⏳
@@ -1011,7 +877,8 @@ async def analyze_video_content(video_file_path, thumbnails, metadata, job_id):
    - ⏳ Create task schema (Procrastinate applies automatically)
 
 2. **Refactor Pipeline into Tasks:** ⏳
-   - ⏳ Split process_video_file into discrete tasks
+   - ✅ Split processing into discrete steps
+   - ⏳ Convert pipeline steps to Procrastinate tasks
    - ⏳ Implement dependencies between tasks
    - ⏳ Ensure proper error handling and retry logic
 
@@ -1039,19 +906,21 @@ async def analyze_video_content(video_file_path, thumbnails, metadata, job_id):
 
 ### 7.4. CLI Enhancement Phase
 1. **Command Structure Expansion:**
-   - Implement search commands
-   - Add collection and tag management
-   - Create system management commands
+   - ✅ Add step configuration functionality
+   - ✅ Add list_steps command
+   - ⏳ Implement search commands
+   - ⏳ Add collection and tag management
+   - ⏳ Create system management commands
 
 2. **Natural Language Search:**
-   - Implement vector-based semantic search
-   - Create query parsing and refinement
-   - Add compound filtering with technical parameters
+   - ⏳ Implement vector-based semantic search
+   - ⏳ Create query parsing and refinement
+   - ⏳ Add compound filtering with technical parameters
 
 3. **Output Formatting:**
-   - Create exporters for different formats (JSON, CSV)
-   - Enhance terminal output with Rich
-   - Implement report generation
+   - ✅ Provide detailed pipeline information
+   - ⏳ Create exporters for different formats (JSON, CSV)
+   - ⏳ Implement report generation
 
 ---
 
@@ -1075,6 +944,8 @@ async def analyze_video_content(video_file_path, thumbnails, metadata, job_id):
   - polyfile>=0.5.5 (File type detection)
   - hachoir==3.3.0 (Binary parsing)
   - python-dateutil>=2.8.2 (Date parsing)
+  - transformers>=4.28.0 (Optional: for AI focal length detection) ✅ ⭐
+  - torch>=2.0.0 (Optional: for AI focal length detection) ✅ ⭐
 
 ### 8.2. Future Dependencies ⏳
 - Supabase client for Python
@@ -1095,7 +966,14 @@ async def analyze_video_content(video_file_path, thumbnails, metadata, job_id):
 
 ## 9. Conclusion
 
-The AI-Powered Video Ingest & Catalog Tool is being developed in phases, with solid progress on the content discovery and technical metadata extraction components. The current implementation provides a reliable foundation for automated video file processing, storing results in JSON format with well-structured data models.
+The AI-Powered Video Ingest & Catalog Tool is being developed in phases, with solid progress on the content discovery and technical metadata extraction components. The current implementation provides a reliable foundation for automated video file processing, with a modular and configurable pipeline that makes it easy to add new processing steps and features.
+
+Recent improvements include:
+- ✅ Refactored modular architecture with clear separation of concerns
+- ✅ Configurable pipeline with the ability to enable/disable specific steps
+- ✅ Enhanced CLI interface with step configuration and documentation
+- ✅ AI-based focal length detection for videos lacking EXIF data
+- ✅ Improved data models that align with future database schema
 
 The next phases of development will focus on:
 1. Implementing database integration with Supabase
