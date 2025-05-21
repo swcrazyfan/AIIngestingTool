@@ -185,17 +185,6 @@ def categorize_focal_length(focal_length: Optional[Union[str, int, float]]) -> O
         return None
 
 # Define our data models with Pydantic
-class HDRMetadata(BaseModel):
-    """HDR-related metadata extracted from video files"""
-    hdr_format: Optional[str] = None  # HDR10, Dolby Vision, HLG, etc.
-    master_display: Optional[str] = None  # Display primaries
-    max_cll: Optional[int] = None  # Maximum Content Light Level
-    max_fall: Optional[int] = None  # Maximum Frame Average Light Level
-    color_primaries: Optional[str] = None
-    transfer_characteristics: Optional[str] = None
-    matrix_coefficients: Optional[str] = None
-    color_range: Optional[str] = None
-
 class AudioTrack(BaseModel):
     """Audio track metadata"""
     track_id: Optional[str] = None
@@ -216,71 +205,6 @@ class SubtitleTrack(BaseModel):
     language: Optional[str] = None
     codec_id: Optional[str] = None
     embedded: Optional[bool] = None
-
-class CodecParameters(BaseModel):
-    """Detailed codec parameters"""
-    profile: Optional[str] = None  # e.g., 'High', 'Main', 'Baseline' for H.264
-    level: Optional[str] = None  # e.g., '4.0', '5.1'
-    pixel_format: Optional[str] = None  # e.g., 'yuv420p'
-    chroma_subsampling: Optional[str] = None  # e.g., '4:2:0', '4:2:2', '4:4:4'
-    bitrate_mode: Optional[str] = None  # e.g., 'VBR', 'CBR'
-    cabac: Optional[bool] = None  # Context-adaptive binary arithmetic coding
-    ref_frames: Optional[int] = None  # Number of reference frames
-    gop_size: Optional[int] = None  # Group of pictures size
-    scan_type: Optional[str] = None  # Interlaced, Progressive
-    field_order: Optional[str] = None  # Top Field First, Bottom Field First
-
-class TechnicalMetadata(BaseModel):
-    """Technical metadata extracted from video files"""
-    codec: Optional[str] = None
-    container: Optional[str] = None
-    resolution_width: Optional[int] = None
-    resolution_height: Optional[int] = None
-    aspect_ratio: Optional[str] = None
-    frame_rate: Optional[float] = None
-    bit_rate_kbps: Optional[int] = None
-    duration_seconds: Optional[float] = None
-    exposure_warning: Optional[bool] = None
-    exposure_stops: Optional[float] = None
-    overexposed_percentage: Optional[float] = None
-    underexposed_percentage: Optional[float] = None
-    bit_depth: Optional[int] = None
-    color_space: Optional[str] = None
-    camera_make: Optional[str] = None
-    camera_model: Optional[str] = None
-    focal_length_mm: Optional[float] = None  # Numerical focal length in millimeters
-    focal_length_category: Optional[str] = None  # Categorized focal length: ULTRA-WIDE, WIDE, MEDIUM, etc.
-    # Deprecated field - kept for backward compatibility but will be removed in future versions
-    focal_length: Optional[str] = None  # DEPRECATED
-    
-    # Extended metadata
-    hdr_metadata: Optional[HDRMetadata] = None
-    codec_parameters: Optional[CodecParameters] = None
-    
-    # GPS information
-    gps_latitude: Optional[float] = None
-    gps_longitude: Optional[float] = None
-    gps_altitude: Optional[float] = None
-    location_name: Optional[str] = None
-    
-    # Camera metadata - removed camera_serial_number
-    lens_model: Optional[str] = None
-    iso: Optional[int] = None
-    shutter_speed: Optional[str] = None
-    f_stop: Optional[float] = None
-    exposure_mode: Optional[str] = None
-    white_balance: Optional[str] = None
-
-class VideoFile(BaseModel):
-    """Video file model with comprehensive metadata"""
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    file_info: Dict[str, Any]
-    video: Optional[Dict[str, Any]] = None
-    audio_tracks: List[AudioTrack] = []
-    subtitle_tracks: List[SubtitleTrack] = []
-    camera: Optional[Dict[str, Any]] = None
-    thumbnails: List[str] = []
-    analysis: Optional[Dict[str, Any]] = None
 
 # Utility Functions
 def parse_datetime_string(date_str: Optional[str]) -> Optional[datetime.datetime]:
@@ -318,6 +242,107 @@ def parse_datetime_string(date_str: Optional[str]) -> Optional[datetime.datetime
     except (ValueError, TypeError) as e:
         logger.warning(f"Could not parse date string: {date_str}", error=str(e))
         return None
+# --- New Pydantic Models for Revised JSON Schema ---
+
+class FileInfo(BaseModel):
+    file_path: str
+    file_name: str
+    file_checksum: str
+    file_size_bytes: int
+    created_at: Optional[datetime.datetime] = None
+    processed_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
+
+class VideoCodecDetails(BaseModel):
+    name: Optional[str] = None
+    profile: Optional[str] = None
+    level: Optional[str] = None
+    bitrate_kbps: Optional[int] = None
+    bit_depth: Optional[int] = None
+    chroma_subsampling: Optional[str] = None
+    pixel_format: Optional[str] = None
+    bitrate_mode: Optional[str] = None
+    cabac: Optional[bool] = None
+    ref_frames: Optional[int] = None
+    gop_size: Optional[int] = None
+    scan_type: Optional[str] = None
+    field_order: Optional[str] = None
+
+class VideoResolution(BaseModel):
+    width: Optional[int] = None
+    height: Optional[int] = None
+    aspect_ratio: Optional[str] = None
+
+class VideoHDRDetails(BaseModel):
+    is_hdr: bool = False
+    format: Optional[str] = None # Corresponds to old hdr_format
+    master_display: Optional[str] = None
+    max_cll: Optional[int] = None
+    max_fall: Optional[int] = None
+
+class VideoColorDetails(BaseModel):
+    color_space: Optional[str] = None
+    color_primaries: Optional[str] = None
+    transfer_characteristics: Optional[str] = None
+    matrix_coefficients: Optional[str] = None
+    color_range: Optional[str] = None
+    hdr: VideoHDRDetails
+
+class VideoExposureDetails(BaseModel):
+    warning: Optional[bool] = None
+    stops: Optional[float] = None
+    overexposed_percentage: Optional[float] = None
+    underexposed_percentage: Optional[float] = None
+
+class VideoDetails(BaseModel):
+    duration_seconds: Optional[float] = None
+    codec: VideoCodecDetails
+    container: Optional[str] = None
+    resolution: VideoResolution
+    frame_rate: Optional[float] = None
+    color: VideoColorDetails
+    exposure: VideoExposureDetails
+
+class CameraFocalLength(BaseModel):
+    value_mm: Optional[float] = None
+    category: Optional[str] = None
+
+class CameraSettings(BaseModel):
+    iso: Optional[int] = None
+    shutter_speed: Optional[Union[str, float]] = None
+    f_stop: Optional[float] = None
+    exposure_mode: Optional[str] = None
+    white_balance: Optional[str] = None
+
+class CameraLocation(BaseModel):
+    gps_latitude: Optional[float] = None
+    gps_longitude: Optional[float] = None
+    gps_altitude: Optional[float] = None
+    location_name: Optional[str] = None
+
+class CameraDetails(BaseModel):
+    make: Optional[str] = None
+    model: Optional[str] = None
+    lens_model: Optional[str] = None
+    focal_length: CameraFocalLength
+    settings: CameraSettings
+    location: CameraLocation
+
+class AnalysisDetails(BaseModel):
+    scene_changes: List[float] = Field(default_factory=list)
+    content_tags: List[str] = Field(default_factory=list)
+    content_summary: Optional[str] = None
+
+class VideoIngestOutput(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    file_info: FileInfo
+    video: VideoDetails
+    audio_tracks: List[AudioTrack] = Field(default_factory=list)
+    subtitle_tracks: List[SubtitleTrack] = Field(default_factory=list)
+    camera: CameraDetails
+    thumbnails: List[str] = Field(default_factory=list)
+    analysis: AnalysisDetails
+
+# --- End of New Pydantic Models ---
 
 def map_focal_length_to_category(focal_length):
     """
@@ -1233,7 +1258,7 @@ def extract_codec_parameters(file_path: str) -> Dict[str, Any]:
         return {}
 
 
-def process_video_file(file_path: str, thumbnails_dir: str) -> VideoFile:
+def process_video_file(file_path: str, thumbnails_dir: str) -> VideoIngestOutput:
     """
     Process a video file to extract metadata and generate thumbnails.
     
@@ -1242,194 +1267,205 @@ def process_video_file(file_path: str, thumbnails_dir: str) -> VideoFile:
         thumbnails_dir: Directory to save thumbnails
         
     Returns:
-        VideoFile: Processed video file object
+        VideoIngestOutput: Processed video data object
     """
     logger.info("Processing video file", path=file_path)
     
+    video_id = str(uuid.uuid4())
     checksum = calculate_checksum(file_path)
-    
-    file_size = os.path.getsize(file_path)
-    
-    # Extract metadata from different sources
+    file_size_bytes = os.path.getsize(file_path)
+    file_name = os.path.basename(file_path)
+    processed_at_time = datetime.datetime.now()
+
+    # --- Metadata Extraction ---
     mediainfo_data = extract_mediainfo(file_path)
     ffprobe_data = extract_ffprobe_info(file_path)
     exiftool_data = extract_exiftool_info(file_path)
     
-    # Extract extended metadata
-    # Try adding new extraction functions if they're defined
-    hdr_metadata = {}
-    audio_tracks = []
-    subtitle_tracks = []
-    codec_parameters = {}
-    extended_exif = {}
-    
+    hdr_data_extracted = {}
+    audio_tracks_list_data = []
+    subtitle_tracks_list_data = []
+    codec_params_extracted = {}
+    extended_exif_data = {}
+
     try:
-        # Only execute these if the functions have been defined earlier
         if 'extract_hdr_metadata' in globals():
-            hdr_metadata = extract_hdr_metadata(file_path)
-            
+            hdr_data_extracted = extract_hdr_metadata(file_path)
         if 'extract_audio_tracks' in globals():
-            audio_tracks = extract_audio_tracks(file_path)
-            
+            audio_tracks_list_data = extract_audio_tracks(file_path)
         if 'extract_subtitle_tracks' in globals():
-            subtitle_tracks = extract_subtitle_tracks(file_path)
-            
+            subtitle_tracks_list_data = extract_subtitle_tracks(file_path)
         if 'extract_codec_parameters' in globals():
-            codec_parameters = extract_codec_parameters(file_path)
-            
+            codec_params_extracted = extract_codec_parameters(file_path)
         if 'extract_extended_exif_metadata' in globals():
-            extended_exif = extract_extended_exif_metadata(file_path)
+            extended_exif_data = extract_extended_exif_metadata(file_path)
     except Exception as e:
-        logger.error(f"Error extracting extended metadata: {e}", path=file_path)
-    
-    # Implement category-specific merging instead of simple dictionary merge
-    metadata = {}
-    
-    # Technical video properties - prioritize MediaInfo > FFprobe > ExifTool
-    tech_keys = ['codec', 'width', 'height', 'frame_rate', 'bit_rate_kbps', 'bit_depth', 'color_space',
-                'container', 'duration_seconds']
+        logger.error(f"Error extracting some extended metadata parts: {e}", path=file_path)
+
+    # --- Consolidate Metadata ---
+    master_metadata = {}
+
+    # Prioritize sources for technical video properties
+    tech_keys = ['codec', 'width', 'height', 'frame_rate', 'bit_rate_kbps', 'bit_depth', 'color_space', 'container', 'duration_seconds', 'profile', 'level', 'chroma_subsampling', 'pixel_format', 'bitrate_mode', 'scan_type', 'field_order', 'cabac', 'ref_frames', 'gop_size']
     for key in tech_keys:
-        if key in mediainfo_data and mediainfo_data[key] is not None:
-            metadata[key] = mediainfo_data[key]
-        elif key in ffprobe_data and ffprobe_data[key] is not None:
-            metadata[key] = ffprobe_data[key]
-        elif key in exiftool_data and exiftool_data[key] is not None:
-            metadata[key] = exiftool_data[key]
-    
-    # Camera and lens info - prioritize ExifTool > MediaInfo
-    camera_keys = ['camera_make', 'camera_model', 'focal_length_mm', 'focal_length_category', 'focal_length']
+        master_metadata[key] = mediainfo_data.get(key, ffprobe_data.get(key, exiftool_data.get(key, codec_params_extracted.get(key)))) # Added codec_params_extracted
+
+    # Prioritize sources for camera/lens info
+    camera_keys = ['camera_make', 'camera_model', 'focal_length_mm', 'focal_length_category', 'lens_model', 'iso', 'shutter_speed', 'f_stop', 'exposure_mode', 'white_balance', 'gps_latitude', 'gps_longitude', 'gps_altitude', 'location_name']
     for key in camera_keys:
-        if key in exiftool_data and exiftool_data[key] is not None:
-            metadata[key] = exiftool_data[key]
-        elif key in mediainfo_data and mediainfo_data[key] is not None:
-            metadata[key] = mediainfo_data[key]
-        elif key in ffprobe_data and ffprobe_data[key] is not None:
-            metadata[key] = ffprobe_data[key]
+        master_metadata[key] = exiftool_data.get(key, extended_exif_data.get(key, mediainfo_data.get(key, ffprobe_data.get(key)))) # Added extended_exif_data
+
+    # Prioritize sources for dates
+    master_metadata['created_at'] = exiftool_data.get('created_at', mediainfo_data.get('created_at', ffprobe_data.get('created_at')))
+
+    # Merge remaining from specific extractions if not already set or to overwrite with more specific data
+    for key, value in codec_params_extracted.items():
+        if master_metadata.get(key) is None or key in ['profile', 'level', 'pixel_format', 'chroma_subsampling', 'bitrate_mode', 'scan_type', 'field_order', 'cabac', 'ref_frames', 'gop_size']:
+            if value is not None: master_metadata[key] = value
+    
+    for key, value in hdr_data_extracted.items():
+        if master_metadata.get(key) is None or key in ['hdr_format', 'master_display', 'max_cll', 'max_fall', 'color_primaries', 'transfer_characteristics', 'matrix_coefficients', 'color_range']:
+            if value is not None: master_metadata[key] = value
+
+    for key, value in extended_exif_data.items():
+        if master_metadata.get(key) is None or key in ['lens_model', 'iso', 'shutter_speed', 'f_stop', 'exposure_mode', 'white_balance', 'gps_latitude', 'gps_longitude', 'gps_altitude', 'location_name', 'camera_serial_number']: # camera_serial_number is not in new schema but was in old extended_exif
+            if value is not None: master_metadata[key] = value
             
-    # Dates and timeline info - prioritize ExifTool > MediaInfo
-    date_keys = ['created_at']
-    for key in date_keys:
-        if key in exiftool_data and exiftool_data[key] is not None:
-            metadata[key] = exiftool_data[key]
-        elif key in mediainfo_data and mediainfo_data[key] is not None:
-            metadata[key] = mediainfo_data[key]
-        elif key in ffprobe_data and ffprobe_data[key] is not None:
-            metadata[key] = ffprobe_data[key]
+    # --- Thumbnail Generation & Exposure Analysis ---
+    thumbnail_dir_for_file = os.path.join(thumbnails_dir, checksum)
+    thumbnail_paths = generate_thumbnails(file_path, thumbnail_dir_for_file)
     
-    # Add remaining keys from all sources
-    for data in [ffprobe_data, mediainfo_data, exiftool_data]:
-        for key, value in data.items():
-            if key not in metadata and value is not None:
-                metadata[key] = value
-    
-    # Extended metadata (add from separate extraction functions)
-    # Merge in extended EXIF data
-    for key, value in extended_exif.items():
-        metadata[key] = value
-    
-    # Generate thumbnails
-    thumbnail_dir = os.path.join(thumbnails_dir, checksum)
-    thumbnail_paths = generate_thumbnails(file_path, thumbnail_dir)
-    
-    # Analyze exposure from thumbnails
-    exposure_data = {}
+    exposure_analysis_results = {}
     if thumbnail_paths:
-        exposure_data = analyze_exposure(thumbnail_paths[0])
-    
-    # Check if focal length data is missing from EXIF and try AI-based detection
-    if not metadata.get('focal_length_category') and not metadata.get('focal_length_mm') and thumbnail_paths:
-        logger.info("Focal length not found in EXIF data, attempting AI-based detection", path=file_path)
+        exposure_analysis_results = analyze_exposure(thumbnail_paths[0])
+
+    # --- AI Focal Length Detection (if needed) ---
+    if not master_metadata.get('focal_length_mm') and not master_metadata.get('focal_length_category') and thumbnail_paths:
+        logger.info("Focal length not found, attempting AI detection.", path=file_path)
         category, approx_value = detect_focal_length_with_ai(thumbnail_paths[0])
-        
         if category and approx_value:
-            # Update metadata with AI-detected values
-            metadata['focal_length_category'] = category
-            metadata['focal_length_mm'] = approx_value
-            metadata['focal_length'] = category  # For backward compatibility
-            metadata['focal_length_source'] = 'AI'  # Mark the source as AI for reference
-            logger.info("Successfully detected focal length using AI", 
-                      path=file_path, category=category, value=approx_value)
-    
-    aspect_ratio_str = calculate_aspect_ratio_str(metadata.get('width'), metadata.get('height'))
-    
-    # Create HDR metadata if available
-    hdr_metadata_obj = None
-    if hdr_metadata:
-        hdr_metadata_obj = HDRMetadata(**hdr_metadata)
-    
-    # Create codec parameters if available
-    codec_params_obj = None
-    if codec_parameters:
-        codec_params_obj = CodecParameters(**codec_parameters)
-    
-    # Create technical metadata object with safe defaults
-    technical_metadata = TechnicalMetadata(
-        codec=metadata.get('codec'),
-        container=metadata.get('container'),
-        resolution_width=metadata.get('width'),
-        resolution_height=metadata.get('height'),
-        aspect_ratio=aspect_ratio_str,
-        frame_rate=metadata.get('frame_rate'),
-        bit_rate_kbps=metadata.get('bit_rate_kbps'),
-        duration_seconds=metadata.get('duration_seconds'),
-        exposure_warning=exposure_data.get('exposure_warning'),
-        exposure_stops=exposure_data.get('exposure_stops'),
-        overexposed_percentage=exposure_data.get('overexposed_percentage'),
-        underexposed_percentage=exposure_data.get('underexposed_percentage'),
-        bit_depth=metadata.get('bit_depth'),
-        color_space=metadata.get('color_space'),
-        camera_make=metadata.get('camera_make'),
-        camera_model=metadata.get('camera_model'),
-        focal_length_mm=metadata.get('focal_length_mm'),
-        focal_length_category=metadata.get('focal_length_category'),
-        focal_length=metadata.get('focal_length'),  # For backward compatibility
-        
-        # Extended metadata fields
-        hdr_metadata=hdr_metadata_obj,
-        codec_parameters=codec_params_obj,
-        
-        # GPS info - all default to None in model definition
-        gps_latitude=metadata.get('gps_latitude'),
-        gps_longitude=metadata.get('gps_longitude'),
-        gps_altitude=metadata.get('gps_altitude'),
-        location_name=metadata.get('location_name'),
-        
-        # Additional camera info - all default to None in model definition
-        camera_serial_number=metadata.get('camera_serial_number', None),
-        lens_model=metadata.get('lens_model', None),
-        iso=metadata.get('iso'),
-        shutter_speed=metadata.get('shutter_speed', None),
-        f_stop=metadata.get('f_stop'),
-        exposure_mode=metadata.get('exposure_mode', None),
-        white_balance=metadata.get('white_balance', None)
-    )
-    
-    # Convert audio tracks to model objects
-    audio_track_objects = []
-    for track in audio_tracks:
-        audio_track_objects.append(AudioTrack(**track))
-    
-    # Convert subtitle tracks to model objects
-    subtitle_track_objects = []
-    for track in subtitle_tracks:
-        subtitle_track_objects.append(SubtitleTrack(**track))
-    
-    # Create the video file object
-    video_file = VideoFile(
+            master_metadata['focal_length_category'] = category
+            master_metadata['focal_length_mm'] = approx_value
+            master_metadata['focal_length_source'] = 'AI'
+            logger.info("AI detected focal length", category=category, value=approx_value, path=file_path)
+
+    # --- Populate Pydantic Models ---
+    file_info_obj = FileInfo(
         file_path=file_path,
-        file_name=os.path.basename(file_path),
+        file_name=file_name,
         file_checksum=checksum,
-        file_size_bytes=file_size,
-        created_at=metadata.get('created_at'),
-        duration_seconds=metadata.get('duration_seconds'),
-        technical_metadata=technical_metadata,
-        thumbnail_paths=thumbnail_paths,
-        audio_tracks=audio_track_objects,
-        subtitle_tracks=subtitle_track_objects
+        file_size_bytes=file_size_bytes,
+        created_at=master_metadata.get('created_at'),
+        processed_at=processed_at_time
+    )
+
+    video_codec_details_obj = VideoCodecDetails(
+        name=master_metadata.get('codec'),
+        profile=master_metadata.get('profile'),
+        level=master_metadata.get('level'),
+        bitrate_kbps=master_metadata.get('bit_rate_kbps'),
+        bit_depth=master_metadata.get('bit_depth'),
+        chroma_subsampling=master_metadata.get('chroma_subsampling'),
+        pixel_format=master_metadata.get('pixel_format'),
+        bitrate_mode=master_metadata.get('bitrate_mode'),
+        cabac=master_metadata.get('cabac'),
+        ref_frames=master_metadata.get('ref_frames'),
+        gop_size=master_metadata.get('gop_size'),
+        scan_type=master_metadata.get('scan_type'),
+        field_order=master_metadata.get('field_order')
+    )
+
+    video_resolution_obj = VideoResolution(
+        width=master_metadata.get('width'),
+        height=master_metadata.get('height'),
+        aspect_ratio=calculate_aspect_ratio_str(master_metadata.get('width'), master_metadata.get('height'))
+    )
+
+    video_hdr_details_obj = VideoHDRDetails(
+        is_hdr=bool(master_metadata.get('hdr_format')),
+        format=master_metadata.get('hdr_format'),
+        master_display=master_metadata.get('master_display'),
+        max_cll=master_metadata.get('max_cll'),
+        max_fall=master_metadata.get('max_fall')
+    )
+
+    video_color_details_obj = VideoColorDetails(
+        color_space=master_metadata.get('color_space'),
+        color_primaries=master_metadata.get('color_primaries'),
+        transfer_characteristics=master_metadata.get('transfer_characteristics'),
+        matrix_coefficients=master_metadata.get('matrix_coefficients'),
+        color_range=master_metadata.get('color_range'),
+        hdr=video_hdr_details_obj
+    )
+
+    video_exposure_details_obj = VideoExposureDetails(
+        warning=exposure_analysis_results.get('exposure_warning'),
+        stops=exposure_analysis_results.get('exposure_stops'),
+        overexposed_percentage=exposure_analysis_results.get('overexposed_percentage'),
+        underexposed_percentage=exposure_analysis_results.get('underexposed_percentage')
+    )
+
+    video_details_obj = VideoDetails(
+        duration_seconds=master_metadata.get('duration_seconds'),
+        codec=video_codec_details_obj,
+        container=master_metadata.get('container'),
+        resolution=video_resolution_obj,
+        frame_rate=master_metadata.get('frame_rate'),
+        color=video_color_details_obj,
+        exposure=video_exposure_details_obj
+    )
+
+    audio_track_models = [AudioTrack(**track) for track in audio_tracks_list_data]
+    subtitle_track_models = [SubtitleTrack(**track) for track in subtitle_tracks_list_data]
+
+    camera_focal_length_obj = CameraFocalLength(
+        value_mm=master_metadata.get('focal_length_mm'),
+        category=master_metadata.get('focal_length_category')
+    )
+
+    camera_settings_obj = CameraSettings(
+        iso=master_metadata.get('iso'),
+        shutter_speed=master_metadata.get('shutter_speed'),
+        f_stop=master_metadata.get('f_stop'),
+        exposure_mode=master_metadata.get('exposure_mode'),
+        white_balance=master_metadata.get('white_balance')
+    )
+
+    camera_location_obj = CameraLocation(
+        gps_latitude=master_metadata.get('gps_latitude'),
+        gps_longitude=master_metadata.get('gps_longitude'),
+        gps_altitude=master_metadata.get('gps_altitude'),
+        location_name=master_metadata.get('location_name')
+    )
+
+    camera_details_obj = CameraDetails(
+        make=master_metadata.get('camera_make'),
+        model=master_metadata.get('camera_model'),
+        lens_model=master_metadata.get('lens_model'),
+        focal_length=camera_focal_length_obj,
+        settings=camera_settings_obj,
+        location=camera_location_obj
+    )
+
+    analysis_details_obj = AnalysisDetails(
+        scene_changes=[], # Placeholder
+        content_tags=[],  # Placeholder
+        content_summary=None # Placeholder
+    )
+
+    output = VideoIngestOutput(
+        id=video_id,
+        file_info=file_info_obj,
+        video=video_details_obj,
+        audio_tracks=audio_track_models,
+        subtitle_tracks=subtitle_track_models,
+        camera=camera_details_obj,
+        thumbnails=thumbnail_paths,
+        analysis=analysis_details_obj
     )
     
-    logger.info("Video processing complete", path=file_path, id=video_file.id)
-    return video_file
+    logger.info("Video processing complete", path=file_path, id=output.id)
+    return output
 
 def save_to_json(data: Any, filename: str) -> None:
     """
