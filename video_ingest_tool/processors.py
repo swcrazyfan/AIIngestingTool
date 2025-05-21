@@ -140,7 +140,7 @@ def analyze_exposure(thumbnail_path: str, logger=None) -> Dict[str, Any]:
             'underexposed_percentage': 0.0
         }
 
-def detect_focal_length_with_ai(image_path: str, focal_length_ranges: dict, has_transformers: bool = False, logger=None) -> Tuple[Optional[str], Optional[float]]:
+def detect_focal_length_with_ai(image_path: str, focal_length_ranges: dict, has_transformers: bool = False, logger=None) -> Optional[str]:
     """
     Use AI to detect the focal length category from an image when EXIF data is not available.
     
@@ -151,13 +151,13 @@ def detect_focal_length_with_ai(image_path: str, focal_length_ranges: dict, has_
         logger: Logger instance
         
     Returns:
-        Tuple[Optional[str], Optional[float]]: Focal length category and approximate value in mm
+        Optional[str]: Focal length category (e.g., 'ULTRA-WIDE', 'WIDE', etc.)
     """
     if not has_transformers:
         if logger:
-            logger.warning("AI-based focal length detection requested but transformers library is not available", 
+            logger.warning("AI-based focal length detection requested but transformers library is not available",
                         path=image_path)
-        return None, None
+        return None
     
     try:
         if logger:
@@ -192,23 +192,17 @@ def detect_focal_length_with_ai(image_path: str, focal_length_ranges: dict, has_
             category = top_prediction["label"]
             confidence = top_prediction["score"]
             
-            # Get approximate focal length (midpoint of the range)
-            min_val, max_val = focal_length_ranges[category]
-            approx_focal_length = (min_val + max_val) / 2
-            
             if logger:
                 logger.info(f"AI detected focal length category: {category} (confidence: {confidence:.4f})",
-                         path=image_path, category=category, confidence=confidence)
-                logger.info(f"Approximate focal length: {approx_focal_length}mm", 
-                         path=image_path, focal_length=approx_focal_length)
+                          path=image_path, category=category, confidence=confidence)
             
-            return category, approx_focal_length
+            return category
         else:
             if logger:
                 logger.warning("AI model did not return predictions for focal length", path=image_path)
-            return None, None
+            return None
             
     except Exception as e:
         if logger:
             logger.error("Error using AI to detect focal length", path=image_path, error=str(e))
-        return None, None
+        return None

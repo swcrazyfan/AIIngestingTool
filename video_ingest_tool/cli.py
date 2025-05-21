@@ -57,6 +57,9 @@ def ingest(
     run_json_dir = os.path.join(run_dir, "json")
     os.makedirs(run_json_dir, exist_ok=True)
     
+    # Create identifiable summary filename with timestamp
+    summary_filename = f"all_videos_{os.path.basename(directory)}_{timestamp}.json"
+    
     logger.info("Starting ingestion process", 
                 directory=directory, 
                 recursive=recursive,
@@ -161,12 +164,16 @@ def ingest(
                 )
                 processed_files.append(video_file)
                 
+                # Create filename with original name and UUID
+                base_name = os.path.splitext(os.path.basename(file_path))[0]
+                json_filename = f"{base_name}_{video_file.id}.json"
+                
                 # Save individual JSON to run-specific directory
-                individual_json_path = os.path.join(run_json_dir, f"{video_file.id}.json")
+                individual_json_path = os.path.join(run_json_dir, json_filename)
                 save_to_json(video_file, individual_json_path, logger)
                 
                 # Also save a copy to the global JSON directory for backward compatibility
-                global_json_path = os.path.join(json_dir, f"{video_file.id}.json")
+                global_json_path = os.path.join(json_dir, json_filename)
                 save_to_json(video_file, global_json_path, logger)
                 
             except Exception as e:
@@ -175,12 +182,12 @@ def ingest(
             
             progress.update(task, advance=1)
     
-    # Save run outputs
+    # Save run outputs with directory name in the summary filename
     output_paths = save_run_outputs(
-        processed_files, 
-        run_dir, 
-        timestamp, 
-        json_dir, 
+        processed_files,
+        run_dir,
+        summary_filename,
+        json_dir,
         log_file,
         logger
     )

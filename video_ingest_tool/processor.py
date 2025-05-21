@@ -352,38 +352,56 @@ def detect_focal_length_step(data: Dict[str, Any], logger=None) -> Dict[str, Any
     exiftool_data = data.get('exiftool_data', {})
     extended_exif_data = data.get('extended_exif_data', {})
     
-    if exiftool_data.get('focal_length_mm') or exiftool_data.get('focal_length_category') or \
-       extended_exif_data.get('focal_length_mm') or extended_exif_data.get('focal_length_category'):
-        # We already have focal length data, no need for AI detection
+    # Check if we have valid focal length data from EXIF (not None/null)
+    has_exif_focal_length = (
+        exiftool_data.get('focal_length_mm') is not None or
+        exiftool_data.get('focal_length_category') is not None or
+        extended_exif_data.get('focal_length_mm') is not None or
+        extended_exif_data.get('focal_length_category') is not None
+    )
+    
+    if has_exif_focal_length:
         if logger:
-            logger.info("Focal length already available, skipping AI detection")
-        return {}
+            logger.info("Valid focal length available from EXIF, skipping AI detection")
+        return {
+            'focal_length_source': 'EXIF'
+        }
     
     thumbnail_paths = data.get('thumbnail_paths', [])
     
     if not thumbnail_paths:
         if logger:
             logger.warning("No thumbnails available for focal length detection")
-        return {}
+        return {
+            'focal_length_source': None  # Source is unknown if no thumbnails and no EXIF
+        }
     
     if logger:
         logger.info("Focal length not found, attempting AI detection.")
         
-    category, approx_value = detect_focal_length_with_ai(
-        thumbnail_paths[0], 
-        FOCAL_LENGTH_RANGES, 
+    category = detect_focal_length_with_ai(
+        thumbnail_paths[0],
+        FOCAL_LENGTH_RANGES,
         has_transformers=HAS_TRANSFORMERS,
         logger=logger
     )
     
-    if category and approx_value:
+    if category:
+        if logger:
+            logger.info(f"AI detected focal length category: {category}")
         return {
-            'ai_focal_length_category': category,
-            'ai_focal_length_mm': approx_value,
-            'focal_length_source': 'AI'
+            'focal_length_category': category,    # The AI-detected category
+            'focal_length_mm': None,              # AI never provides mm value
+            'focal_length_source': 'AI'           # Mark as AI-sourced
         }
     
-    return {}
+    if logger:
+        logger.warning("AI detection failed to determine focal length")
+    return {
+        'focal_length_category': None,
+        'focal_length_mm': None,
+        'focal_length_source': None
+    }
 
 @pipeline.register_step(
     name="metadata_consolidation", 
@@ -408,10 +426,12 @@ def consolidate_metadata_step(data: Dict[str, Any], logger=None) -> Dict[str, An
     codec_params = data.get('codec_params', {})
     hdr_data = data.get('hdr_data', {})
     
-    # AI-detected focal length
-    ai_focal_length_category = data.get('ai_focal_length_category')
-    ai_focal_length_mm = data.get('ai_focal_length_mm')
+    # Get focal length info from AI or EXIF
     focal_length_source = data.get('focal_length_source')
+    ai_focal_length_info = {
+        'category': data.get('focal_length_category'),
+        'mm': data.get('focal_length_mm')
+    }
     
     # Initialize the master metadata dictionary
     master_metadata = {}
@@ -422,9 +442,10 @@ def consolidate_metadata_step(data: Dict[str, Any], logger=None) -> Dict[str, An
         master_metadata[key] = mediainfo_data.get(key, ffprobe_data.get(key, exiftool_data.get(key, codec_params.get(key))))
 
     # Prioritize sources for camera/lens info
-    camera_keys = ['camera_make', 'camera_model', 'focal_length_mm', 'focal_length_category', 'lens_model', 'iso', 'shutter_speed', 'f_stop', 'exposure_mode', 'white_balance', 'gps_latitude', 'gps_longitude', 'gps_altitude', 'location_name']
+    camera_keys = ['camera_make', 'camera_model', 'focal_length_mm', 'focal_length_category', 'lens_model', 'iso', 'shutter_speed', 'f_stop', 'exposure_mode', 'white_balance', 'gps_latitude', 'gps_longitude', 'gps_altitude', 'location_name', 'camera_serial_number']
     for key in camera_keys:
-        master_metadata[key] = exiftool_data.get(key, extended_exif_data.get(key, mediainfo_data.get(key, ffprobe_data.get(key))))
+        # Prioritize extended_exif_data then exiftool_data for camera specific info
+        master_metadata[key] = extended_exif_data.get(key, exiftool_data.get(key, mediainfo_data.get(key, ffprobe_data.get(key))))
 
     # Prioritize sources for dates
     master_metadata['created_at'] = exiftool_data.get('created_at', mediainfo_data.get('created_at', ffprobe_data.get('created_at')))
@@ -438,17 +459,35 @@ def consolidate_metadata_step(data: Dict[str, Any], logger=None) -> Dict[str, An
         if master_metadata.get(key) is None or key in ['hdr_format', 'master_display', 'max_cll', 'max_fall', 'color_primaries', 'transfer_characteristics', 'matrix_coefficients', 'color_range']:
             if value is not None: master_metadata[key] = value
 
-    for key, value in extended_exif_data.items():
-        if master_metadata.get(key) is None or key in ['lens_model', 'iso', 'shutter_speed', 'f_stop', 'exposure_mode', 'white_balance', 'gps_latitude', 'gps_longitude', 'gps_altitude', 'location_name', 'camera_serial_number']:
-            if value is not None: master_metadata[key] = value
+    for key, value in extended_exif_data.items(): # Ensure all extended_exif_data is considered
+        if master_metadata.get(key) is None: # Add if not already set
+             if value is not None: master_metadata[key] = value
     
-    # Add AI-detected focal length if available and no other focal length data exists
-    if ai_focal_length_category and ai_focal_length_mm and not master_metadata.get('focal_length_category') and not master_metadata.get('focal_length_mm'):
-        master_metadata['focal_length_category'] = ai_focal_length_category
-        master_metadata['focal_length_mm'] = ai_focal_length_mm
-        master_metadata['focal_length_source'] = focal_length_source
+    # Handle focal length data from different sources
+    if focal_length_source == 'AI':
+        # Use AI detected values, overriding any EXIF data
+        master_metadata['focal_length_source'] = 'AI'
+        master_metadata['focal_length_category'] = ai_focal_length_info['category']
+        master_metadata['focal_length_mm'] = None  # AI only provides category
         if logger:
-            logger.info("Using AI-detected focal length", category=ai_focal_length_category, value=ai_focal_length_mm)
+            logger.info("Using AI-detected focal length",
+                       source='AI',
+                       category=ai_focal_length_info['category'])
+    elif focal_length_source == 'EXIF':
+        # Keep EXIF values from earlier camera_keys import
+        master_metadata['focal_length_source'] = 'EXIF'
+        if logger:
+            logger.info("Using EXIF focal length",
+                       source='EXIF',
+                       mm=master_metadata.get('focal_length_mm'),
+                       category=master_metadata.get('focal_length_category'))
+    else:
+        # No focal length data available
+        master_metadata['focal_length_source'] = None
+        master_metadata['focal_length_category'] = None
+        master_metadata['focal_length_mm'] = None
+        if logger:
+            logger.info("No focal length information available")
     
     return {
         'master_metadata': master_metadata
@@ -553,8 +592,15 @@ def create_model_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
 
     camera_focal_length_obj = CameraFocalLength(
         value_mm=master_metadata.get('focal_length_mm'),
-        category=master_metadata.get('focal_length_category')
+        category=master_metadata.get('focal_length_category'),
+        source=master_metadata.get('focal_length_source')  # Will be either 'EXIF', 'AI', or None
     )
+    
+    if logger:
+        logger.info("Creating focal length object",
+                   source=master_metadata.get('focal_length_source'),
+                   category=master_metadata.get('focal_length_category'),
+                   value_mm=master_metadata.get('focal_length_mm'))
 
     camera_settings_obj = CameraSettings(
         iso=master_metadata.get('iso'),

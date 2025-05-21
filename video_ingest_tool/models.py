@@ -93,6 +93,7 @@ class VideoDetails(BaseModel):
 class CameraFocalLength(BaseModel):
     value_mm: Optional[float] = None
     category: Optional[str] = None
+    source: Optional[str] = None  # "EXIF" or "AI"
 
 class CameraSettings(BaseModel):
     iso: Optional[int] = None

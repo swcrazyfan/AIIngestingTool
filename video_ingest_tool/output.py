@@ -37,7 +37,7 @@ def save_to_json(data: Any, filename: str, logger=None) -> None:
     if logger:
         logger.info("Data saved to JSON", filename=filename)
 
-def save_run_outputs(processed_files: List[Any], run_dir: str, run_timestamp: str, json_dir: str, 
+def save_run_outputs(processed_files: List[Any], run_dir: str, summary_filename: str, json_dir: str,
                     log_file: str, logger=None) -> Dict[str, str]:
     """
     Save all outputs from a processing run.
@@ -53,12 +53,12 @@ def save_run_outputs(processed_files: List[Any], run_dir: str, run_timestamp: st
     Returns:
         Dict[str, str]: Paths to key output files
     """
-    # Save summary JSON to run-specific directory
-    run_summary_path = os.path.join(run_dir, "json", "all_videos.json")
+    # Save summary JSON to run-specific directory with the provided filename
+    run_summary_path = os.path.join(run_dir, "json", summary_filename)
     save_to_json(processed_files, run_summary_path, logger)
     
-    # Also save to global JSON directory with timestamp
-    global_summary_path = os.path.join(json_dir, f"all_videos_{run_timestamp}.json")
+    # Also save to global JSON directory with same filename
+    global_summary_path = os.path.join(json_dir, summary_filename)
     save_to_json(processed_files, global_summary_path, logger)
     
     # Create a copy of the log file in the run directory
