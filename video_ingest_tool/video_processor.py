@@ -29,12 +29,13 @@ class VideoCompressor:
         self.config = {
             'width': 1280,  # 720p
             'height': 720,
-            'fps': 1,
-            'video_bitrate': '2000k',
-            'audio_bitrate': '128k',
+            'fps': 5,
+            'video_bitrate': '500k',
+            'audio_bitrate': '32k',
             'audio_channels': 1,
             'use_hardware_accel': True,  # Enable/disable hardware acceleration
             'codec_priority': ['hevc_videotoolbox', 'h264_videotoolbox', 'libx265', 'libx264'],
+            'crf_value': '28',  # Default CRF for software encoders
             **(config or {})
         }
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -161,7 +162,7 @@ class VideoCompressor:
             # Add codec-specific parameters
             if video_codec == 'libx264' or video_codec == 'libx265':
                 # For software encoding, use CRF (Constant Rate Factor) for quality-based encoding
-                cmd.extend(["-crf", "28"])  # Lower CRF = better quality, higher file size
+                cmd.extend(["-crf", str(self.config['crf_value'])])  # Use configurable CRF
             elif 'videotoolbox' in video_codec:
                 # For hardware encoding, use bitrate-based encoding
                 cmd.extend(["-b:v", self.config['video_bitrate']])
@@ -215,6 +216,7 @@ class VideoAnalyzer:
     
     def __init__(self, api_key: str):
         self.client = genai.Client(api_key=api_key)
+        self.api_key = api_key # Store api_key
         
     def analyze_video(self, video_path: str) -> Dict[str, Any]:
         """
@@ -232,9 +234,16 @@ class VideoAnalyzer:
                 video_bytes = f.read()
             
             # Create video part
-            video_part = types.Part.from_bytes(
+            # Create a Blob for inline_data and include VideoMetadata
+            video_blob = types.Blob(
                 data=video_bytes,
                 mime_type="video/mp4"
+            )
+            video_part = types.Part(
+                inline_data=video_blob,
+                video_metadata=types.VideoMetadata(
+                    fps=1 # Use fixed FPS for API call
+                )
             )
             
             # Analysis schema
@@ -322,7 +331,8 @@ class VideoAnalyzer:
                 ],
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    response_schema=schema
+                    response_schema=schema,
+                    mediaResolution=types.MediaResolution.MEDIA_RESOLUTION_LOW # Use the correct enum member
                 )
             )
             
