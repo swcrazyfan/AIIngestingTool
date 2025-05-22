@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>AI Video Ingest Tool</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/lib/CSInterface.js"></script>
+    <script src="js/lib/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <div class="header">
+            <h2>🎬 AI Video Ingest Tool</h2>
+            <div class="connection-status" id="connectionStatus">
+                <span class="status-dot offline"></span>
+                <span class="status-text">Connecting...</span>
+            </div>
+        </div>
+
+        <!-- Directory Selection -->
+        <div class="section">
+            <h3>📁 Select Directory</h3>
+            <button id="selectDirectory" class="btn primary full-width">
+                <span class="btn-icon">📂</span>
+                Choose Video Directory
+            </button>
+            <div id="selectedPath" class="path-display" style="display: none;"></div>
+        </div>
+
+        <!-- Processing Options -->
+        <div class="section">
+            <h3>⚙️ Processing Options</h3>
+            <div class="options-grid">
+                <label class="option-item">
+                    <input type="checkbox" id="recursive" checked>
+                    <span class="checkmark"></span>
+                    <span class="option-label">Recursive Scan</span>
+                    <span class="option-desc">Include subdirectories</span>
+                </label>
+                
+                <label class="option-item">
+                    <input type="checkbox" id="aiAnalysis">
+                    <span class="checkmark"></span>
+                    <span class="option-label">AI Analysis</span>
+                    <span class="option-desc">Comprehensive video analysis</span>
+                </label>
+                
+                <label class="option-item">
+                    <input type="checkbox" id="generateEmbeddings">
+                    <span class="checkmark"></span>
+                    <span class="option-label">Generate Embeddings</span>
+                    <span class="option-desc">Enable semantic search</span>
+                </label>
+                
+                <label class="option-item">
+                    <input type="checkbox" id="storeDatabase">
+                    <span class="checkmark"></span>
+                    <span class="option-label">Store in Database</span>
+                    <span class="option-desc">Save to Supabase</span>
+                </label>
+            </div>
+            
+            <button id="startIngest" class="btn success full-width" disabled>
+                <span class="btn-icon">▶️</span>
+                Start Processing
+            </button>
+        </div>
+
+        <!-- Progress Section -->
+        <div class="section" id="progressSection" style="display: none;">
+            <h3>📊 Processing Progress</h3>
+            <div class="progress-container">
+                <div class="progress-bar">
+                    <div id="progressFill" class="progress-fill"></div>
+                </div>
+                <div class="progress-info">
+                    <span id="progressPercent">0%</span>
+                    <span id="progressTime">--:--</span>
+                </div>
+            </div>
+            <div id="progressText" class="progress-text">Ready to process...</div>
+            <div class="progress-stats" id="progressStats" style="display: none;">
+                <span id="processedCount">0</span> processed, 
+                <span id="failedCount">0</span> failed
+            </div>
+        </div>
+
+        <!-- Search Section -->
+        <div class="section">
+            <h3>🔍 Search Videos</h3>
+            <div class="search-container">
+                <div class="search-input-group">
+                    <input type="text" id="searchInput" placeholder="Search for videos..." class="search-input">
+                    <button id="clearSearch" class="btn-icon-small">✕</button>
+                </div>
+                <div class="search-controls">
+                    <select id="searchType" class="search-select">
+                        <option value="hybrid">🔀 Hybrid Search</option>
+                        <option value="semantic">🧠 Semantic</option>
+                        <option value="fulltext">📝 Full-text</option>
+                        <option value="transcripts">🎙️ Transcripts</option>
+                    </select>
+                    <button id="searchBtn" class="btn secondary">Search</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div class="section">
+            <div class="results-header">
+                <h3>📹 Video Library</h3>
+                <div class="results-info">
+                    <span id="resultsCount">0 videos</span>
+                    <button id="refreshResults" class="btn-icon-small" title="Refresh">🔄</button>
+                </div>
+            </div>
+            
+            <div id="videoList" class="video-list">
+                <div class="empty-state" id="emptyState">
+                    <div class="empty-icon">🎬</div>
+                    <div class="empty-title">No videos found</div>
+                    <div class="empty-subtitle">Process some videos to get started</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/main.js"></script>
+</body>
+</html>
