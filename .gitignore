@@ -1,3 +1,4 @@
+.env
 # Python
 __pycache__/
 *.py[cod]
@@ -56,3 +57,5 @@ Thumbs.db
 /output_poselib
 /test_poselib_output
 /thumbnails_output
+P1000011.MOV
+*.mp4

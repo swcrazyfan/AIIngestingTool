@@ -105,6 +105,45 @@ class AuthManager:
         except Exception as e:
             logger.error(f"Failed to load session: {str(e)}")
             return None    
+
+    def _refresh_session(self, old_session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Refresh an expired session using the refresh token.
+        
+        Args:
+            old_session: The expired session data containing access and refresh tokens
+            
+        Returns:
+            Optional[Dict[str, Any]]: The new session data if refresh successful, None on failure
+        """
+        try:
+            client = get_supabase_client()
+            # Set the expired session to use for refresh
+            client.auth.set_session(
+                access_token=old_session['access_token'],
+                refresh_token=old_session['refresh_token']
+            )
+            
+            # Attempt to refresh the session
+            new_session = client.auth.refresh_session()
+            if not new_session:
+                logger.error("Failed to refresh session - no new session data returned")
+                return None
+                
+            # Save the refreshed session
+            session_data = {
+                'access_token': new_session.access_token,
+                'refresh_token': new_session.refresh_token,
+                'expires_at': time.time() + new_session.expires_in
+            }
+            
+            AUTH_FILE.write_text(json.dumps(session_data))
+            logger.info("Successfully refreshed session")
+            return session_data
+            
+        except Exception as e:
+            logger.error(f"Failed to refresh session: {str(e)}")
+            return None
+            
     def get_authenticated_client(self) -> Optional[Client]:
         """Get authenticated Supabase client."""
         session = self.get_current_session()
@@ -139,10 +178,28 @@ class AuthManager:
             return None
     
     def is_admin(self) -> bool:
-        """Check if current user is admin."""
-        profile = self.get_user_profile()
-        return profile and profile.get('profile_type') == 'admin'
-    
+        """Check if current user is admin.
+        
+        Returns:
+            bool: True if user is an admin, False if not admin or if profile is missing/invalid
+        """
+        try:
+            profile = self.get_user_profile()
+            if not profile:
+                logger.warning("Could not determine admin status - profile not found")
+                return False
+                
+            profile_type = profile.get('profile_type')
+            if not profile_type:
+                logger.warning("Could not determine admin status - profile_type missing")
+                return False
+                
+            return profile_type == 'admin'
+            
+        except Exception as e:
+            logger.error(f"Error checking admin status: {str(e)}")
+            return False
+
     def _save_session(self, session) -> None:
         """Save session to local file."""
         session_data = {

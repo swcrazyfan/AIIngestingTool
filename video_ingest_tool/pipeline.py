@@ -217,6 +217,18 @@ class ProcessingPipeline:
                     pass
                 elif isinstance(step_result, dict):
                     result.update(step_result)
+                    
+                    # Check for duplicate detection - if found and not forcing reprocess, stop pipeline
+                    if (step.name == "duplicate_check" and 
+                        step_result.get('is_duplicate') and 
+                        not kwargs.get('force_reprocess', False)):
+                        self.logger.info(f"Duplicate file detected - stopping pipeline",
+                                       existing_id=step_result.get('existing_clip_id'),
+                                       existing_file=step_result.get('existing_file_name'))
+                        result['pipeline_stopped'] = True
+                        result['stop_reason'] = 'duplicate_detected'
+                        break
+                        
                 else:
                     result[step.name] = step_result
                     

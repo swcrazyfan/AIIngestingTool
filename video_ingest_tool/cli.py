@@ -38,7 +38,10 @@ def ingest(
     enable_steps: List[str] = typer.Option(None, "--enable", "-e", help="Steps to enable in the pipeline"),
     config_file: Optional[str] = typer.Option(None, "--config", "-c", help="JSON configuration file for pipeline steps"),
     compression_fps: int = typer.Option(DEFAULT_COMPRESSION_CONFIG['fps'], "--fps", help=f"Frame rate for compressed videos (default: {DEFAULT_COMPRESSION_CONFIG['fps']})"),
-    compression_bitrate: str = typer.Option(DEFAULT_COMPRESSION_CONFIG['video_bitrate'], "--bitrate", help=f"Video bitrate for compression (default: {DEFAULT_COMPRESSION_CONFIG['video_bitrate']})")
+    compression_bitrate: str = typer.Option(DEFAULT_COMPRESSION_CONFIG['video_bitrate'], "--bitrate", help=f"Video bitrate for compression (default: {DEFAULT_COMPRESSION_CONFIG['video_bitrate']})"),
+    store_database: bool = typer.Option(False, "--store-database", help="Store results in Supabase database (requires authentication)"),
+    generate_embeddings: bool = typer.Option(False, "--generate-embeddings", help="Generate vector embeddings for semantic search (requires authentication)"),
+    force_reprocess: bool = typer.Option(False, "--force-reprocess", "-f", help="Force reprocessing of files even if they already exist in database")
 ):
     """
     Scan a directory for video files and extract metadata.
@@ -103,6 +106,37 @@ def ingest(
                 logger.warning(f"Unknown step to enable: {step}")
                 console.print(f"[yellow]Warning:[/yellow] Unknown step '{step}'")
     
+    # Handle database storage and embeddings
+    if store_database or generate_embeddings:
+        from .auth import AuthManager
+        from .supabase_config import verify_connection
+        
+        # Check Supabase connection
+        if not verify_connection():
+            console.print("[bold red]Error:[/bold red] Cannot connect to Supabase database")
+            console.print("Please check your .env file and Supabase configuration")
+            raise typer.Exit(1)
+        
+        # Check authentication
+        auth_manager = AuthManager()
+        if not auth_manager.get_current_session():
+            console.print("[bold red]Error:[/bold red] Database storage requires authentication")
+            console.print("Please run: [cyan]python -m video_ingest_tool auth login[/cyan]")
+            raise typer.Exit(1)
+        
+        # Enable database storage if requested
+        if store_database:
+            pipeline_config['database_storage'] = True
+            logger.info("Enabled database storage")
+            console.print("[green]✓[/green] Database storage enabled")
+        
+        # Enable embeddings if requested (also requires database storage)
+        if generate_embeddings:
+            pipeline_config['generate_embeddings'] = True
+            pipeline_config['database_storage'] = True  # Embeddings require database
+            logger.info("Enabled vector embeddings generation")
+            console.print("[green]✓[/green] Vector embeddings enabled")
+    
     # Save the active configuration to the run directory
     config_path = os.path.join(run_dir, "pipeline_config.json")
     with open(config_path, 'w') as f:
@@ -144,6 +178,7 @@ def ingest(
     console.print(f"[bold yellow]Step 2:[/bold yellow] Processing video files...")
     processed_files = []
     failed_files = []
+    skipped_files = []
     
     with Progress(
         SpinnerColumn(),
@@ -160,23 +195,40 @@ def ingest(
             progress.update(task, advance=0, description=f"[cyan]Processing {os.path.basename(file_path)}")
             
             try:
-                video_file = process_video_file(
+                result = process_video_file(
                     file_path, 
                     thumbnails_dir, 
                     logger,
                     config=pipeline_config,
                     compression_fps=compression_fps,
-                    compression_bitrate=compression_bitrate
+                    compression_bitrate=compression_bitrate,
+                    force_reprocess=force_reprocess
                 )
-                processed_files.append(video_file)
                 
-                # Create filename with original name and UUID
-                base_name = os.path.splitext(os.path.basename(file_path))[0]
-                json_filename = f"{base_name}_{video_file.id}.json"
-                
-                # Save individual JSON to run directory
-                individual_json_path = os.path.join(json_dir, json_filename)
-                save_to_json(video_file, individual_json_path, logger)
+                # Handle skipped files (duplicates)
+                if isinstance(result, dict) and result.get('skipped'):
+                    skipped_files.append({
+                        'file_path': file_path,
+                        'reason': result.get('reason'),
+                        'existing_clip_id': result.get('existing_clip_id'),
+                        'existing_file_name': result.get('existing_file_name'),
+                        'existing_processed_at': result.get('existing_processed_at')
+                    })
+                    logger.info("Skipped duplicate file", 
+                               file=file_path, 
+                               existing_id=result.get('existing_clip_id'))
+                else:
+                    # Normal processing result
+                    video_file = result
+                    processed_files.append(video_file)
+                    
+                    # Create filename with original name and UUID
+                    base_name = os.path.splitext(os.path.basename(file_path))[0]
+                    json_filename = f"{base_name}_{video_file.id}.json"
+                    
+                    # Save individual JSON to run directory
+                    individual_json_path = os.path.join(json_dir, json_filename)
+                    save_to_json(video_file, individual_json_path, logger)
                 
             except Exception as e:
                 failed_files.append(file_path)
@@ -194,6 +246,14 @@ def ingest(
         logger
     )
     
+    # Check if we had skipped files and inform the user
+    if skipped_files:
+        console.print(f"[bold yellow]Info:[/bold yellow] Skipped {len(skipped_files)} duplicate file(s):", style="yellow")
+        for skipped in skipped_files:
+            console.print(f"  - {os.path.basename(skipped['file_path'])} (exists as {skipped['existing_file_name']})", style="yellow")
+        if not force_reprocess:
+            console.print(f"[dim]Use --force-reprocess to reprocess these files[/dim]")
+    
     # Check if we had failed files and warn the user
     if failed_files:
         console.print(f"[bold red]Warning:[/bold red] Failed to process {len(failed_files)} file(s):", style="red")
@@ -208,6 +268,8 @@ def ingest(
     summary_table.add_column("Value", style="green")
     
     summary_table.add_row("Total files processed", str(len(processed_files)))
+    if skipped_files:
+        summary_table.add_row("Skipped files (duplicates)", str(len(skipped_files)))
     if failed_files:
         summary_table.add_row("Failed files", str(len(failed_files)))
     summary_table.add_row("Processing time", f"{processing_time:.2f} seconds")
@@ -220,6 +282,7 @@ def ingest(
     
     logger.info("Ingestion process completed", 
                 files_processed=len(processed_files),
+                skipped_files=len(skipped_files),
                 failed_files=len(failed_files),
                 processing_time=processing_time,
                 run_directory=run_dir)
@@ -244,6 +307,275 @@ def list_steps():
     console.print("  python -m video_ingest_tool ingest /path/to/videos/ --disable=hdr_extraction,ai_focal_length")
     console.print("  python -m video_ingest_tool ingest /path/to/videos/ --enable=thumbnail_generation --disable=exposure_analysis")
     console.print("  python -m video_ingest_tool ingest /path/to/videos/ --config=my_config.json")
+
+# Search commands
+search_app = typer.Typer(help="Search video catalog")
+app.add_typer(search_app, name="search")
+
+@search_app.command("query")
+def search_videos(
+    query: str = typer.Argument(..., help="Search query"),
+    search_type: str = typer.Option("hybrid", "--type", "-t", help="Search type: semantic, fulltext, hybrid, transcripts"),
+    limit: int = typer.Option(10, "--limit", "-l", help="Maximum number of results"),
+    show_scores: bool = typer.Option(True, "--scores/--no-scores", help="Show similarity/ranking scores"),
+    summary_weight: float = typer.Option(1.0, "--summary-weight", help="Weight for summary embeddings (hybrid/semantic)"),
+    keyword_weight: float = typer.Option(0.8, "--keyword-weight", help="Weight for keyword embeddings (hybrid/semantic)"),
+    fulltext_weight: float = typer.Option(1.0, "--fulltext-weight", help="Weight for full-text search (hybrid)"),
+    output_format: str = typer.Option("table", "--format", help="Output format: table, json")
+):
+    """Search the video catalog using various search methods."""
+    from .search import VideoSearcher, format_search_results, format_duration
+    
+    # Validate search type
+    valid_types = ["semantic", "fulltext", "hybrid", "transcripts"]
+    if search_type not in valid_types:
+        console.print(f"[red]Error:[/red] Invalid search type. Must be one of: {', '.join(valid_types)}")
+        raise typer.Exit(1)
+    
+    try:
+        searcher = VideoSearcher()
+        
+        # Set weights for search
+        weights = {
+            'summary_weight': summary_weight,
+            'keyword_weight': keyword_weight,
+            'fulltext_weight': fulltext_weight
+        }
+        
+        console.print(f"[cyan]Searching for:[/cyan] '{query}' [dim]({search_type} search)[/dim]")
+        
+        # Perform search
+        results = searcher.search(
+            query=query,
+            search_type=search_type,
+            match_count=limit,
+            weights=weights
+        )
+        
+        if not results:
+            console.print("[yellow]No results found.[/yellow]")
+            return
+        
+        # Format results
+        formatted_results = format_search_results(results, search_type, show_scores)
+        
+        if output_format == "json":
+            import json
+            console.print(json.dumps(formatted_results, indent=2, default=str))
+        else:
+            # Display as table
+            results_table = Table(title=f"Search Results ({len(results)} found)")
+            results_table.add_column("File", style="cyan", max_width=30)
+            results_table.add_column("Summary", style="green", max_width=50)
+            results_table.add_column("Duration", style="blue")
+            results_table.add_column("Category", style="magenta")
+            
+            if show_scores:
+                if search_type == "hybrid":
+                    results_table.add_column("Score", style="yellow")
+                    results_table.add_column("Type", style="dim")
+                elif search_type == "semantic":
+                    results_table.add_column("Similarity", style="yellow")
+                elif search_type in ["fulltext", "transcripts"]:
+                    results_table.add_column("Rank", style="yellow")
+            
+            for result in formatted_results:
+                row = [
+                    result.get('file_name', 'Unknown'),
+                    result.get('content_summary', 'No summary')[:100] + "..." if result.get('content_summary') else "No summary",
+                    format_duration(result.get('duration_seconds', 0)),
+                    result.get('content_category', 'Unknown')
+                ]
+                
+                if show_scores:
+                    if search_type == "hybrid":
+                        row.extend([
+                            f"{result.get('search_rank', 0):.3f}",
+                            result.get('match_type', 'unknown')
+                        ])
+                    elif search_type == "semantic":
+                        row.append(f"{result.get('combined_similarity', 0):.3f}")
+                    elif search_type in ["fulltext", "transcripts"]:
+                        row.append(f"{result.get('fts_rank', 0):.3f}")
+                
+                results_table.add_row(*row)
+            
+            console.print(results_table)
+            
+            # Show example commands
+            console.print(f"\n[dim]💡 To view details: python -m video_ingest_tool search show <clip_id>[/dim]")
+            
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {str(e)}")
+        console.print("Please run: [cyan]python -m video_ingest_tool auth login[/cyan]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Search failed:[/red] {str(e)}")
+        raise typer.Exit(1)
+
+@search_app.command("similar")
+def find_similar_videos(
+    clip_id: str = typer.Argument(..., help="ID of the source clip"),
+    limit: int = typer.Option(5, "--limit", "-l", help="Maximum number of similar clips"),
+    threshold: float = typer.Option(0.5, "--threshold", "-t", help="Minimum similarity threshold"),
+    output_format: str = typer.Option("table", "--format", help="Output format: table, json")
+):
+    """Find videos similar to a given clip."""
+    from .search import VideoSearcher, format_search_results, format_duration
+    
+    try:
+        searcher = VideoSearcher()
+        
+        console.print(f"[cyan]Finding clips similar to:[/cyan] {clip_id}")
+        
+        results = searcher.find_similar(
+            clip_id=clip_id,
+            match_count=limit,
+            similarity_threshold=threshold
+        )
+        
+        if not results:
+            console.print("[yellow]No similar clips found.[/yellow]")
+            return
+        
+        formatted_results = format_search_results(results, "similar", True)
+        
+        if output_format == "json":
+            import json
+            console.print(json.dumps(formatted_results, indent=2, default=str))
+        else:
+            results_table = Table(title=f"Similar Clips ({len(results)} found)")
+            results_table.add_column("File", style="cyan", max_width=30)
+            results_table.add_column("Summary", style="green", max_width=50)
+            results_table.add_column("Duration", style="blue")
+            results_table.add_column("Category", style="magenta")
+            results_table.add_column("Similarity", style="yellow")
+            
+            for result in formatted_results:
+                results_table.add_row(
+                    result.get('file_name', 'Unknown'),
+                    result.get('content_summary', 'No summary')[:100] + "..." if result.get('content_summary') else "No summary",
+                    format_duration(result.get('duration_seconds', 0)),
+                    result.get('content_category', 'Unknown'),
+                    f"{result.get('similarity_score', 0):.3f}"
+                )
+            
+            console.print(results_table)
+            
+    except Exception as e:
+        console.print(f"[red]Similar search failed:[/red] {str(e)}")
+        raise typer.Exit(1)
+
+@search_app.command("show")
+def show_clip_details(
+    clip_id: str = typer.Argument(..., help="ID of the clip to show"),
+    show_transcript: bool = typer.Option(False, "--transcript", help="Show full transcript if available"),
+    show_analysis: bool = typer.Option(False, "--analysis", help="Show AI analysis details")
+):
+    """Show detailed information about a specific clip."""
+    from .auth import AuthManager
+    from .search import format_duration, format_file_size
+    
+    try:
+        auth_manager = AuthManager()
+        client = auth_manager.get_authenticated_client()
+        
+        if not client:
+            console.print("[red]Error:[/red] Authentication required")
+            console.print("Please run: [cyan]python -m video_ingest_tool auth login[/cyan]")
+            raise typer.Exit(1)
+        
+        # Get clip details
+        clip_result = client.table('clips').select('*').eq('id', clip_id).execute()
+        
+        if not clip_result.data:
+            console.print(f"[red]Error:[/red] Clip with ID {clip_id} not found")
+            raise typer.Exit(1)
+        
+        clip = clip_result.data[0]
+        
+        # Display clip information
+        info_table = Table(title=f"Clip Details: {clip.get('file_name')}")
+        info_table.add_column("Property", style="cyan")
+        info_table.add_column("Value", style="green")
+        
+        info_table.add_row("ID", clip.get('id'))
+        info_table.add_row("File Name", clip.get('file_name'))
+        info_table.add_row("Local Path", clip.get('local_path'))
+        info_table.add_row("Duration", format_duration(clip.get('duration_seconds', 0)))
+        info_table.add_row("File Size", format_file_size(clip.get('file_size_bytes', 0)))
+        info_table.add_row("Content Category", clip.get('content_category') or 'Unknown')
+        info_table.add_row("Camera", f"{clip.get('camera_make', 'Unknown')} {clip.get('camera_model', '')}")
+        info_table.add_row("Resolution", f"{clip.get('width')}x{clip.get('height')}" if clip.get('width') else 'Unknown')
+        info_table.add_row("Frame Rate", f"{clip.get('frame_rate')} fps" if clip.get('frame_rate') else 'Unknown')
+        info_table.add_row("Processed At", clip.get('processed_at'))
+        
+        console.print(info_table)
+        
+        # Show content summary
+        if clip.get('content_summary'):
+            console.print(f"\n[bold]Content Summary:[/bold]")
+            console.print(clip['content_summary'])
+        
+        # Show content tags
+        if clip.get('content_tags'):
+            console.print(f"\n[bold]Content Tags:[/bold]")
+            console.print(", ".join(clip['content_tags']))
+        
+        # Show transcript if requested
+        if show_transcript:
+            transcript_result = client.table('transcripts').select('full_text').eq('clip_id', clip_id).execute()
+            if transcript_result.data and transcript_result.data[0].get('full_text'):
+                console.print(f"\n[bold]Transcript:[/bold]")
+                console.print(transcript_result.data[0]['full_text'])
+            else:
+                console.print(f"\n[dim]No transcript available[/dim]")
+        
+        # Show AI analysis if requested
+        if show_analysis:
+            analysis_result = client.table('analysis').select('*').eq('clip_id', clip_id).execute()
+            if analysis_result.data:
+                console.print(f"\n[bold]AI Analysis:[/bold]")
+                for analysis in analysis_result.data:
+                    console.print(f"Type: {analysis.get('analysis_type')}")
+                    console.print(f"Model: {analysis.get('ai_model')}")
+                    console.print(f"Usability Rating: {analysis.get('usability_rating')}")
+                    console.print(f"Speaker Count: {analysis.get('speaker_count')}")
+            else:
+                console.print(f"\n[dim]No AI analysis available[/dim]")
+                
+    except Exception as e:
+        console.print(f"[red]Failed to show clip details:[/red] {str(e)}")
+        raise typer.Exit(1)
+
+@search_app.command("stats")
+def show_catalog_stats():
+    """Show statistics about your video catalog."""
+    from .search import VideoSearcher
+    
+    try:
+        searcher = VideoSearcher()
+        stats = searcher.get_user_stats()
+        
+        if not stats:
+            console.print("[yellow]No statistics available.[/yellow]")
+            return
+        
+        stats_table = Table(title="Video Catalog Statistics")
+        stats_table.add_column("Metric", style="cyan")
+        stats_table.add_column("Value", style="green")
+        
+        stats_table.add_row("Total Clips", str(stats.get('total_clips', 0)))
+        stats_table.add_row("Total Duration", f"{stats.get('total_duration_hours', 0)} hours")
+        stats_table.add_row("Total Storage", f"{stats.get('total_storage_gb', 0)} GB")
+        stats_table.add_row("Clips with Transcripts", str(stats.get('clips_with_transcripts', 0)))
+        stats_table.add_row("Clips with AI Analysis", str(stats.get('clips_with_ai_analysis', 0)))
+        
+        console.print(stats_table)
+        
+    except Exception as e:
+        console.print(f"[red]Failed to get statistics:[/red] {str(e)}")
+        raise typer.Exit(1)
 
 if __name__ == "__main__":
     app()
