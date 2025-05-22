@@ -517,3 +517,23 @@ body {
 .success { color: #10b981; }
 .error { color: #ef4444; }
 .warning { color: #f59e0b; }
+
+/* Authentication Styles */
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.user-info {
+    background: #2d3748;
+    border: 1px solid #4a5568;
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 10px;
+}
+
+.user-email {
+    font-weight: 600;
+    color: #e2e8f0;
+}

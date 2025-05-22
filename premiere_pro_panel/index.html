@@ -18,6 +18,30 @@
             </div>
         </div>
 
+        <!-- Authentication Section -->
+        <div class="section" id="authSection">
+            <h3>🔐 Authentication</h3>
+            <div id="loginForm" style="display: none;">
+                <input type="email" id="emailInput" placeholder="Email" class="search-input" style="margin-bottom: 10px;">
+                <input type="password" id="passwordInput" placeholder="Password" class="search-input" style="margin-bottom: 10px;">
+                <button id="loginBtn" class="btn primary full-width">
+                    <span class="btn-icon">🔑</span>
+                    Login
+                </button>
+            </div>
+            <div id="userInfo" style="display: none;">
+                <div class="option-item" style="background: #2d3748; border: 1px solid #4a5568; margin-bottom: 10px;">
+                    <span class="option-label">Logged in as:</span>
+                    <span id="userEmail" class="option-desc"></span>
+                </div>
+                <button id="logoutBtn" class="btn secondary full-width">
+                    <span class="btn-icon">🚪</span>
+                    Logout
+                </button>
+            </div>
+            <div id="authStatus" class="progress-text" style="margin-top: 10px;"></div>
+        </div>
+
         <!-- Directory Selection -->
         <div class="section">
             <h3>📁 Select Directory</h3>
