@@ -247,3 +247,116 @@ def list_steps():
 
 if __name__ == "__main__":
     app()
+
+# Authentication commands
+auth_app = typer.Typer(help="Authentication commands")
+app.add_typer(auth_app, name="auth")
+
+@auth_app.command("login")
+def auth_login():
+    """Login to Supabase with email and password."""
+    from .auth import AuthManager
+    from .supabase_config import verify_connection
+    
+    # Check connection first
+    if not verify_connection():
+        console.print("[red]Unable to connect to Supabase. Please check your configuration.[/red]")
+        raise typer.Exit(1)
+    
+    email = typer.prompt("Email")
+    password = typer.prompt("Password", hide_input=True)
+    
+    auth_manager = AuthManager()
+    if auth_manager.login(email, password):
+        console.print(f"[green]Successfully logged in as {email}[/green]")
+        
+        # Get user profile
+        profile = auth_manager.get_user_profile()
+        if profile:
+            console.print(f"Profile: {profile.get('display_name', 'Unknown')} ({profile.get('profile_type', 'user')})")
+    else:
+        console.print("[red]Login failed. Please check your credentials.[/red]")
+        raise typer.Exit(1)
+
+@auth_app.command("signup")
+def auth_signup():
+    """Sign up for a new account."""
+    from .auth import AuthManager
+    from .supabase_config import verify_connection
+    
+    # Check connection first
+    if not verify_connection():
+        console.print("[red]Unable to connect to Supabase. Please check your configuration.[/red]")
+        raise typer.Exit(1)
+    
+    email = typer.prompt("Email")
+    password = typer.prompt("Password", hide_input=True)
+    confirm_password = typer.prompt("Confirm Password", hide_input=True)
+    
+    if password != confirm_password:
+        console.print("[red]Passwords do not match.[/red]")
+        raise typer.Exit(1)
+    
+    auth_manager = AuthManager()
+    if auth_manager.signup(email, password):
+        console.print(f"[green]Successfully signed up as {email}[/green]")
+        console.print("[yellow]Please check your email for verification link.[/yellow]")
+    else:
+        console.print("[red]Sign up failed. Please try again.[/red]")
+        raise typer.Exit(1)
+
+@auth_app.command("logout")
+def auth_logout():
+    """Logout from current session."""
+    from .auth import AuthManager
+    
+    auth_manager = AuthManager()
+    if auth_manager.logout():
+        console.print("[green]Successfully logged out.[/green]")
+    else:
+        console.print("[red]Logout failed.[/red]")
+        raise typer.Exit(1)
+
+@auth_app.command("status")
+def auth_status():
+    """Show current authentication status."""
+    from .auth import AuthManager
+    from .supabase_config import get_database_status
+    
+    auth_manager = AuthManager()
+    session = auth_manager.get_current_session()
+    
+    status_table = Table(title="Authentication Status")
+    status_table.add_column("Item", style="cyan")
+    status_table.add_column("Status", style="green")
+    
+    if session:
+        status_table.add_row("Logged in", "[green]Yes[/green]")
+        status_table.add_row("Email", session.get('email', 'Unknown'))
+        status_table.add_row("User ID", session.get('user_id', 'Unknown'))
+        
+        # Get profile info
+        profile = auth_manager.get_user_profile()
+        if profile:
+            status_table.add_row("Display Name", profile.get('display_name', 'Not set'))
+            status_table.add_row("Profile Type", profile.get('profile_type', 'user'))
+    else:
+        status_table.add_row("Logged in", "[red]No[/red]")
+    
+    console.print(status_table)
+    
+    # Database status
+    db_status = get_database_status()
+    
+    db_table = Table(title="Database Status")
+    db_table.add_column("Component", style="cyan")
+    db_table.add_column("Status", style="green")
+    
+    db_table.add_row("Connection", "[green]Success[/green]" if db_status['connection'] == 'success' else "[red]Failed[/red]")
+    db_table.add_row("URL", db_status['url'] or 'Not configured')
+    
+    if 'tables' in db_status:
+        for table, status in db_status['tables'].items():
+            db_table.add_row(f"Table: {table}", "[green]Exists[/green]" if status == 'exists' else "[red]Missing[/red]")
+    
+    console.print(db_table)
