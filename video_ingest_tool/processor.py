@@ -13,20 +13,34 @@ from .models import (
     VideoIngestOutput, FileInfo, VideoCodecDetails, VideoResolution, VideoHDRDetails,
     VideoColorDetails, VideoExposureDetails, VideoDetails, CameraFocalLength,
     CameraSettings, CameraLocation, CameraDetails, AnalysisDetails,
-    AudioTrack, SubtitleTrack
+    AudioTrack, SubtitleTrack, ComprehensiveAIAnalysis, AIAnalysisSummary,
+    VisualAnalysis, AudioAnalysis, ContentAnalysis
 )
 from .utils import calculate_checksum, calculate_aspect_ratio_str
 from .extractors import extract_mediainfo, extract_ffprobe_info
 from .extractors_extended import extract_exiftool_info, extract_extended_exif_metadata, extract_audio_tracks
 from .extractors_hdr import extract_subtitle_tracks, extract_codec_parameters, extract_hdr_metadata
 from .processors import generate_thumbnails, analyze_exposure, detect_focal_length_with_ai
-from .config import FOCAL_LENGTH_RANGES, HAS_TRANSFORMERS
+from .config import FOCAL_LENGTH_RANGES, HAS_TRANSFORMERS, Config
 from .pipeline import ProcessingPipeline, ProcessingStep
+
+# Try to import VideoProcessor - it may not be available if dependencies are missing
+try:
+    from .video_processor import VideoProcessor
+    HAS_VIDEO_PROCESSOR = True
+except ImportError as e:
+    HAS_VIDEO_PROCESSOR = False
+    VIDEO_PROCESSOR_ERROR = str(e)
+
+# Import the centralized config
+try:
+    from .video_processor import DEFAULT_COMPRESSION_CONFIG
+except ImportError:
+    # Fallback if circular import issues
+    DEFAULT_COMPRESSION_CONFIG = {'fps': 5, 'video_bitrate': '1000k'}
 
 # Create a global pipeline instance
 pipeline = ProcessingPipeline()
-
-# Define pipeline steps using decorators
 @pipeline.register_step(
     name="checksum_generation", 
     enabled=True,
@@ -294,7 +308,10 @@ def generate_thumbnails_step(data: Dict[str, Any], thumbnails_dir=None, logger=N
     if not thumbnails_dir:
         raise ValueError("Missing thumbnails_dir parameter")
         
-    thumbnail_dir_for_file = os.path.join(thumbnails_dir, checksum)
+    # Create thumbnail directory with filename first, then checksum
+    base_name = os.path.splitext(os.path.basename(file_path))[0]
+    thumbnail_dir_name = f"{base_name}_{checksum}"
+    thumbnail_dir_for_file = os.path.join(thumbnails_dir, thumbnail_dir_name)
     thumbnail_paths = generate_thumbnails(file_path, thumbnail_dir_for_file, logger=logger)
     
     return {
@@ -404,6 +421,225 @@ def detect_focal_length_step(data: Dict[str, Any], logger=None) -> Dict[str, Any
     }
 
 @pipeline.register_step(
+    name="ai_video_analysis", 
+    enabled=False,  # Disabled by default due to API costs
+    description="Comprehensive video analysis using Gemini Flash 2.5 AI"
+)
+def ai_video_analysis_step(data: Dict[str, Any], thumbnails_dir=None, logger=None, compression_fps: int = DEFAULT_COMPRESSION_CONFIG['fps'], compression_bitrate: str = DEFAULT_COMPRESSION_CONFIG['video_bitrate']) -> Dict[str, Any]:
+    """
+    Perform comprehensive AI video analysis using Gemini Flash 2.5.
+    
+    Args:
+        data: Pipeline data containing file_path, checksum, and other metadata
+        thumbnails_dir: Directory where thumbnails are stored
+        logger: Optional logger
+        compression_fps: Frame rate for video compression
+        compression_bitrate: Bitrate for video compression
+        
+    Returns:
+        Dict with AI analysis results
+    """
+    if not HAS_VIDEO_PROCESSOR:
+        if logger:
+            logger.warning(f"VideoProcessor not available: {VIDEO_PROCESSOR_ERROR}")
+        return {
+            'ai_analysis_data': {},
+            'ai_analysis_file_path': None
+        }
+    
+    file_path = data.get('file_path')
+    checksum = data.get('checksum')
+    
+    if not file_path:
+        if logger:
+            logger.error("No file_path provided for AI analysis")
+        return {
+            'ai_analysis_data': {},
+            'ai_analysis_file_path': None
+        }
+    
+    try:
+        if logger:
+            logger.info(f"Starting comprehensive AI analysis for: {os.path.basename(file_path)}")
+        
+        # Initialize VideoProcessor with compression configuration
+        config = Config()
+        
+        # Create compression config with custom parameters
+        compression_config = {
+            'fps': compression_fps,
+            'video_bitrate': compression_bitrate
+        }
+        video_processor = VideoProcessor(config, compression_config=compression_config)
+        
+        # Determine output directory for compressed files
+        # Use the parent directory of thumbnails_dir as the run directory
+        run_dir = None
+        if thumbnails_dir:
+            run_dir = os.path.dirname(thumbnails_dir)  # thumbnails_dir is run_dir/thumbnails
+        
+        # Process the video (this will compress and analyze)
+        result = video_processor.process(file_path, run_dir)
+        
+        if not result.get('success'):
+            if logger:
+                logger.error(f"AI analysis failed: {result.get('error', 'Unknown error')}")
+            return {
+                'ai_analysis_data': {},
+                'ai_analysis_file_path': None
+            }
+        
+        # Get the analysis results
+        analysis_json = result.get('analysis_json', {})
+        
+        # Create AI-specific JSON file with proper naming
+        if analysis_json and file_path:
+            try:
+                import json
+                
+                # Create AI analysis directory in run structure (same level as thumbnails)
+                if run_dir:
+                    ai_analysis_dir = os.path.join(run_dir, "ai_analysis")
+                    os.makedirs(ai_analysis_dir, exist_ok=True)
+                    
+                    input_basename = os.path.basename(file_path)
+                    ai_filename = f"{os.path.splitext(input_basename)[0]}_AI_analysis.json"
+                    ai_analysis_path = os.path.join(ai_analysis_dir, ai_filename)
+                    
+                    # Save the complete AI analysis to AI-specific file
+                    with open(ai_analysis_path, 'w') as f:
+                        json.dump(analysis_json, f, indent=2)
+                    
+                    if logger:
+                        logger.info(f"AI analysis saved to: {ai_analysis_path}")
+                else:
+                    # No run directory available - skip saving separate AI file
+                    ai_analysis_path = None
+                    if logger:
+                        logger.warning("No run directory available - AI analysis not saved to separate file")
+                
+                # Create summary for main JSON (lightweight)
+                ai_summary = _create_ai_summary(analysis_json)
+                
+                return {
+                    'ai_analysis_summary': ai_summary,  # Lightweight summary for main JSON
+                    'ai_analysis_file_path': ai_analysis_path,  # Path to full AI analysis
+                    'compressed_video_path': result.get('compressed_path')
+                }
+                
+            except Exception as e:
+                if logger:
+                    logger.error(f"Failed to save AI analysis files: {str(e)}")
+        
+        if logger:
+            logger.info(f"AI analysis completed successfully")
+        
+        return {
+            'ai_analysis_summary': {},
+            'ai_analysis_file_path': ai_analysis_path,
+            'compressed_video_path': result.get('compressed_path')
+        }
+        
+    except Exception as e:
+        if logger:
+            logger.error(f"AI analysis failed with exception: {str(e)}")
+        return {
+            'ai_analysis_summary': {},
+            'ai_analysis_file_path': None,
+            'error': str(e)
+        }
+
+def _create_ai_summary(analysis_json: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Create a lightweight summary of AI analysis for inclusion in main JSON.
+    
+    Args:
+        analysis_json: Complete AI analysis data
+        
+    Returns:
+        Dict with summary information
+    """
+    try:
+        summary = {}
+        
+        # Extract key summary information
+        if 'summary' in analysis_json:
+            summary_data = analysis_json['summary']
+            summary['content_category'] = summary_data.get('content_category')
+            summary['overall_summary'] = summary_data.get('overall')
+            summary['key_activities_count'] = len(summary_data.get('key_activities', []))
+        
+        # Extract key metrics from visual analysis
+        if 'visual_analysis' in analysis_json:
+            visual = analysis_json['visual_analysis']
+            summary['shot_types_detected'] = len(visual.get('shot_types', []))
+            
+            if 'technical_quality' in visual:
+                tech_quality = visual['technical_quality']
+                summary['usability_rating'] = tech_quality.get('usability_rating')
+                summary['focus_quality'] = tech_quality.get('overall_focus_quality')
+            
+            if 'text_and_graphics' in visual:
+                text_graphics = visual['text_and_graphics']
+                summary['text_elements_detected'] = len(text_graphics.get('detected_text', []))
+                summary['logos_icons_detected'] = len(text_graphics.get('detected_logos_icons', []))
+        
+        # Extract key metrics from audio analysis
+        if 'audio_analysis' in analysis_json:
+            audio = analysis_json['audio_analysis']
+            
+            if 'speaker_analysis' in audio:
+                speaker_analysis = audio['speaker_analysis']
+                summary['speaker_count'] = speaker_analysis.get('speaker_count', 0)
+            
+            if 'sound_events' in audio:
+                summary['sound_events_detected'] = len(audio['sound_events'])
+            
+            if 'audio_quality' in audio:
+                audio_quality = audio['audio_quality']
+                summary['audio_clarity'] = audio_quality.get('clarity')
+                summary['dialogue_intelligibility'] = audio_quality.get('dialogue_intelligibility')
+            
+            # Add transcript preview (first 100 chars)
+            if 'transcript' in audio and 'full_text' in audio['transcript']:
+                full_text = audio['transcript']['full_text']
+                if full_text:
+                    preview = full_text[:100] + "..." if len(full_text) > 100 else full_text
+                    summary['transcript_preview'] = preview
+        
+        # Extract key metrics from content analysis
+        if 'content_analysis' in analysis_json:
+            content = analysis_json['content_analysis']
+            
+            if 'entities' in content:
+                entities = content['entities']
+                summary['people_count'] = entities.get('people_count', 0)
+                summary['locations_detected'] = len(entities.get('locations', []))
+                summary['objects_of_interest'] = len(entities.get('objects_of_interest', []))
+            
+            if 'activity_summary' in content:
+                activities = content['activity_summary']
+                summary['activities_detected'] = len(activities)
+                high_importance_activities = [a for a in activities if a.get('importance') == 'High']
+                summary['high_importance_activities'] = len(high_importance_activities)
+            
+            if 'content_warnings' in content:
+                summary['content_warnings_count'] = len(content['content_warnings'])
+        
+        # Add analysis metadata
+        summary['analysis_timestamp'] = datetime.datetime.now().isoformat()
+        summary['has_comprehensive_analysis'] = True
+        
+        return summary
+        
+    except Exception as e:
+        return {
+            'analysis_timestamp': datetime.datetime.now().isoformat(),
+            'has_comprehensive_analysis': False,
+            'error': f"Failed to create summary: {str(e)}"
+        }
+
+@pipeline.register_step(
     name="metadata_consolidation", 
     enabled=True,
     description="Consolidate metadata from all sources"
@@ -493,6 +729,7 @@ def consolidate_metadata_step(data: Dict[str, Any], logger=None) -> Dict[str, An
         'master_metadata': master_metadata
     }
 
+
 @pipeline.register_step(
     name="model_creation", 
     enabled=True,
@@ -520,6 +757,31 @@ def create_model_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     exposure_data = data.get('exposure_data', {})
     audio_tracks = data.get('audio_tracks', [])
     subtitle_tracks = data.get('subtitle_tracks', [])
+    ai_analysis_summary = data.get('ai_analysis_summary', {})
+    ai_analysis_file_path = data.get('ai_analysis_file_path')
+    
+    # Create lightweight AI analysis object for main JSON
+    ai_analysis_obj = None
+    if ai_analysis_summary:
+        try:
+            # Create a minimal ComprehensiveAIAnalysis with just summary and file path
+            summary_obj = AIAnalysisSummary(
+                overall=ai_analysis_summary.get('overall_summary'),
+                key_activities=[],  # Keep empty to save space
+                content_category=ai_analysis_summary.get('content_category')
+            ) if ai_analysis_summary.get('overall_summary') or ai_analysis_summary.get('content_category') else None
+            
+            ai_analysis_obj = ComprehensiveAIAnalysis(
+                summary=summary_obj,
+                visual_analysis=None,  # Not included in main JSON
+                audio_analysis=None,   # Not included in main JSON
+                content_analysis=None, # Not included in main JSON
+                analysis_file_path=ai_analysis_file_path
+            )
+        except Exception as e:
+            if logger:
+                logger.warning(f"Failed to create AI analysis summary: {str(e)}")
+            ai_analysis_obj = None
     
     # Create the Pydantic models
     file_info_obj = FileInfo(
@@ -626,10 +888,33 @@ def create_model_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
         location=camera_location_obj
     )
 
+    # Extract content tags and summary from AI analysis if available
+    content_tags = []
+    content_summary = None
+    
+    if ai_analysis_summary:
+        # Use AI analysis to populate content tags and summary
+        if ai_analysis_summary.get('content_category'):
+            content_tags.append(ai_analysis_summary['content_category'])
+        
+        # Add key metrics as tags
+        if ai_analysis_summary.get('speaker_count', 0) > 0:
+            content_tags.append(f"speakers:{ai_analysis_summary['speaker_count']}")
+        
+        if ai_analysis_summary.get('usability_rating'):
+            content_tags.append(f"quality:{ai_analysis_summary['usability_rating'].lower()}")
+        
+        if ai_analysis_summary.get('shot_types_detected', 0) > 0:
+            content_tags.append(f"shots:{ai_analysis_summary['shot_types_detected']}")
+        
+        # Use overall summary as content summary
+        content_summary = ai_analysis_summary.get('overall_summary')
+
     analysis_details_obj = AnalysisDetails(
         scene_changes=[],  # Placeholder for future implementation
-        content_tags=[],   # Placeholder for future implementation
-        content_summary=None  # Placeholder for future implementation
+        content_tags=content_tags,  # Populated from AI analysis
+        content_summary=content_summary,  # Populated from AI analysis
+        ai_analysis=ai_analysis_obj  # Minimal AI analysis with file path
     )
 
     output = VideoIngestOutput(
@@ -647,7 +932,7 @@ def create_model_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
         'output': output
     }
 
-def process_video_file(file_path: str, thumbnails_dir: str, logger=None, config: Dict[str, bool] = None) -> VideoIngestOutput:
+def process_video_file(file_path: str, thumbnails_dir: str, logger=None, config: Dict[str, bool] = None, compression_fps: int = DEFAULT_COMPRESSION_CONFIG['fps'], compression_bitrate: str = DEFAULT_COMPRESSION_CONFIG['video_bitrate']) -> VideoIngestOutput:
     """
     Process a video file using the pipeline.
     
@@ -656,6 +941,8 @@ def process_video_file(file_path: str, thumbnails_dir: str, logger=None, config:
         thumbnails_dir: Directory to save thumbnails
         logger: Optional logger
         config: Dictionary of step configurations (enabled/disabled)
+        compression_fps: Frame rate for video compression (default: 5)
+        compression_bitrate: Bitrate for video compression (default: 500k)
         
     Returns:
         VideoIngestOutput: Processed video data object
@@ -677,7 +964,9 @@ def process_video_file(file_path: str, thumbnails_dir: str, logger=None, config:
     result = pipeline.execute_pipeline(
         initial_data, 
         thumbnails_dir=thumbnails_dir,
-        logger=logger
+        logger=logger,
+        compression_fps=compression_fps,
+        compression_bitrate=compression_bitrate
     )
     
     # Return the output model

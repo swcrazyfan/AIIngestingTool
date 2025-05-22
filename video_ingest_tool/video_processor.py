@@ -22,20 +22,24 @@ project_root = Path(__file__).parent.parent
 env_path = project_root / '.env'
 load_dotenv(dotenv_path=env_path)
 
+# Default compression configuration - single source of truth
+DEFAULT_COMPRESSION_CONFIG = {
+    'max_dimension': 1280,  # Scale longest dimension to this size
+    'fps': 5,
+    'video_bitrate': '1000k',
+    'audio_bitrate': '32k',
+    'audio_channels': 1,
+    'use_hardware_accel': True,
+    'codec_priority': ['hevc_videotoolbox', 'h264_videotoolbox', 'libx265', 'libx264'],
+    'crf_value': '25',
+}
+
 class VideoCompressor:
     """Handles video compression using ffmpeg with hardware acceleration when available."""
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = {
-            'width': 1280,  # 720p
-            'height': 720,
-            'fps': 5,
-            'video_bitrate': '500k',
-            'audio_bitrate': '32k',
-            'audio_channels': 1,
-            'use_hardware_accel': True,  # Enable/disable hardware acceleration
-            'codec_priority': ['hevc_videotoolbox', 'h264_videotoolbox', 'libx265', 'libx264'],
-            'crf_value': '28',  # Default CRF for software encoders
+            **DEFAULT_COMPRESSION_CONFIG,
             **(config or {})
         }
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -114,12 +118,50 @@ class VideoCompressor:
         self.logger.info("Falling back to libx264 codec")
         return 'libx264'
 
-    def compress(self, input_path: str) -> str:
+    def _get_video_resolution(self, input_path: str) -> tuple:
+        """
+        Get the resolution of the input video.
+        
+        Args:
+            input_path: Path to input video file
+            
+        Returns:
+            tuple: (width, height) or (None, None) if detection fails
+        """
+        try:
+            # Use ffprobe to get video resolution
+            cmd = [
+                "ffprobe", "-v", "quiet", "-print_format", "json", 
+                "-show_streams", "-select_streams", "v:0", input_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            import json
+            probe_data = json.loads(result.stdout)
+            
+            if probe_data.get('streams'):
+                video_stream = probe_data['streams'][0]
+                width = video_stream.get('width')
+                height = video_stream.get('height')
+                
+                if width and height:
+                    self.logger.info(f"Detected video resolution: {width}x{height}")
+                    return (int(width), int(height))
+            
+            self.logger.warning("Could not detect video resolution")
+            return (None, None)
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to detect video resolution: {str(e)}")
+            return (None, None)
+
+    def compress(self, input_path: str, output_dir: str = None) -> str:
         """
         Compress video using ffmpeg with the best available codec.
         
         Args:
             input_path: Path to input video file
+            output_dir: Directory to save compressed file (defaults to compressed/ next to input)
             
         Returns:
             str: Path to compressed output video
@@ -128,15 +170,19 @@ class VideoCompressor:
             RuntimeError: If compression fails
         """
         try:
-            # Create a dedicated directory for compressed files
-            input_dir = os.path.dirname(input_path)
-            output_dir = os.path.join(input_dir, "compressed")
-            os.makedirs(output_dir, exist_ok=True)
+            # Create output directory - use provided directory or create compressed/ next to input
+            if output_dir:
+                compressed_dir = os.path.join(output_dir, "compressed")
+            else:
+                input_dir = os.path.dirname(input_path)
+                compressed_dir = os.path.join(input_dir, "compressed")
+            
+            os.makedirs(compressed_dir, exist_ok=True)
             
             # Use just the filename for the output, not the full path
             input_basename = os.path.basename(input_path)
             output_basename = f"{os.path.splitext(input_basename)[0]}_compressed.mp4"
-            output_path = os.path.join(output_dir, output_basename)
+            output_path = os.path.join(compressed_dir, output_basename)
             
             self.logger.info(f"Compressing {input_path} to {output_path}")
             
@@ -150,6 +196,41 @@ class VideoCompressor:
             except subprocess.CalledProcessError:
                 raise RuntimeError("ffmpeg not found in PATH. Please install ffmpeg.")
                 
+            # Detect input video resolution
+            input_width, input_height = self._get_video_resolution(input_path)
+            
+            # Determine if we need to scale down
+            needs_scaling = False
+            scale_filter = None
+            max_dimension = self.config['max_dimension']
+            
+            if input_width and input_height:
+                # Find the longest dimension
+                longest_dimension = max(input_width, input_height)
+                
+                # Check if longest dimension exceeds our target
+                if longest_dimension > max_dimension:
+                    needs_scaling = True
+                    
+                    # Calculate scaling to fit longest dimension
+                    scale_factor = max_dimension / longest_dimension
+                    target_width = int(input_width * scale_factor)
+                    target_height = int(input_height * scale_factor)
+                    
+                    # Make sure dimensions are even (required for many codecs)
+                    target_width = target_width if target_width % 2 == 0 else target_width - 1
+                    target_height = target_height if target_height % 2 == 0 else target_height - 1
+                    
+                    scale_filter = f"scale={target_width}:{target_height}"
+                    self.logger.info(f"Scaling down from {input_width}x{input_height} to {target_width}x{target_height} (longest dimension: {longest_dimension} → {max_dimension})")
+                else:
+                    self.logger.info(f"Resolution {input_width}x{input_height} fits within {max_dimension}px, compressing without scaling")
+            else:
+                # If we can't detect resolution, use default scaling as fallback
+                needs_scaling = True
+                scale_filter = f"scale={max_dimension}:{max_dimension}"
+                self.logger.warning(f"Could not detect resolution, using default scaling to {max_dimension}px")
+            
             # Select the best available codec
             video_codec = self._select_best_codec()
             
@@ -173,10 +254,13 @@ class VideoCompressor:
                 # Add ProRes options for better quality with VideoToolbox
                 if video_codec == 'hevc_videotoolbox':
                     cmd.extend(["-profile:v", "main"])
-                    
-            # Add common parameters
+            
+            # Add scaling filter if needed
+            if needs_scaling:
+                cmd.extend(["-vf", scale_filter])
+            
+            # Add other common parameters
             cmd.extend([
-                "-vf", f"scale={self.config['width']}:{self.config['height']}",  # Resolution
                 "-r", str(self.config['fps']),     # Frame rate
                 "-c:a", "aac", "-b:a", self.config['audio_bitrate'],  # Audio codec and bitrate
                 "-ac", str(self.config['audio_channels']),  # Audio channels
@@ -214,9 +298,10 @@ class VideoCompressor:
 class VideoAnalyzer:
     """Handles comprehensive video analysis using Gemini Flash 2.5."""
     
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, fps: int = 1):
         self.client = genai.Client(api_key=api_key)
         self.api_key = api_key
+        self.fps = fps
         self.logger = logging.getLogger(self.__class__.__name__)
         
     def _get_comprehensive_analysis_schema(self) -> Dict[str, Any]:
@@ -621,7 +706,7 @@ class VideoAnalyzer:
             video_part = types.Part(
                 inline_data=video_blob,
                 video_metadata=types.VideoMetadata(
-                    fps=1  # Use fixed FPS for API call
+                    fps=self.fps  # Use actual FPS setting from compression config
                 )
             )
             
@@ -655,9 +740,12 @@ class VideoAnalyzer:
 class VideoProcessor(object): # Changed inheritance
     """Pipeline processor for video analysis."""
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, compression_config: Dict[str, Any] = None):
         self.config = config
         self.logger = logging.getLogger(self.__class__.__name__)
+        
+        # Store compression configuration for VideoCompressor
+        self.compression_config = compression_config or {}
         
         # Get API key from environment variables (now loaded from .env file)
         self.api_key = os.getenv('GEMINI_API_KEY')
@@ -818,12 +906,13 @@ class VideoProcessor(object): # Changed inheritance
         self.logger.info("END OF ANALYSIS SUMMARY")
         self.logger.info("="*80)
 
-    def process(self, file_path: str) -> Dict[str, Any]:
+    def process(self, file_path: str, output_dir: str = None) -> Dict[str, Any]:
         """
         Process a video file through compression and AI analysis.
         
         Args:
             file_path: Path to video file
+            output_dir: Directory to save processed files (optional)
             
         Returns:
             Dict[str, Any]: Processing results
@@ -840,31 +929,22 @@ class VideoProcessor(object): # Changed inheritance
             self.logger.info(f"Starting compression for: {file_path}")
             
             # Compress video
-            compressor = VideoCompressor()
-            compressed_path = compressor.compress(file_path)
+            compressor = VideoCompressor(self.compression_config)
+            compressed_path = compressor.compress(file_path, output_dir)
             
             self.logger.info(f"Compression successful. Output: {compressed_path}")
             self.logger.info(f"Starting AI analysis...")
             
             # Analyze video
-            analyzer = VideoAnalyzer(api_key=self.api_key)
+            # Get FPS from compression config, with fallback to default
+            fps_for_analysis = self.compression_config.get('fps', 5)
+            analyzer = VideoAnalyzer(api_key=self.api_key, fps=fps_for_analysis)
             analysis_results = analyzer.analyze_video(compressed_path)
             
-            # Save results
-            input_dir = os.path.dirname(file_path)
-            analysis_dir = os.path.join(input_dir, "analysis")
-            os.makedirs(analysis_dir, exist_ok=True)
+            # Parse analysis results
+            analysis_json = json.loads(analysis_results)
             
-            # Use just the filename for the output, not the full path
-            input_basename = os.path.basename(file_path)
-            analysis_basename = f"{os.path.splitext(input_basename)[0]}_analysis.json"
-            output_path = os.path.join(analysis_dir, analysis_basename)
-            
-            with open(output_path, 'w') as f:
-                analysis_json = json.loads(analysis_results)
-                json.dump(analysis_json, f, indent=2)
-            
-            self.logger.info(f"Analysis complete. Results saved to: {output_path}")
+            self.logger.info(f"AI analysis completed successfully")
             
             # Display comprehensive analysis summary
             try:
@@ -874,7 +954,6 @@ class VideoProcessor(object): # Changed inheritance
                 
             return {
                 'success': True,
-                'analysis_path': output_path,
                 'compressed_path': compressed_path,
                 'analysis_json': analysis_json
             }

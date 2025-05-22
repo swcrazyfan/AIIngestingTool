@@ -22,6 +22,7 @@ from .processor import (
     get_available_pipeline_steps
 )
 from .output import save_to_json, save_run_outputs
+from .video_processor import DEFAULT_COMPRESSION_CONFIG
 from .utils import calculate_checksum
 
 # Create Typer app
@@ -31,31 +32,32 @@ app = typer.Typer(help="AI-Powered Video Ingest & Catalog Tool")
 def ingest(
     directory: str = typer.Argument(..., help="Directory to scan for video files"),
     recursive: bool = typer.Option(True, "--recursive/--no-recursive", "-r/-nr", help="Scan subdirectories"),
-    output_dir: str = typer.Option("output", "--output-dir", "-o", help="Output directory for thumbnails and JSON"),
+    output_dir: str = typer.Option("output", "--output-dir", "-o", help="Base output directory for all processing runs"),
     limit: int = typer.Option(0, "--limit", "-l", help="Limit number of files to process (0 = no limit)"),
     disable_steps: List[str] = typer.Option(None, "--disable", "-d", help="Steps to disable in the pipeline"),
     enable_steps: List[str] = typer.Option(None, "--enable", "-e", help="Steps to enable in the pipeline"),
-    config_file: Optional[str] = typer.Option(None, "--config", "-c", help="JSON configuration file for pipeline steps")
+    config_file: Optional[str] = typer.Option(None, "--config", "-c", help="JSON configuration file for pipeline steps"),
+    compression_fps: int = typer.Option(DEFAULT_COMPRESSION_CONFIG['fps'], "--fps", help=f"Frame rate for compressed videos (default: {DEFAULT_COMPRESSION_CONFIG['fps']})"),
+    compression_bitrate: str = typer.Option(DEFAULT_COMPRESSION_CONFIG['video_bitrate'], "--bitrate", help=f"Video bitrate for compression (default: {DEFAULT_COMPRESSION_CONFIG['video_bitrate']})")
 ):
     """
     Scan a directory for video files and extract metadata.
     """
     start_time = time.time()
     
-    # Setup logging and get paths
+    # Setup logging and get paths - this creates the run directory structure
     logger, timestamp, json_dir, log_file = setup_logging()
     
-    # Create a timestamped run directory
-    run_dir = os.path.join(output_dir, f"run_{timestamp}")
-    os.makedirs(run_dir, exist_ok=True)
+    # The run directory is already created by setup_logging
+    # Extract run directory from json_dir path
+    run_dir = os.path.dirname(json_dir)  # json_dir is run_dir/json, so get parent
     
-    # Create subdirectories for this run
+    # Create subdirectories for this run (json directory already created by setup_logging)
     thumbnails_dir = os.path.join(run_dir, "thumbnails")
     os.makedirs(thumbnails_dir, exist_ok=True)
     
-    # Create a run-specific JSON directory
-    run_json_dir = os.path.join(run_dir, "json")
-    os.makedirs(run_json_dir, exist_ok=True)
+    # JSON directory already exists from setup_logging
+    # json_dir is already set to run_dir/json
     
     # Create identifiable summary filename with timestamp
     summary_filename = f"all_videos_{os.path.basename(directory)}_{timestamp}.json"
@@ -63,8 +65,10 @@ def ingest(
     logger.info("Starting ingestion process", 
                 directory=directory, 
                 recursive=recursive,
-                output_dir=run_dir,
-                limit=limit)
+                run_dir=run_dir,
+                limit=limit,
+                compression_fps=compression_fps,
+                compression_bitrate=compression_bitrate)
     
     # Set up pipeline configuration
     pipeline_config = get_default_pipeline_config()
@@ -160,7 +164,9 @@ def ingest(
                     file_path, 
                     thumbnails_dir, 
                     logger,
-                    config=pipeline_config
+                    config=pipeline_config,
+                    compression_fps=compression_fps,
+                    compression_bitrate=compression_bitrate
                 )
                 processed_files.append(video_file)
                 
@@ -168,13 +174,9 @@ def ingest(
                 base_name = os.path.splitext(os.path.basename(file_path))[0]
                 json_filename = f"{base_name}_{video_file.id}.json"
                 
-                # Save individual JSON to run-specific directory
-                individual_json_path = os.path.join(run_json_dir, json_filename)
+                # Save individual JSON to run directory
+                individual_json_path = os.path.join(json_dir, json_filename)
                 save_to_json(video_file, individual_json_path, logger)
-                
-                # Also save a copy to the global JSON directory for backward compatibility
-                global_json_path = os.path.join(json_dir, json_filename)
-                save_to_json(video_file, global_json_path, logger)
                 
             except Exception as e:
                 failed_files.append(file_path)
