@@ -1005,21 +1005,306 @@ async def analyze_video_content(video_file_path, thumbnails, metadata, job_id):
 ## 7. Next Implementation Steps ⭐
 
 ### 7.1. Database Integration Phase ⏳
-1. **Configure Supabase:**
-   - ⏳ Set up Supabase project
-   - ⏳ Create database schema based on section 6.1 definitions
-   - ⏳ Enable pgvector extension
 
-2. **Implement Database Layer:**
-   - ⏳ Create database connection module
-   - ⏳ Implement CRUD operations for all tables
-   - ⏳ Add configuration for database credentials
-   - ⏳ Convert current JSON storage to database storage
+#### 7.1.1. Supabase Project Setup ⏳
+1. **Create Supabase Project:**
+   - ⏳ Set up new Supabase project with PostgreSQL database
+   - ⏳ Enable pgvector extension for vector embeddings
+   - ⏳ Configure project settings and API keys
 
-3. **Refactor Current Code:**
-   - ✅ Ensure Pydantic models match future database schema
-   - ⏳ Update pipeline to store in database
-   - ⏳ Implement functions to query and update database records
+2. **Database Schema Design:**
+   - ⏳ Create users table with built-in auth integration
+   - ⏳ Create user_profiles table with profile_types (admin, user)
+   - ⏳ Create video_clips table for main video metadata
+   - ⏳ Create video_embeddings table for vector storage
+   - ⏳ Create video_analysis table for AI analysis results
+   - ⏳ Set up proper foreign key relationships
+
+3. **Row Level Security (RLS) Implementation:**
+   - ⏳ Enable RLS on all tables
+   - ⏳ Create policies for user-based data access
+   - ⏳ Implement admin vs user permission levels
+   - ⏳ Secure vector embeddings with user ownership
+
+#### 7.1.2. CLI Authentication System ⏳
+1. **Authentication Flow:**
+   - ⏳ Implement email/password login via CLI prompts
+   - ⏳ Use JWT tokens with refresh token handling
+   - ⏳ Store session tokens securely in user home directory (~/.video_ingest_auth.json)
+   - ⏳ Implement automatic token refresh for long-running processes
+   - ⏳ Add logout functionality to clear stored tokens
+
+2. **User Management:**
+   - ⏳ Sign-up functionality with profile type selection
+   - ⏳ User session persistence across CLI invocations
+   - ⏳ Profile type enforcement (admin vs user access levels)
+   - ⏳ Email verification integration
+
+3. **CLI Commands:**
+   ```bash
+   # Authentication commands
+   python -m video_ingest_tool auth login
+   python -m video_ingest_tool auth signup
+   python -m video_ingest_tool auth logout
+   python -m video_ingest_tool auth status
+   ```
+
+#### 7.1.3. Vector Embeddings Integration ⏳
+1. **DeepInfra API Integration:**
+   - ⏳ Use BAAI/bge-m3 model via DeepInfra's OpenAI-compatible API
+   - ⏳ API endpoint: https://api.deepinfra.com/v1/openai
+   - ⏳ Model: "BAAI/bge-m3" with float encoding format
+   - ⏳ Handle API key configuration and rate limiting
+
+2. **Content Preparation for Embeddings:**
+   - ⏳ Extract full transcript text (exclude timestamped segments to save tokens)
+   - ⏳ Combine with AI analysis summary and key metadata
+   - ⏳ Implement token counting with tiktoken library
+   - ⏳ Enforce 3500 token limit - truncate transcript if needed
+   - ⏳ Create structured content string for embedding generation
+
+3. **Vector Storage:**
+   - ⏳ Store embeddings in pgvector format in Supabase
+   - ⏳ Link embeddings to user ownership via RLS
+   - ⏳ Index vectors for efficient similarity search
+   - ⏳ Implement embedding versioning for content updates
+
+#### 7.1.4. Database Schema Details ⏳
+
+**Core Tables:**
+```sql
+-- Built-in Supabase auth.users table (managed by Supabase)
+-- Additional user profiles table
+CREATE TABLE user_profiles (
+  id UUID PRIMARY KEY REFERENCES auth.users(id),
+  profile_type TEXT CHECK (profile_type IN ('admin', 'user')) DEFAULT 'user',  
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Main video clips table
+CREATE TABLE video_clips (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES auth.users(id) NOT NULL,
+  file_path TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  file_checksum TEXT UNIQUE NOT NULL,
+  file_size_bytes BIGINT NOT NULL,
+  duration_seconds NUMERIC,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  processed_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Video segments table (for future segment-level analysis) ⭐
+CREATE TABLE video_segments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  video_clip_id UUID REFERENCES video_clips(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES auth.users(id) NOT NULL,
+  segment_index INTEGER NOT NULL, -- 0-based index of segment within clip
+  start_time_seconds NUMERIC NOT NULL,
+  end_time_seconds NUMERIC NOT NULL,
+  duration_seconds NUMERIC GENERATED ALWAYS AS (end_time_seconds - start_time_seconds) STORED,
+  segment_type TEXT DEFAULT 'auto', -- 'auto', 'scene_change', 'speaker_change', 'manual'
+  transcript_text TEXT, -- Transcript for this segment only
+  description TEXT, -- AI-generated description of this segment
+  keyframe_path TEXT, -- Path to representative keyframe for this segment
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(video_clip_id, segment_index)
+);
+
+-- Vector embeddings table (supports both full-clip and segment-level embeddings) ⭐
+CREATE TABLE video_embeddings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  video_clip_id UUID REFERENCES video_clips(id) ON DELETE CASCADE,
+  video_segment_id UUID REFERENCES video_segments(id) ON DELETE CASCADE, -- NULL for full-clip embeddings
+  user_id UUID REFERENCES auth.users(id) NOT NULL,
+  embedding_type TEXT NOT NULL CHECK (embedding_type IN ('full_clip', 'segment', 'keyframe')),
+  embedding vector(1024), -- BAAI/bge-m3 produces 1024-dimensional vectors
+  content_text TEXT NOT NULL, -- The text that was embedded
+  token_count INTEGER NOT NULL,
+  embedding_source TEXT NOT NULL, -- 'transcript', 'ai_summary', 'combined', 'visual_description'
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  -- Ensure either video_clip_id OR video_segment_id is set, not both for segments
+  CONSTRAINT check_embedding_scope CHECK (
+    (embedding_type = 'full_clip' AND video_segment_id IS NULL) OR
+    (embedding_type IN ('segment', 'keyframe') AND video_segment_id IS NOT NULL)
+  )
+);
+
+-- AI analysis results (detailed JSON storage)
+CREATE TABLE video_analysis (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  video_clip_id UUID REFERENCES video_clips(id) ON DELETE CASCADE,
+  video_segment_id UUID REFERENCES video_segments(id) ON DELETE CASCADE, -- NULL for full-clip analysis
+  user_id UUID REFERENCES auth.users(id) NOT NULL,
+  analysis_type TEXT NOT NULL, -- 'comprehensive', 'visual', 'audio', 'content', 'segment_summary'
+  analysis_scope TEXT NOT NULL CHECK (analysis_scope IN ('full_clip', 'segment')),
+  analysis_data JSONB NOT NULL,
+  ai_model TEXT DEFAULT 'gemini-flash-2.5',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Indexes for performance ⭐
+CREATE INDEX idx_video_segments_clip_time ON video_segments(video_clip_id, start_time_seconds, end_time_seconds);
+CREATE INDEX idx_video_segments_user ON video_segments(user_id, created_at DESC);
+CREATE INDEX idx_video_embeddings_type ON video_embeddings(embedding_type, user_id);
+CREATE INDEX idx_video_embeddings_segment ON video_embeddings(video_segment_id) WHERE video_segment_id IS NOT NULL;
+CREATE INDEX idx_video_embeddings_vector ON video_embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+```
+
+**RLS Policies:**
+```sql
+-- Enable RLS on all tables
+ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE video_clips ENABLE ROW LEVEL SECURITY;  
+ALTER TABLE video_segments ENABLE ROW LEVEL SECURITY; -- ⭐
+ALTER TABLE video_embeddings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE video_analysis ENABLE ROW LEVEL SECURITY;
+
+-- User can only see their own data
+CREATE POLICY "Users can view own video clips" ON video_clips
+  FOR SELECT TO authenticated 
+  USING (user_id = auth.uid());
+
+CREATE POLICY "Users can view own video segments" ON video_segments -- ⭐
+  FOR SELECT TO authenticated
+  USING (user_id = auth.uid());
+
+CREATE POLICY "Users can view own embeddings" ON video_embeddings
+  FOR SELECT TO authenticated
+  USING (user_id = auth.uid());
+
+CREATE POLICY "Users can view own video analysis" ON video_analysis
+  FOR SELECT TO authenticated
+  USING (user_id = auth.uid());
+
+-- Users can insert their own data
+CREATE POLICY "Users can insert own video segments" ON video_segments -- ⭐
+  FOR INSERT TO authenticated
+  WITH CHECK (user_id = auth.uid());
+
+CREATE POLICY "Users can insert own embeddings" ON video_embeddings
+  FOR INSERT TO authenticated
+  WITH CHECK (user_id = auth.uid());
+
+-- Admins can see all data
+CREATE POLICY "Admins can view all video clips" ON video_clips
+  FOR SELECT TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles 
+      WHERE id = auth.uid() AND profile_type = 'admin'
+    )
+  );
+
+CREATE POLICY "Admins can view all video segments" ON video_segments -- ⭐
+  FOR SELECT TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles 
+      WHERE id = auth.uid() AND profile_type = 'admin'
+    )
+  );
+```
+
+#### 7.1.5. Pipeline Integration ⏳
+1. **New Pipeline Step:**
+   ```python
+   @pipeline.register_step(
+       name="supabase_storage", 
+       enabled=True,
+       description="Store video metadata and analysis in Supabase database"
+   )
+   def supabase_storage_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
+       # Store in Supabase instead of JSON files
+       pass
+   ```
+
+2. **Vector Embedding Step:**
+   ```python
+   @pipeline.register_step(
+       name="generate_embeddings", 
+       enabled=True,
+       description="Generate vector embeddings for semantic search"
+   )
+   def generate_embeddings_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
+       # Generate and store vector embeddings
+       pass
+   ```
+
+3. **Authentication Requirement:**
+   - ⏳ All pipeline operations require authenticated user
+   - ⏳ User ID automatically attached to all stored records
+   - ⏳ RLS policies enforce data isolation between users
+
+#### 7.1.7. Future Segment-Level Search Capabilities ⭐
+
+**Database Schema Support for Segments:**
+- **video_segments table**: Ready for storing segment-level data with time boundaries
+- **Flexible embeddings table**: Supports both full-clip and segment-level embeddings
+- **Segment types**: Automatic segmentation, scene changes, speaker changes, manual segments
+- **Performance indexes**: Optimized for time-based and vector similarity queries
+
+**Future Search Features (Database-Ready):**
+```bash
+# Segment-level search (future implementation)
+python -m video_ingest_tool db search "discussion about pricing" --segment-level
+python -m video_ingest_tool db search --timestamp="00:05:30" --context-seconds=30
+python -m video_ingest_tool db find-similar --segment-id="seg_123" --limit=10
+
+# Time-based segment queries (future implementation)  
+python -m video_ingest_tool db segments --clip-id="clip_123" --start="00:02:00" --end="00:05:00"
+python -m video_ingest_tool db segments --duration-min=30 --duration-max=120
+```
+
+**Segment Processing Pipeline (Future):**
+1. **Automatic Segmentation**: Scene change detection, speaker diarization boundaries
+2. **Manual Segmentation**: User-defined time boundaries via CLI or future web interface
+3. **Segment Analysis**: Individual AI analysis for each segment
+4. **Segment Embeddings**: Vector generation for precise timestamp-based search
+5. **Cross-Segment Search**: Find related content across different parts of videos
+
+**Database Queries Enabled by Schema:**
+```sql
+-- Find segments within time range
+SELECT * FROM video_segments 
+WHERE video_clip_id = $1 
+AND start_time_seconds >= $2 
+AND end_time_seconds <= $3;
+
+-- Semantic search within segments
+SELECT vs.*, ve.content_text,
+       ve.embedding <=> $1 as similarity
+FROM video_segments vs
+JOIN video_embeddings ve ON vs.id = ve.video_segment_id
+WHERE ve.embedding_type = 'segment'
+ORDER BY similarity
+LIMIT 10;
+
+-- Find overlapping segments across clips
+SELECT vs1.video_clip_id, vs1.start_time_seconds, vs2.video_clip_id, vs2.start_time_seconds
+FROM video_segments vs1
+JOIN video_embeddings ve1 ON vs1.id = ve1.video_segment_id
+JOIN video_embeddings ve2 ON ve1.embedding <=> ve2.embedding < 0.3
+JOIN video_segments vs2 ON ve2.video_segment_id = vs2.id
+WHERE vs1.video_clip_id != vs2.video_clip_id;
+```
+```bash
+# Enhanced ingest command with authentication
+python -m video_ingest_tool ingest /path/to/videos/ --store-database
+
+# New database management commands  
+python -m video_ingest_tool db search "outdoor scenes"
+python -m video_ingest_tool db search --similar-to="clip_id" --limit=10
+python -m video_ingest_tool db list --user-only
+python -m video_ingest_tool db stats
+python -m video_ingest_tool db export --format=json
+
+# Admin commands (requires admin profile)
+python -m video_ingest_tool admin users list
+python -m video_ingest_tool admin users promote user@example.com admin
+python -m video_ingest_tool admin clips list --all-users
+```
 
 ### 7.2. Vector Embeddings & Search Implementation ⏳
 1. **Embedding Generation:**
@@ -1109,12 +1394,14 @@ async def analyze_video_content(video_file_path, thumbnails, metadata, job_id):
   - python-dotenv>=1.0.0 (Environment variable management) ✅ ⭐
 
 ### 8.2. Future Dependencies ⏳
-- Supabase client for Python
+- supabase>=2.3.0 (Python client for database operations) ⏳ ⭐
+- tiktoken>=0.5.0 (Token counting for embedding limits) ⏳ ⭐  
+- openai>=1.0.0 (DeepInfra API client via OpenAI interface) ⏳ ⭐
 - Procrastinate (PostgreSQL-based task queue)
 - psycopg (PostgreSQL adapter)
 - langchain or API clients for:
-  - Gemini Flash 2.0
-  - Embedding service
+  - Gemini Flash 2.5 ✅ (already implemented)
+  - Additional embedding services (backup options)
 - pgvector for vector operations
 
 ### 8.3. System Requirements
