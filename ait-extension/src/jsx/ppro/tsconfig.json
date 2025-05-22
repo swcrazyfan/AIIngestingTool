@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "module": "ESNext",
+    "noLib": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": [
+      "../global",
+      "../../../node_modules/types-for-adobe/Premiere/15.0",
+      "../../../node_modules/types-for-adobe-extras/Premiere/12.0/qeDom",
+      "../../../node_modules/types-for-adobe/shared/PlugPlugExternalObject"
+    ],
+    "jsxFactory": "JSX.createElement",
+    "jsxFragmentFactory": "JSX.Fragment",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "include": ["./**/*"]
+}
