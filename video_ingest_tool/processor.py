@@ -14,7 +14,10 @@ from .models import (
     VideoColorDetails, VideoExposureDetails, VideoDetails, CameraFocalLength,
     CameraSettings, CameraLocation, CameraDetails, AnalysisDetails,
     AudioTrack, SubtitleTrack, ComprehensiveAIAnalysis, AIAnalysisSummary,
-    VisualAnalysis, AudioAnalysis, ContentAnalysis
+    VisualAnalysis, AudioAnalysis, ContentAnalysis, ShotType, TechnicalQuality,
+    TextAndGraphics, DetectedText, DetectedLogo, KeyframeAnalysis, RecommendedKeyframe,
+    Transcript, TranscriptSegment, SpeakerAnalysis, Speaker, SoundEvent, AudioQuality,
+    Entities, PersonDetail, Location, ObjectOfInterest, Activity, ContentWarning
 )
 from .utils import calculate_checksum, calculate_aspect_ratio_str
 from .extractors import extract_mediainfo, extract_ffprobe_info
@@ -524,6 +527,7 @@ def ai_video_analysis_step(data: Dict[str, Any], thumbnails_dir=None, logger=Non
                 return {
                     'ai_analysis_summary': ai_summary,  # Lightweight summary for main JSON
                     'ai_analysis_file_path': ai_analysis_path,  # Path to full AI analysis
+                    'full_ai_analysis_data': analysis_json,  # Full analysis data for model creation
                     'compressed_video_path': result.get('compressed_path')
                 }
                 
@@ -536,7 +540,8 @@ def ai_video_analysis_step(data: Dict[str, Any], thumbnails_dir=None, logger=Non
         
         return {
             'ai_analysis_summary': {},
-            'ai_analysis_file_path': ai_analysis_path,
+            'ai_analysis_file_path': None,
+            'full_ai_analysis_data': {},
             'compressed_video_path': result.get('compressed_path')
         }
         
@@ -546,6 +551,7 @@ def ai_video_analysis_step(data: Dict[str, Any], thumbnails_dir=None, logger=Non
         return {
             'ai_analysis_summary': {},
             'ai_analysis_file_path': None,
+            'full_ai_analysis_data': {},
             'error': str(e)
         }
 
@@ -760,27 +766,237 @@ def create_model_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     ai_analysis_summary = data.get('ai_analysis_summary', {})
     ai_analysis_file_path = data.get('ai_analysis_file_path')
     
-    # Create lightweight AI analysis object for main JSON
+    # Create complete AI analysis object for main JSON
     ai_analysis_obj = None
     if ai_analysis_summary:
         try:
-            # Create a minimal ComprehensiveAIAnalysis with just summary and file path
+            # Get the full AI analysis data from the step
+            full_ai_analysis = data.get('full_ai_analysis_data', {})
+            
+            # Create the complete analysis objects if data is available
+            visual_analysis_obj = None
+            audio_analysis_obj = None
+            content_analysis_obj = None
+            
+            if full_ai_analysis.get('visual_analysis'):
+                visual_data = full_ai_analysis['visual_analysis']
+                
+                # Create shot types
+                shot_types = []
+                for shot in visual_data.get('shot_types', []):
+                    shot_types.append(ShotType(
+                        timestamp=shot.get('timestamp', '00:00:000'),
+                        shot_type=shot.get('shot_type', ''),
+                        description=shot.get('description', ''),
+                        confidence=shot.get('confidence')
+                    ))
+                
+                # Create technical quality
+                tech_quality_obj = None
+                if visual_data.get('technical_quality'):
+                    tq = visual_data['technical_quality']
+                    tech_quality_obj = TechnicalQuality(
+                        overall_focus_quality=tq.get('overall_focus_quality'),
+                        stability_assessment=tq.get('stability_assessment'),
+                        detected_artifacts=tq.get('detected_artifacts', []),
+                        usability_rating=tq.get('usability_rating')
+                    )
+                
+                # Create text and graphics
+                text_graphics_obj = None
+                if visual_data.get('text_and_graphics'):
+                    tg = visual_data['text_and_graphics']
+                    detected_text = []
+                    for text in tg.get('detected_text', []):
+                        detected_text.append(DetectedText(
+                            timestamp=text.get('timestamp', '00:00:000'),
+                            text_content=text.get('text_content'),
+                            text_type=text.get('text_type'),
+                            readability=text.get('readability')
+                        ))
+                    
+                    detected_logos = []
+                    for logo in tg.get('detected_logos_icons', []):
+                        detected_logos.append(DetectedLogo(
+                            timestamp=logo.get('timestamp', '00:00:000'),
+                            element_type=logo.get('element_type', ''),
+                            size=logo.get('size')
+                        ))
+                    
+                    text_graphics_obj = TextAndGraphics(
+                        detected_text=detected_text,
+                        detected_logos_icons=detected_logos
+                    )
+                
+                # Create keyframe analysis
+                keyframe_analysis_obj = None
+                if visual_data.get('keyframe_analysis'):
+                    ka = visual_data['keyframe_analysis']
+                    recommended_keyframes = []
+                    for kf in ka.get('recommended_keyframes', []):
+                        recommended_keyframes.append(RecommendedKeyframe(
+                            timestamp=kf.get('timestamp', '00:00:000'),
+                            reason=kf.get('reason', ''),
+                            visual_quality=kf.get('visual_quality', '')
+                        ))
+                    
+                    keyframe_analysis_obj = KeyframeAnalysis(
+                        recommended_keyframes=recommended_keyframes
+                    )
+                
+                visual_analysis_obj = VisualAnalysis(
+                    shot_types=shot_types,
+                    technical_quality=tech_quality_obj,
+                    text_and_graphics=text_graphics_obj,
+                    keyframe_analysis=keyframe_analysis_obj
+                )
+            
+            if full_ai_analysis.get('audio_analysis'):
+                audio_data = full_ai_analysis['audio_analysis']
+                
+                # Create transcript
+                transcript_obj = None
+                if audio_data.get('transcript'):
+                    t = audio_data['transcript']
+                    segments = []
+                    for seg in t.get('segments', []):
+                        segments.append(TranscriptSegment(
+                            timestamp=seg.get('timestamp', '00:00:000'),
+                            speaker=seg.get('speaker'),
+                            text=seg.get('text', '')
+                        ))
+                    
+                    transcript_obj = Transcript(
+                        full_text=t.get('full_text'),
+                        segments=segments
+                    )
+                
+                # Create speaker analysis
+                speaker_analysis_obj = None
+                if audio_data.get('speaker_analysis'):
+                    sa = audio_data['speaker_analysis']
+                    speakers = []
+                    for speaker in sa.get('speakers', []):
+                        speakers.append(Speaker(
+                            speaker_id=speaker.get('speaker_id', ''),
+                            speaking_time_seconds=speaker.get('speaking_time_seconds', 0.0),
+                            segments_count=speaker.get('segments_count')
+                        ))
+                    
+                    speaker_analysis_obj = SpeakerAnalysis(
+                        speaker_count=sa.get('speaker_count', 0),
+                        speakers=speakers
+                    )
+                
+                # Create sound events
+                sound_events = []
+                for event in audio_data.get('sound_events', []):
+                    sound_events.append(SoundEvent(
+                        timestamp=event.get('timestamp', '00:00:000'),
+                        event_type=event.get('event_type', ''),
+                        description=event.get('description'),
+                        duration_seconds=event.get('duration_seconds'),
+                        prominence=event.get('prominence')
+                    ))
+                
+                # Create audio quality
+                audio_quality_obj = None
+                if audio_data.get('audio_quality'):
+                    aq = audio_data['audio_quality']
+                    audio_quality_obj = AudioQuality(
+                        clarity=aq.get('clarity'),
+                        background_noise_level=aq.get('background_noise_level'),
+                        dialogue_intelligibility=aq.get('dialogue_intelligibility')
+                    )
+                
+                audio_analysis_obj = AudioAnalysis(
+                    transcript=transcript_obj,
+                    speaker_analysis=speaker_analysis_obj,
+                    sound_events=sound_events,
+                    audio_quality=audio_quality_obj
+                )
+            
+            if full_ai_analysis.get('content_analysis'):
+                content_data = full_ai_analysis['content_analysis']
+                
+                # Create entities
+                entities_obj = None
+                if content_data.get('entities'):
+                    e = content_data['entities']
+                    
+                    people_details = []
+                    for person in e.get('people_details', []):
+                        people_details.append(PersonDetail(
+                            description=person.get('description'),
+                            role=person.get('role'),
+                            visibility_duration=person.get('visibility_duration')
+                        ))
+                    
+                    locations = []
+                    for location in e.get('locations', []):
+                        locations.append(Location(
+                            name=location.get('name', ''),
+                            type=location.get('type', ''),
+                            description=location.get('description')
+                        ))
+                    
+                    objects_of_interest = []
+                    for obj in e.get('objects_of_interest', []):
+                        objects_of_interest.append(ObjectOfInterest(
+                            object=obj.get('object', ''),
+                            significance=obj.get('significance', ''),
+                            timestamp=obj.get('timestamp')
+                        ))
+                    
+                    entities_obj = Entities(
+                        people_count=e.get('people_count', 0),
+                        people_details=people_details,
+                        locations=locations,
+                        objects_of_interest=objects_of_interest
+                    )
+                
+                # Create activity summary
+                activity_summary = []
+                for activity in content_data.get('activity_summary', []):
+                    activity_summary.append(Activity(
+                        activity=activity.get('activity', ''),
+                        timestamp=activity.get('timestamp'),
+                        duration=activity.get('duration'),
+                        importance=activity.get('importance', '')
+                    ))
+                
+                # Create content warnings
+                content_warnings = []
+                for warning in content_data.get('content_warnings', []):
+                    content_warnings.append(ContentWarning(
+                        type=warning.get('type', ''),
+                        description=warning.get('description')
+                    ))
+                
+                content_analysis_obj = ContentAnalysis(
+                    entities=entities_obj,
+                    activity_summary=activity_summary,
+                    content_warnings=content_warnings
+                )
+            
+            # Create AI analysis summary
             summary_obj = AIAnalysisSummary(
                 overall=ai_analysis_summary.get('overall_summary'),
-                key_activities=[],  # Keep empty to save space
+                key_activities=full_ai_analysis.get('summary', {}).get('key_activities', []),
                 content_category=ai_analysis_summary.get('content_category')
             ) if ai_analysis_summary.get('overall_summary') or ai_analysis_summary.get('content_category') else None
             
             ai_analysis_obj = ComprehensiveAIAnalysis(
                 summary=summary_obj,
-                visual_analysis=None,  # Not included in main JSON
-                audio_analysis=None,   # Not included in main JSON
-                content_analysis=None, # Not included in main JSON
+                visual_analysis=visual_analysis_obj,
+                audio_analysis=audio_analysis_obj,
+                content_analysis=content_analysis_obj,
                 analysis_file_path=ai_analysis_file_path
             )
         except Exception as e:
             if logger:
-                logger.warning(f"Failed to create AI analysis summary: {str(e)}")
+                logger.warning(f"Failed to create complete AI analysis: {str(e)}")
+                logger.debug(f"AI analysis data available: {list(data.keys())}")
             ai_analysis_obj = None
     
     # Create the Pydantic models
@@ -904,8 +1120,19 @@ def create_model_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
         if ai_analysis_summary.get('usability_rating'):
             content_tags.append(f"quality:{ai_analysis_summary['usability_rating'].lower()}")
         
-        if ai_analysis_summary.get('shot_types_detected', 0) > 0:
-            content_tags.append(f"shots:{ai_analysis_summary['shot_types_detected']}")
+        # Add actual shot types instead of count
+        full_ai_analysis = data.get('full_ai_analysis_data', {})
+        if full_ai_analysis.get('visual_analysis', {}).get('shot_types'):
+            shot_types = full_ai_analysis['visual_analysis']['shot_types']
+            unique_shot_types = set()
+            for shot in shot_types:
+                shot_type = shot.get('shot_type', '').strip()
+                if shot_type:
+                    unique_shot_types.add(shot_type)
+            
+            # Add each unique shot type as a tag
+            for shot_type in sorted(unique_shot_types):
+                content_tags.append(shot_type)
         
         # Use overall summary as content summary
         content_summary = ai_analysis_summary.get('overall_summary')
