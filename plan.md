@@ -1057,11 +1057,23 @@ async def analyze_video_content(video_file_path, thumbnails, metadata, job_id):
    - ⏳ Handle API key configuration and rate limiting
 
 2. **Content Preparation for Embeddings:**
-   - ⏳ Extract full transcript text (exclude timestamped segments to save tokens)
+   - ⏳ Extract full transcript text from AI analysis (stored in video_clips.full_transcript) ⭐
+   - ⏳ Store complete segment transcripts (stored in video_segments.transcript_text) ⭐
    - ⏳ Combine with AI analysis summary and key metadata
    - ⏳ Implement token counting with tiktoken library
-   - ⏳ Enforce 3500 token limit - truncate transcript if needed
+   - ⏳ Enforce 3500 token limit - truncate transcript intelligently if needed ⭐
+   - ⏳ Store both original full text AND truncated embedded text ⭐
    - ⏳ Create structured content string for embedding generation
+
+**Embedding Content Strategy:** ⭐
+- **Full transcript storage**: Complete transcript saved in `video_clips.full_transcript`
+- **Segment preservation**: All segments saved with full data for future re-processing
+- **Smart truncation**: When transcript exceeds 3500 tokens:
+  - Priority 1: AI summary + key metadata (always included)
+  - Priority 2: First N tokens of transcript (most important content)
+  - Priority 3: Key excerpts from middle/end if space allows
+- **Exact embedded text**: Store the precise text sent to embedding API
+- **Regeneration capability**: Full data preserved for future embedding updates
 
 3. **Vector Storage:**
    - ⏳ Store embeddings in pgvector format in Supabase
@@ -1086,13 +1098,29 @@ CREATE TABLE user_profiles (
 CREATE TABLE video_clips (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES auth.users(id) NOT NULL,
-  file_path TEXT NOT NULL,
+  file_path TEXT NOT NULL, -- Original file path (may be relative or absolute)
+  local_path TEXT NOT NULL, -- Absolute local file system path for CLI access ⭐
   file_name TEXT NOT NULL,
   file_checksum TEXT UNIQUE NOT NULL,
   file_size_bytes BIGINT NOT NULL,
   duration_seconds NUMERIC,
+  description TEXT, -- User-provided or AI-generated description
+  content_summary TEXT, -- From AI analysis
+  tags TEXT[], -- Array of tags
+  full_transcript TEXT, -- Complete transcript text (no length limit) ⭐
+  transcript_preview TEXT, -- First 500 chars for search performance ⭐
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  processed_at TIMESTAMPTZ DEFAULT NOW()
+  processed_at TIMESTAMPTZ DEFAULT NOW(),
+  -- Full-text search column for hybrid search ⭐
+  fts tsvector GENERATED ALWAYS AS (
+    to_tsvector('english', 
+      coalesce(file_name, '') || ' ' || 
+      coalesce(description, '') || ' ' ||
+      coalesce(content_summary, '') || ' ' ||
+      coalesce(transcript_preview, '') || ' ' || -- Use preview for FTS performance ⭐
+      coalesce(array_to_string(tags, ' '), '')
+    )
+  ) STORED
 );
 
 -- Video segments table (for future segment-level analysis) ⭐
@@ -1100,17 +1128,26 @@ CREATE TABLE video_segments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   video_clip_id UUID REFERENCES video_clips(id) ON DELETE CASCADE,
   user_id UUID REFERENCES auth.users(id) NOT NULL,
-  segment_index INTEGER NOT NULL, -- 0-based index of segment within clip
+  segment_index INTEGER NOT NULL, -- 0-based index of segment within clip for ordering ⭐
   start_time_seconds NUMERIC NOT NULL,
   end_time_seconds NUMERIC NOT NULL,
   duration_seconds NUMERIC GENERATED ALWAYS AS (end_time_seconds - start_time_seconds) STORED,
   segment_type TEXT DEFAULT 'auto', -- 'auto', 'scene_change', 'speaker_change', 'manual'
-  transcript_text TEXT, -- Transcript for this segment only
-  description TEXT, -- AI-generated description of this segment
-  keyframe_path TEXT, -- Path to representative keyframe for this segment
+  -- Only segment-specific data (not duplicating clip-level data) ⭐
+  speaker_id TEXT, -- Speaker identifier for this segment (if applicable)
+  segment_description TEXT, -- AI-generated description specific to this segment only
+  keyframe_timestamp NUMERIC, -- Timestamp of representative frame within this segment
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(video_clip_id, segment_index)
+  -- Ensure proper ordering and no overlaps ⭐
+  UNIQUE(video_clip_id, segment_index),
+  CONSTRAINT check_segment_times CHECK (start_time_seconds < end_time_seconds),
+  CONSTRAINT check_segment_index CHECK (segment_index >= 0)
 );
+
+-- Indexes for segment ordering and time-based queries ⭐
+CREATE INDEX idx_video_segments_clip_order ON video_segments(video_clip_id, segment_index);
+CREATE INDEX idx_video_segments_time_range ON video_segments(video_clip_id, start_time_seconds, end_time_seconds);
+CREATE INDEX idx_video_segments_user_time ON video_segments(user_id, created_at DESC);
 
 -- Vector embeddings table (supports both full-clip and segment-level embeddings) ⭐
 CREATE TABLE video_embeddings (
@@ -1120,9 +1157,12 @@ CREATE TABLE video_embeddings (
   user_id UUID REFERENCES auth.users(id) NOT NULL,
   embedding_type TEXT NOT NULL CHECK (embedding_type IN ('full_clip', 'segment', 'keyframe')),
   embedding vector(1024), -- BAAI/bge-m3 produces 1024-dimensional vectors
-  content_text TEXT NOT NULL, -- The text that was embedded
-  token_count INTEGER NOT NULL,
+  content_text TEXT NOT NULL, -- The EXACT text that was embedded (after truncation) ⭐
+  original_content_text TEXT, -- The full original text before any truncation ⭐
+  token_count INTEGER NOT NULL, -- Tokens in the embedded content_text ⭐
+  original_token_count INTEGER, -- Tokens in original_content_text before truncation ⭐
   embedding_source TEXT NOT NULL, -- 'transcript', 'ai_summary', 'combined', 'visual_description'
+  truncation_method TEXT, -- 'none', 'first_n_tokens', 'summary', 'key_excerpts' ⭐
   created_at TIMESTAMPTZ DEFAULT NOW(),
   -- Ensure either video_clip_id OR video_segment_id is set, not both for segments
   CONSTRAINT check_embedding_scope CHECK (
@@ -1144,9 +1184,36 @@ CREATE TABLE video_analysis (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+**Database Design Rationale:** ⭐
+
+**Efficient Data Storage:**
+- **Full transcript**: Stored once in `video_clips.full_transcript` (no duplication)
+- **Segment transcripts**: Extracted programmatically from full transcript using time boundaries
+- **AI analysis**: Full analysis stored in `video_clips` table via existing AI pipeline
+- **Segment-specific data**: Only unique segment data (speaker, description, keyframe) in segments table
+
+**Segment Ordering Strategy:**
+- **`segment_index`**: 0-based integer ensuring proper chronological order
+- **UNIQUE constraint**: `(video_clip_id, segment_index)` prevents duplicate indexes
+- **Time validation**: `start_time_seconds < end_time_seconds` ensures valid segments
+- **Indexed queries**: Optimized for both time-based and sequential access
+
+**Data Access Patterns:**
+```sql
+-- Get transcript for a specific segment (no duplication needed)
+SELECT 
+  vs.start_time_seconds,
+  vs.end_time_seconds,
+  -- Extract segment transcript from full transcript using timestamps
+  SUBSTRING(vc.full_transcript FROM /* time-based extraction */) as segment_transcript
+FROM video_segments vs
+JOIN video_clips vc ON vs.video_clip_id = vc.id
+WHERE vs.id = $1;
+
+-- Get all segments for a clip in order
+SELECT * FROM video_segments 
+WHERE video_clip_id = $1 
 -- Indexes for performance ⭐
-CREATE INDEX idx_video_segments_clip_time ON video_segments(video_clip_id, start_time_seconds, end_time_seconds);
-CREATE INDEX idx_video_segments_user ON video_segments(user_id, created_at DESC);
 CREATE INDEX idx_video_embeddings_type ON video_embeddings(embedding_type, user_id);
 CREATE INDEX idx_video_embeddings_segment ON video_embeddings(video_segment_id) WHERE video_segment_id IS NOT NULL;
 CREATE INDEX idx_video_embeddings_vector ON video_embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
@@ -1236,6 +1303,7 @@ CREATE POLICY "Admins can view all video segments" ON video_segments -- ⭐
    - ⏳ All pipeline operations require authenticated user
    - ⏳ User ID automatically attached to all stored records
    - ⏳ RLS policies enforce data isolation between users
+   - ⏳ Local file paths stored as absolute paths for CLI access ⭐
 
 #### 7.1.7. Future Segment-Level Search Capabilities ⭐
 
@@ -1255,6 +1323,11 @@ python -m video_ingest_tool db find-similar --segment-id="seg_123" --limit=10
 # Time-based segment queries (future implementation)  
 python -m video_ingest_tool db segments --clip-id="clip_123" --start="00:02:00" --end="00:05:00"
 python -m video_ingest_tool db segments --duration-min=30 --duration-max=120
+
+# Re-processing and embedding updates ⭐
+python -m video_ingest_tool db regenerate-embeddings --clip-id="uuid" --new-strategy="summary"
+python -m video_ingest_tool db regenerate-embeddings --all --embedding-model="new-model"
+python -m video_ingest_tool db create-segments --clip-id="uuid" --method="speaker-change"
 ```
 
 **Segment Processing Pipeline (Future):**
@@ -1300,22 +1373,218 @@ python -m video_ingest_tool db list --user-only
 python -m video_ingest_tool db stats
 python -m video_ingest_tool db export --format=json
 
+# File access commands using stored local paths ⭐
+python -m video_ingest_tool db open --clip-id="uuid" # Opens video in default player
+python -m video_ingest_tool db reveal --clip-id="uuid" # Shows file in file manager
+python -m video_ingest_tool db copy-path --clip-id="uuid" # Copies path to clipboard
+
 # Admin commands (requires admin profile)
 python -m video_ingest_tool admin users list
 python -m video_ingest_tool admin users promote user@example.com admin
 python -m video_ingest_tool admin clips list --all-users
 ```
 
-### 7.2. Vector Embeddings & Search Implementation ⏳
-1. **Embedding Generation:**
-   - ⏳ Implement embedding API client
-   - ⏳ Create vector generation from AI analysis summaries
-   - ⏳ Set up pgvector for similarity searches
+### 7.2. Vector Embeddings & Semantic Search ⏳
 
-2. **Search Interface:**
-   - ⏳ Implement natural language query processing
-   - ⏳ Create compound filtering (semantic + technical parameters)
-   - ⏳ Add CLI search commands
+#### 7.2.1. Hybrid Search Implementation ⭐
+Supabase supports **hybrid search** that combines both **full-text search** and **semantic vector search** using Reciprocal Rank Fusion (RRF) for optimal results.
+
+**Key Components:**
+- **Full-text search**: Traditional keyword-based search using PostgreSQL's tsvector
+- **Semantic search**: Vector similarity search using pgvector embeddings  
+- **Reciprocal Rank Fusion (RRF)**: Algorithm that combines and ranks results from both methods
+- **Configurable weights**: Balance between full-text and semantic results
+
+#### 7.2.2. Enhanced Database Schema for Hybrid Search ⭐
+
+**Updated video_clips table with full-text search:**
+```sql
+-- Add full-text search column to video_clips table
+ALTER TABLE video_clips ADD COLUMN fts tsvector 
+  GENERATED ALWAYS AS (
+    to_tsvector('english', 
+      coalesce(file_name, '') || ' ' || 
+      coalesce(description, '') || ' ' ||
+      coalesce(content_summary, '')
+    )
+  ) STORED;
+
+-- Create GIN index for full-text search
+CREATE INDEX idx_video_clips_fts ON video_clips USING gin(fts);
+
+-- Create HNSW index for vector similarity search  
+CREATE INDEX idx_video_embeddings_vector ON video_embeddings 
+  USING hnsw (embedding vector_ip_ops);
+```
+
+**Additional metadata columns for searchable content:**
+```sql
+-- Add searchable metadata fields to video_clips
+ALTER TABLE video_clips ADD COLUMN description TEXT;
+ALTER TABLE video_clips ADD COLUMN content_summary TEXT; -- From AI analysis
+ALTER TABLE video_clips ADD COLUMN tags TEXT[]; -- Array of tags
+ALTER TABLE video_clips ADD COLUMN transcript_preview TEXT; -- First 500 chars of transcript
+```
+
+#### 7.2.3. Hybrid Search Function ⭐
+
+**PostgreSQL function for video hybrid search:**
+```sql
+CREATE OR REPLACE FUNCTION hybrid_search_videos(
+  query_text TEXT,
+  query_embedding vector(1024),
+  user_id_filter UUID,
+  match_count INT DEFAULT 10,
+  full_text_weight FLOAT DEFAULT 1.0,
+  semantic_weight FLOAT DEFAULT 1.0,
+  rrf_k INT DEFAULT 50
+)
+RETURNS TABLE (
+  id UUID,
+  file_name TEXT,
+  file_path TEXT,
+  local_path TEXT, -- ⭐ Absolute local path for CLI access
+  description TEXT,
+  content_summary TEXT,
+  duration_seconds NUMERIC,
+  created_at TIMESTAMPTZ,
+  similarity_score FLOAT,
+  search_rank FLOAT
+)
+LANGUAGE SQL
+AS $$
+WITH full_text AS (
+  SELECT
+    vc.id,
+    vc.file_name,
+    vc.file_path,
+    vc.local_path, -- ⭐ Include local path in results
+    vc.description,
+    vc.content_summary,
+    vc.duration_seconds,
+    vc.created_at,
+    ROW_NUMBER() OVER(ORDER BY ts_rank_cd(vc.fts, websearch_to_tsquery(query_text)) DESC) as rank_ix
+  FROM video_clips vc
+  WHERE vc.user_id = user_id_filter
+    AND vc.fts @@ websearch_to_tsquery(query_text)
+  ORDER BY rank_ix
+  LIMIT LEAST(match_count, 30) * 2
+),
+semantic AS (
+  SELECT
+    vc.id,
+    vc.file_name,
+    vc.file_path,
+    vc.local_path, -- ⭐ Include local path in results
+    vc.description,
+    vc.content_summary,
+    vc.duration_seconds,
+    vc.created_at,
+    (ve.embedding <#> query_embedding) * -1 as similarity_score,
+    ROW_NUMBER() OVER (ORDER BY ve.embedding <#> query_embedding) as rank_ix
+  FROM video_clips vc
+  JOIN video_embeddings ve ON vc.id = ve.video_clip_id
+  WHERE vc.user_id = user_id_filter
+    AND ve.embedding_type = 'full_clip'
+  ORDER BY rank_ix
+  LIMIT LEAST(match_count, 30) * 2
+)
+SELECT
+  COALESCE(ft.id, s.id) as id,
+  COALESCE(ft.file_name, s.file_name) as file_name,
+  COALESCE(ft.file_path, s.file_path) as file_path,
+  COALESCE(ft.local_path, s.local_path) as local_path, -- ⭐ Local path for CLI access
+  COALESCE(ft.description, s.description) as description,
+  COALESCE(ft.content_summary, s.content_summary) as content_summary,
+  COALESCE(ft.duration_seconds, s.duration_seconds) as duration_seconds,
+  COALESCE(ft.created_at, s.created_at) as created_at,
+  COALESCE(s.similarity_score, 0.0) as similarity_score,
+  -- RRF scoring combines both rankings
+  COALESCE(1.0 / (rrf_k + ft.rank_ix), 0.0) * full_text_weight +
+  COALESCE(1.0 / (rrf_k + s.rank_ix), 0.0) * semantic_weight as search_rank
+FROM full_text ft
+FULL OUTER JOIN semantic s ON ft.id = s.id
+ORDER BY search_rank DESC
+LIMIT LEAST(match_count, 30);
+$$;
+```
+
+#### 7.2.4. Search Implementation Strategy ⭐
+
+**Multi-Modal Search Approach:**
+1. **Metadata Search**: File names, descriptions, tags, content summaries
+2. **Transcript Search**: Full transcript text and preview snippets  
+3. **AI Analysis Search**: Generated descriptions, entities, activities
+4. **Vector Similarity**: Semantic understanding of video content
+5. **Combined Ranking**: RRF algorithm weighs all search methods
+
+**Search Content Sources:**
+- **File metadata**: Names, paths, descriptions, tags
+- **AI analysis**: Summaries, key activities, entities, content categories
+- **Transcript data**: Full text (truncated for embeddings), speaker information
+- **Technical metadata**: Camera settings, codec info, duration, resolution
+- **Visual analysis**: Shot types, technical quality assessments
+
+#### 7.2.5. CLI Search Commands ⭐
+
+**Enhanced search interface:**
+```bash
+# Hybrid search (combines full-text + semantic)
+python -m video_ingest_tool search "outdoor hiking footage" --hybrid
+
+# Pure semantic search using embeddings only
+python -m video_ingest_tool search "sunset over mountains" --semantic-only
+
+# Full-text search only (faster, keyword-based)
+python -m video_ingest_tool search "interview CEO" --fulltext-only
+
+# Advanced search with filters
+python -m video_ingest_tool search "product demo" \
+  --duration-min=60 --duration-max=300 \
+  --camera-make="Canon" --resolution="4K"
+
+# Search with custom weights
+python -m video_ingest_tool search "nature documentary" \
+  --semantic-weight=0.8 --fulltext-weight=0.2
+
+# Search similar videos to a given clip
+python -m video_ingest_tool search --similar-to="clip_uuid" --limit=5
+
+# Search results show local file paths for direct access ⭐
+python -m video_ingest_tool search "conference presentation" --show-paths
+# Output includes clickable/copyable local file paths:
+# Found 3 matching videos:
+# 1. "Q4_presentation.mp4" - /Users/john/Videos/work/Q4_presentation.mp4
+# 2. "Sales_meeting.mov" - /Users/john/Videos/meetings/Sales_meeting.mov
+
+# Open search results directly in default video player ⭐  
+python -m video_ingest_tool search "demo video" --open-first
+python -m video_ingest_tool search "tutorial" --open-all --limit=3
+
+# Future: Segment-level search
+python -m video_ingest_tool search "discussion about pricing" \
+  --segment-level --timestamp-context=30
+```
+
+#### 7.2.6. Search Performance Optimization ⭐
+
+**Database Indexes:**
+```sql
+-- Composite indexes for common search patterns
+CREATE INDEX idx_video_clips_user_created ON video_clips(user_id, created_at DESC);
+CREATE INDEX idx_video_clips_duration ON video_clips(duration_seconds) WHERE duration_seconds IS NOT NULL;
+CREATE INDEX idx_video_clips_tags ON video_clips USING gin(tags) WHERE tags IS NOT NULL;
+
+-- Partial indexes for specific search scenarios
+CREATE INDEX idx_video_embeddings_full_clip ON video_embeddings(user_id, created_at) 
+  WHERE embedding_type = 'full_clip';
+```
+
+**Performance Considerations:**
+- **Index strategy**: HNSW for vectors, GIN for full-text, B-tree for metadata
+- **Query optimization**: Limit result sets before expensive operations
+- **Caching**: Cache frequent searches and user-specific result sets
+- **Parallel search**: Execute full-text and semantic searches concurrently
 
 ### 7.3. Task Queue Implementation Phase ⏳
 1. **Set Up Procrastinate:** ⏳
