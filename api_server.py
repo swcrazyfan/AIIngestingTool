@@ -22,12 +22,13 @@ import structlog
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    from video_ingest_tool.processor import process_video_file, get_default_pipeline_config
+    from video_ingest_tool.processor import process_video_file, get_default_pipeline_config, get_available_pipeline_steps
     from video_ingest_tool.discovery import scan_directory
     from video_ingest_tool.config import setup_logging
     from video_ingest_tool.auth import AuthManager
     from video_ingest_tool.search import VideoSearcher, format_search_results
     from video_ingest_tool.supabase_config import verify_connection, get_database_status
+    from video_ingest_tool.video_processor import DEFAULT_COMPRESSION_CONFIG
     BACKEND_AVAILABLE = True
 except ImportError as e:
     print(f"Warning: Could not import video_ingest_tool modules: {e}")
@@ -39,7 +40,13 @@ logger = structlog.get_logger(__name__)
 
 app = Flask(__name__)
 # Enable CORS for CEP panel access with specific configuration
-CORS(app, origins=['*'], allow_headers=['Content-Type'], methods=['GET', 'POST', 'OPTIONS'])
+CORS(
+    app, 
+    origins=['http://localhost:3000', 'cep://com.ai-ingest-tool.cep.main', 'null'], 
+    allow_headers=['Content-Type', 'Authorization'], 
+    methods=['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE', 'PATCH'], 
+    supports_credentials=True
+)
 
 # Global state
 current_ingest_job = None
@@ -96,6 +103,11 @@ class IngestJob:
                 logger=logger_instance
             )
             
+            # Apply limit if specified
+            limit = self.options.get('limit', 0)
+            if limit > 0:
+                video_files = video_files[:limit]
+            
             if not video_files:
                 self.status = "completed"
                 self.message = "No video files found"
@@ -134,6 +146,18 @@ class IngestJob:
                     # Get pipeline configuration
                     pipeline_config = get_default_pipeline_config()
                     
+                    # Apply enable/disable steps
+                    disable_steps = self.options.get('disable_steps', [])
+                    enable_steps = self.options.get('enable_steps', [])
+                    
+                    for step in disable_steps:
+                        if step in pipeline_config:
+                            pipeline_config[step] = False
+                    
+                    for step in enable_steps:
+                        if step in pipeline_config:
+                            pipeline_config[step] = True
+                    
                     # Apply options
                     if self.options.get('ai_analysis'):
                         pipeline_config['ai_video_analysis'] = True
@@ -148,7 +172,10 @@ class IngestJob:
                         file_path=file_path,
                         thumbnails_dir=thumbnails_dir,
                         logger=logger_instance,
-                        config=pipeline_config
+                        config=pipeline_config,
+                        compression_fps=self.options.get('compression_fps', DEFAULT_COMPRESSION_CONFIG['fps']),
+                        compression_bitrate=self.options.get('compression_bitrate', DEFAULT_COMPRESSION_CONFIG['video_bitrate']),
+                        force_reprocess=self.options.get('force_reprocess', False)
                     )
                     
                     # Handle skipped files (duplicates)
@@ -281,6 +308,33 @@ def auth_login():
         return jsonify({"error": "Login failed"}), 500
 
 
+@app.route('/api/auth/signup', methods=['POST'])
+def auth_signup():
+    """Signup endpoint."""
+    if not BACKEND_AVAILABLE:
+        return jsonify({"error": "Backend not available"}), 500
+    
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        password = data.get('password')
+        
+        if not email or not password:
+            return jsonify({"error": "Email and password required"}), 400
+        
+        auth_manager = AuthManager()
+        success = auth_manager.signup(email, password)
+        
+        if success:
+            return jsonify({"success": True, "message": "Account created successfully"})
+        else:
+            return jsonify({"error": "Signup failed"}), 400
+            
+    except Exception as e:
+        logger.error(f"Signup failed: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/auth/logout', methods=['POST'])
 def auth_logout():
     """Logout endpoint."""
@@ -325,7 +379,13 @@ def start_ingest():
         'recursive': data.get('recursive', True),
         'ai_analysis': data.get('ai_analysis', False),
         'store_database': data.get('store_database', False),
-        'generate_embeddings': data.get('generate_embeddings', False)
+        'generate_embeddings': data.get('generate_embeddings', False),
+        'force_reprocess': data.get('force_reprocess', False),
+        'limit': data.get('limit', 0),
+        'compression_fps': data.get('compression_fps', DEFAULT_COMPRESSION_CONFIG['fps']),
+        'compression_bitrate': data.get('compression_bitrate', DEFAULT_COMPRESSION_CONFIG['video_bitrate']),
+        'disable_steps': data.get('disable_steps', []),
+        'enable_steps': data.get('enable_steps', [])
     }
     
     current_ingest_job = IngestJob(directory, options)
@@ -435,6 +495,63 @@ def search_videos():
         return jsonify({"error": f"Search failed: {str(e)}"}), 500
 
 
+@app.route('/api/search/similar', methods=['POST'])
+def search_similar_videos():
+    """Find videos similar to a given clip."""
+    try:
+        data = request.get_json()
+        clip_id = data.get('clip_id')
+        limit = data.get('limit', 5)
+        
+        if not clip_id:
+            return jsonify({"error": "clip_id is required"}), 400
+        
+        if not BACKEND_AVAILABLE:
+            return jsonify({"error": "Backend not available for search"}), 500
+        
+        # Check authentication
+        auth_manager = AuthManager()
+        if not auth_manager.get_current_session():
+            return jsonify({"error": "Authentication required for similar search"}), 401
+        
+        # Initialize searcher
+        searcher = VideoSearcher()
+        
+        # Find similar videos
+        results = searcher.find_similar(
+            clip_id=clip_id,
+            match_count=limit
+        )
+        
+        # Format results for CEP panel
+        formatted_results = []
+        for result in results:
+            formatted_results.append({
+                'id': result.get('id'),
+                'file_name': result.get('file_name'),
+                'local_path': result.get('local_path'),
+                'file_path': result.get('file_path'),
+                'content_summary': result.get('content_summary'),
+                'content_tags': result.get('content_tags', []),
+                'duration_seconds': result.get('duration_seconds'),
+                'camera_make': result.get('camera_make'),
+                'camera_model': result.get('camera_model'),
+                'content_category': result.get('content_category'),
+                'processed_at': result.get('processed_at'),
+                'similarity_score': result.get('similarity_score', 0)
+            })
+        
+        return jsonify({
+            "results": formatted_results,
+            "total": len(formatted_results),
+            "source_clip_id": clip_id
+        })
+        
+    except Exception as e:
+        logger.error(f"Similar search failed: {str(e)}")
+        return jsonify({"error": f"Similar search failed: {str(e)}"}), 500
+
+
 def get_recent_videos(limit: int = 20):
     """Get recent videos from latest ingest or database."""
     try:
@@ -536,6 +653,84 @@ def database_status():
     except Exception as e:
         logger.error(f"Database status check failed: {str(e)}")
         return jsonify({"connected": False, "error": str(e)})
+
+
+@app.route('/api/clips/<clip_id>', methods=['GET'])
+def get_clip_details(clip_id):
+    """Get detailed information about a specific clip."""
+    if not BACKEND_AVAILABLE:
+        return jsonify({"error": "Backend not available"}), 500
+    
+    try:
+        auth_manager = AuthManager()
+        if not auth_manager.get_current_session():
+            return jsonify({"error": "Authentication required"}), 401
+        
+        client = auth_manager.get_authenticated_client()
+        
+        # Get clip details
+        clip_result = client.table('clips').select('*').eq('id', clip_id).execute()
+        
+        if not clip_result.data:
+            return jsonify({"error": "Clip not found"}), 404
+        
+        clip = clip_result.data[0]
+        
+        # Get transcript if available
+        transcript_result = client.table('transcripts').select('full_text').eq('clip_id', clip_id).execute()
+        transcript = transcript_result.data[0] if transcript_result.data else None
+        
+        # Get AI analysis if available
+        analysis_result = client.table('analysis').select('*').eq('clip_id', clip_id).execute()
+        analysis = analysis_result.data[0] if analysis_result.data else None
+        
+        return jsonify({
+            "clip": clip,
+            "transcript": transcript,
+            "analysis": analysis
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to get clip details: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/stats', methods=['GET'])
+def get_catalog_stats():
+    """Get catalog statistics for the current user."""
+    if not BACKEND_AVAILABLE:
+        return jsonify({"error": "Backend not available"}), 500
+    
+    try:
+        auth_manager = AuthManager()
+        if not auth_manager.get_current_session():
+            return jsonify({"error": "Authentication required"}), 401
+        
+        from .search import VideoSearcher
+        searcher = VideoSearcher()
+        stats = searcher.get_user_stats()
+        
+        return jsonify(stats)
+        
+    except Exception as e:
+        logger.error(f"Failed to get stats: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/pipeline/steps', methods=['GET'])
+def get_pipeline_steps():
+    """Get available pipeline steps."""
+    if not BACKEND_AVAILABLE:
+        return jsonify({"error": "Backend not available"}), 500
+    
+    try:
+        from .processor import get_available_pipeline_steps
+        steps = get_available_pipeline_steps()
+        return jsonify({"steps": steps})
+        
+    except Exception as e:
+        logger.error(f"Failed to get pipeline steps: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == '__main__':
