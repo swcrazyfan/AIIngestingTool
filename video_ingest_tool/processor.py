@@ -78,6 +78,101 @@ def generate_checksum(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     }
 
 @pipeline.register_step(
+    name="duplicate_check", 
+    enabled=True,
+    description="Check database for existing files with same checksum"
+)
+def check_duplicate_step(data: Dict[str, Any], logger=None, force_reprocess: bool = False) -> Dict[str, Any]:
+    """
+    Check if a file with the same checksum already exists in the database.
+    
+    Args:
+        data: Pipeline data containing checksum and file info
+        logger: Optional logger
+        force_reprocess: If True, skip duplicate check and proceed with processing
+        
+    Returns:
+        Dict with duplicate check results
+    """
+    if force_reprocess:
+        if logger:
+            logger.info("Force reprocess enabled - skipping duplicate check")
+        return {
+            'is_duplicate': False,
+            'duplicate_check_skipped': True,
+            'reason': 'force_reprocess'
+        }
+    
+    from .auth import AuthManager
+    
+    # Check if database storage is enabled (duplicate check only makes sense with database)
+    auth_manager = AuthManager()
+    if not auth_manager.get_current_session():
+        if logger:
+            logger.info("No authentication - skipping duplicate check")
+        return {
+            'is_duplicate': False,
+            'duplicate_check_skipped': True,
+            'reason': 'not_authenticated'
+        }
+    
+    checksum = data.get('checksum')
+    if not checksum:
+        if logger:
+            logger.warning("No checksum available for duplicate check")
+        return {
+            'is_duplicate': False,
+            'duplicate_check_skipped': True,
+            'reason': 'no_checksum'
+        }
+    
+    try:
+        client = auth_manager.get_authenticated_client()
+        if not client:
+            if logger:
+                logger.warning("No authenticated client - skipping duplicate check")
+            return {
+                'is_duplicate': False,
+                'duplicate_check_skipped': True,
+                'reason': 'no_client'
+            }
+        
+        # Query database for existing file with same checksum
+        result = client.table('clips').select('id, file_name, file_path, processed_at').eq('file_checksum', checksum).execute()
+        
+        if result.data:
+            existing_file = result.data[0]
+            if logger:
+                logger.info(f"Found duplicate file in database", 
+                           existing_id=existing_file['id'],
+                           existing_file=existing_file['file_name'],
+                           existing_path=existing_file['file_path'],
+                           processed_at=existing_file['processed_at'])
+            
+            return {
+                'is_duplicate': True,
+                'existing_clip_id': existing_file['id'],
+                'existing_file_name': existing_file['file_name'],
+                'existing_file_path': existing_file['file_path'],
+                'existing_processed_at': existing_file['processed_at']
+            }
+        else:
+            if logger:
+                logger.info("No duplicate found - proceeding with processing")
+            return {
+                'is_duplicate': False
+            }
+            
+    except Exception as e:
+        if logger:
+            logger.warning(f"Duplicate check failed: {str(e)} - proceeding with processing")
+        return {
+            'is_duplicate': False,
+            'duplicate_check_failed': True,
+            'error': str(e)
+        }
+
+@pipeline.register_step(
     name="mediainfo_extraction", 
     enabled=True,
     description="Extract metadata using MediaInfo"
@@ -1159,7 +1254,152 @@ def create_model_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
         'output': output
     }
 
-def process_video_file(file_path: str, thumbnails_dir: str, logger=None, config: Dict[str, bool] = None, compression_fps: int = DEFAULT_COMPRESSION_CONFIG['fps'], compression_bitrate: str = DEFAULT_COMPRESSION_CONFIG['video_bitrate']) -> VideoIngestOutput:
+@pipeline.register_step(
+    name="database_storage", 
+    enabled=False,  # Disabled by default
+    description="Store video metadata and analysis in Supabase database"
+)
+def database_storage_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
+    """
+    Store video data in Supabase database.
+    
+    Args:
+        data: Pipeline data containing the output model
+        logger: Optional logger
+        
+    Returns:
+        Dict with database storage results
+    """
+    from .auth import AuthManager
+    from .database_storage import store_video_in_database
+    
+    # Check authentication
+    auth_manager = AuthManager()
+    if not auth_manager.get_current_session():
+        if logger:
+            logger.warning("Skipping database storage - not authenticated")
+        return {
+            'database_storage_skipped': True,
+            'reason': 'not_authenticated'
+        }
+    
+    output = data.get('output')
+    if not output:
+        if logger:
+            logger.error("No output model found for database storage")
+        return {
+            'database_storage_failed': True,
+            'reason': 'no_output_model'
+        }
+    
+    try:
+        result = store_video_in_database(output, logger)
+        if logger:
+            logger.info(f"Successfully stored video in database: {result.get('clip_id')}")
+        return result
+        
+    except Exception as e:
+        if logger:
+            logger.error(f"Database storage failed: {str(e)}")
+        return {
+            'database_storage_failed': True,
+            'error': str(e)
+        }
+
+@pipeline.register_step(
+    name="generate_embeddings", 
+    enabled=False,  # Disabled by default
+    description="Generate vector embeddings for semantic search"
+)
+def generate_embeddings_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
+    """
+    Generate and store vector embeddings for semantic search.
+    
+    Args:
+        data: Pipeline data containing the output model and clip_id
+        logger: Optional logger
+        
+    Returns:
+        Dict with embedding generation results
+    """
+    from .auth import AuthManager
+    from .embeddings import prepare_embedding_content, generate_embeddings, store_embeddings
+    
+    # Check authentication
+    auth_manager = AuthManager()
+    if not auth_manager.get_current_session():
+        if logger:
+            logger.warning("Skipping embedding generation - not authenticated")
+        return {
+            'embeddings_skipped': True,
+            'reason': 'not_authenticated'
+        }
+    
+    # Get clip_id from database storage results
+    clip_id = data.get('clip_id')
+    if not clip_id:
+        if logger:
+            logger.error("No clip_id found for embedding generation")
+        return {
+            'embeddings_failed': True,
+            'reason': 'no_clip_id'
+        }
+    
+    # Get output model
+    output = data.get('output')
+    if not output:
+        if logger:
+            logger.error("No output model found for embedding generation")
+        return {
+            'embeddings_failed': True,
+            'reason': 'no_output_model'
+        }
+    
+    try:
+        # Prepare embedding content using the existing function
+        summary_content, keyword_content, metadata = prepare_embedding_content(output)
+        
+        if logger:
+            logger.info(f"Prepared embedding content - Summary: {metadata['summary_tokens']} tokens, Keywords: {metadata['keyword_tokens']} tokens")
+        
+        # Generate embeddings
+        summary_embedding, keyword_embedding = generate_embeddings(
+            summary_content, keyword_content, logger
+        )
+        
+        # Store embeddings in database
+        original_content = f"Summary: {summary_content}\nKeywords: {keyword_content}"
+        store_embeddings(
+            clip_id=clip_id,
+            summary_embedding=summary_embedding,
+            keyword_embedding=keyword_embedding,
+            summary_content=summary_content,
+            keyword_content=keyword_content,
+            original_content=original_content,
+            metadata=metadata,
+            logger=logger
+        )
+        
+        if logger:
+            logger.info(f"Successfully generated and stored embeddings for clip: {clip_id}")
+        
+        return {
+            'embeddings_generated': True,
+            'clip_id': clip_id,
+            'summary_tokens': metadata['summary_tokens'],
+            'keyword_tokens': metadata['keyword_tokens'],
+            'truncation_applied': metadata['summary_truncation'] != 'none' or metadata['keyword_truncation'] != 'none'
+        }
+        
+    except Exception as e:
+        if logger:
+            logger.error(f"Embedding generation failed: {str(e)}")
+        return {
+            'embeddings_failed': True,
+            'error': str(e)
+        }
+
+def process_video_file(file_path: str, thumbnails_dir: str, logger=None, config: Dict[str, bool] = None, compression_fps: int = DEFAULT_COMPRESSION_CONFIG['fps'], compression_bitrate: str = DEFAULT_COMPRESSION_CONFIG['video_bitrate'], force_reprocess: bool = False) -> VideoIngestOutput:
     """
     Process a video file using the pipeline.
     
@@ -1170,6 +1410,7 @@ def process_video_file(file_path: str, thumbnails_dir: str, logger=None, config:
         config: Dictionary of step configurations (enabled/disabled)
         compression_fps: Frame rate for video compression (default: 5)
         compression_bitrate: Bitrate for video compression (default: 500k)
+        force_reprocess: Force reprocessing even if file exists in database
         
     Returns:
         VideoIngestOutput: Processed video data object
@@ -1193,8 +1434,26 @@ def process_video_file(file_path: str, thumbnails_dir: str, logger=None, config:
         thumbnails_dir=thumbnails_dir,
         logger=logger,
         compression_fps=compression_fps,
-        compression_bitrate=compression_bitrate
+        compression_bitrate=compression_bitrate,
+        force_reprocess=force_reprocess
     )
+    
+    # Check if pipeline was stopped due to duplicate detection
+    if result.get('pipeline_stopped') and result.get('stop_reason') == 'duplicate_detected':
+        if logger:
+            logger.info("Skipping file - duplicate detected", 
+                       path=file_path,
+                       existing_id=result.get('existing_clip_id'),
+                       existing_file=result.get('existing_file_name'))
+        # Return a special marker indicating this was skipped
+        return {
+            'skipped': True,
+            'reason': 'duplicate_detected',
+            'existing_clip_id': result.get('existing_clip_id'),
+            'existing_file_name': result.get('existing_file_name'),
+            'existing_file_path': result.get('existing_file_path'),
+            'existing_processed_at': result.get('existing_processed_at')
+        }
     
     # Return the output model
     output = result.get('output')
