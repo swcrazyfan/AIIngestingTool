@@ -25,8 +25,9 @@ try:
     from video_ingest_tool.processor import process_video_file, get_default_pipeline_config
     from video_ingest_tool.discovery import scan_directory
     from video_ingest_tool.config import setup_logging
-    from video_ingest_tool.auth import auth_manager
+    from video_ingest_tool.auth import AuthManager
     from video_ingest_tool.search import VideoSearcher, format_search_results
+    from video_ingest_tool.supabase_config import verify_connection, get_database_status
     BACKEND_AVAILABLE = True
 except ImportError as e:
     print(f"Warning: Could not import video_ingest_tool modules: {e}")
@@ -37,7 +38,8 @@ except ImportError as e:
 logger = structlog.get_logger(__name__)
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for CEP panel access
+# Enable CORS for CEP panel access with specific configuration
+CORS(app, origins=['*'], allow_headers=['Content-Type'], methods=['GET', 'POST', 'OPTIONS'])
 
 # Global state
 current_ingest_job = None
@@ -64,6 +66,12 @@ class IngestJob:
             self.status = "error"
             self.error = "Backend modules not available"
             self.message = "Video ingest tool backend not properly installed"
+            ingest_progress.update({
+                "status": self.status,
+                "progress": 0,
+                "message": self.message,
+                "error": self.error
+            })
             return
         
         try:
@@ -98,14 +106,82 @@ class IngestJob:
                 })
                 return
             
+            self.status = "processing"
+            self.message = f"Processing {len(video_files)} video files..."
+            ingest_progress.update({
+                "status": self.status,
+                "progress": 20,
+                "message": self.message
+            })
+            
+            # Process videos with progress tracking
+            processed_files = []
+            failed_files = []
+            
+            for i, file_path in enumerate(video_files):
+                try:
+                    progress_percent = 20 + (70 * i / len(video_files))
+                    self.message = f"Processing {os.path.basename(file_path)}..."
+                    ingest_progress.update({
+                        "status": self.status,
+                        "progress": progress_percent,
+                        "message": self.message,
+                        "processed_count": len(processed_files),
+                        "failed_count": len(failed_files),
+                        "total_count": len(video_files)
+                    })
+                    
+                    # Get pipeline configuration
+                    pipeline_config = get_default_pipeline_config()
+                    
+                    # Apply options
+                    if self.options.get('ai_analysis'):
+                        pipeline_config['ai_video_analysis'] = True
+                    if self.options.get('store_database'):
+                        pipeline_config['database_storage'] = True
+                    if self.options.get('generate_embeddings'):
+                        pipeline_config['generate_embeddings'] = True
+                        pipeline_config['database_storage'] = True  # Embeddings require database
+                    
+                    # Process the video file
+                    result = process_video_file(
+                        file_path=file_path,
+                        thumbnails_dir=thumbnails_dir,
+                        logger=logger_instance,
+                        config=pipeline_config
+                    )
+                    
+                    # Handle skipped files (duplicates)
+                    if isinstance(result, dict) and result.get('skipped'):
+                        logger_instance.info(f"Skipped duplicate file: {file_path}")
+                        continue
+                    
+                    # Convert Pydantic model to dict for JSON serialization
+                    if hasattr(result, 'model_dump'):
+                        result_dict = result.model_dump()
+                    else:
+                        result_dict = result
+                    
+                    processed_files.append(result_dict)
+                    
+                except Exception as e:
+                    logger_instance.error(f"Failed to process {file_path}: {str(e)}")
+                    failed_files.append({
+                        'file_path': file_path,
+                        'error': str(e)
+                    })
+            
             self.status = "completed"
-            self.message = f"Found {len(video_files)} video files"
-            self.results = video_files
+            self.message = f"Processing completed! {len(processed_files)} processed, {len(failed_files)} failed"
+            self.results = processed_files
             ingest_progress.update({
                 "status": self.status,
                 "progress": 100,
                 "message": self.message,
-                "results": video_files
+                "results": processed_files,
+                "processed_count": len(processed_files),
+                "failed_count": len(failed_files),
+                "total_count": len(video_files)
             })
             
         except Exception as e:
@@ -120,6 +196,19 @@ class IngestJob:
             })
 
 
+@app.before_request
+def log_request():
+    """Log all incoming requests for debugging."""
+    print(f"📥 Request: {request.method} {request.path} from {request.remote_addr}")
+    if request.method == 'POST' and request.content_type == 'application/json':
+        print(f"📄 Body: {request.get_json()}")
+
+@app.after_request
+def log_response(response):
+    """Log all responses for debugging."""
+    print(f"📤 Response: {response.status_code} for {request.method} {request.path}")
+    return response
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint."""
@@ -129,6 +218,84 @@ def health_check():
         "backend_available": BACKEND_AVAILABLE,
         "timestamp": datetime.now().isoformat()
     })
+
+
+@app.route('/api/auth/status', methods=['GET'])
+def auth_status():
+    """Check authentication status."""
+    if not BACKEND_AVAILABLE:
+        return jsonify({"error": "Backend not available"}), 500
+    
+    try:
+        auth_manager = AuthManager()
+        session = auth_manager.get_current_session()
+        
+        if session:
+            profile = auth_manager.get_user_profile()
+            return jsonify({
+                "authenticated": True,
+                "user": {
+                    "email": session.get('user', {}).get('email'),
+                    "profile": profile
+                }
+            })
+        else:
+            return jsonify({"authenticated": False})
+            
+    except Exception as e:
+        logger.error(f"Auth status check failed: {str(e)}")
+        return jsonify({"error": "Auth check failed", "authenticated": False})
+
+
+@app.route('/api/auth/login', methods=['POST'])
+def auth_login():
+    """Login endpoint."""
+    if not BACKEND_AVAILABLE:
+        return jsonify({"error": "Backend not available"}), 500
+    
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        password = data.get('password')
+        
+        if not email or not password:
+            return jsonify({"error": "Email and password required"}), 400
+        
+        auth_manager = AuthManager()
+        success = auth_manager.login(email, password)
+        
+        if success:
+            profile = auth_manager.get_user_profile()
+            return jsonify({
+                "success": True,
+                "user": {
+                    "email": email,
+                    "profile": profile
+                }
+            })
+        else:
+            return jsonify({"error": "Invalid credentials"}), 401
+            
+    except Exception as e:
+        logger.error(f"Login failed: {str(e)}")
+        return jsonify({"error": "Login failed"}), 500
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def auth_logout():
+    """Logout endpoint."""
+    if not BACKEND_AVAILABLE:
+        return jsonify({"error": "Backend not available"}), 500
+    
+    try:
+        auth_manager = AuthManager()
+        success = auth_manager.logout()
+        return jsonify({"success": success})
+        
+    except Exception as e:
+        logger.error(f"Logout failed: {str(e)}")
+        return jsonify({"error": "Logout failed"}), 500
+
 
 @app.route('/api/ingest', methods=['POST'])
 def start_ingest():
@@ -175,6 +342,7 @@ def start_ingest():
         "options": options
     })
 
+
 @app.route('/api/ingest/progress', methods=['GET'])
 def get_ingest_progress():
     """Get current ingest progress."""
@@ -187,14 +355,8 @@ def get_ingest_progress():
             "message": "No active ingest job"
         })
     
-    return jsonify({
-        "status": current_ingest_job.status,
-        "progress": current_ingest_job.progress,
-        "message": current_ingest_job.message,
-        "results_count": len(current_ingest_job.results),
-        "error": current_ingest_job.error,
-        "start_time": current_ingest_job.start_time.isoformat()
-    })
+    return jsonify(ingest_progress)
+
 
 @app.route('/api/ingest/results', methods=['GET'])
 def get_ingest_results():
@@ -227,6 +389,11 @@ def search_videos():
         if not BACKEND_AVAILABLE:
             return jsonify({"error": "Backend not available for search"}), 500
         
+        # Check authentication for database search
+        auth_manager = AuthManager()
+        if not auth_manager.get_current_session():
+            return jsonify({"error": "Authentication required for search"}), 401
+        
         # Initialize searcher
         searcher = VideoSearcher()
         
@@ -241,75 +408,65 @@ def search_videos():
         formatted_results = []
         for result in results:
             formatted_results.append({
-                "id": result.get('id'),
-                "file_name": result.get('file_name'),
-                "file_path": result.get('file_path'),
-                "local_path": result.get('local_path', result.get('file_path')),
-                "duration_seconds": result.get('duration_seconds', 0),
-                "camera_make": result.get('camera_make'),
-                "camera_model": result.get('camera_model'),
-                "content_summary": result.get('content_summary'),
-                "content_tags": result.get('content_tags', []),
-                "similarity_score": result.get('similarity_score', 0),
-                "search_rank": result.get('search_rank', 0)
+                'id': result.get('id'),
+                'file_name': result.get('file_name'),
+                'local_path': result.get('local_path'),
+                'file_path': result.get('file_path'),
+                'content_summary': result.get('content_summary'),
+                'content_tags': result.get('content_tags', []),
+                'duration_seconds': result.get('duration_seconds'),
+                'camera_make': result.get('camera_make'),
+                'camera_model': result.get('camera_model'),
+                'content_category': result.get('content_category'),
+                'processed_at': result.get('processed_at'),
+                'similarity_score': result.get('similarity_score', 0),
+                'search_rank': result.get('search_rank', 0)
             })
         
         return jsonify({
             "results": formatted_results,
             "total": len(formatted_results),
-            "query": query,
-            "search_type": search_type
+            "search_type": search_type,
+            "query": query
         })
         
     except Exception as e:
         logger.error(f"Search failed: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": f"Search failed: {str(e)}"}), 500
+
 
 def get_recent_videos(limit: int = 20):
     """Get recent videos from latest ingest or database."""
     try:
         # Try to get from current ingest job first
-        global current_ingest_job
         if current_ingest_job and current_ingest_job.results:
             results = current_ingest_job.results[-limit:]
             return jsonify({
                 "results": results,
                 "total": len(results),
-                "source": "current_ingest"
+                "source": "current_job"
             })
         
         # Try to get from database if authenticated
-        if BACKEND_AVAILABLE and auth_manager.get_current_session():
+        if BACKEND_AVAILABLE:
             try:
-                searcher = VideoSearcher()
-                # Get recent clips from database
-                results = searcher.search(
-                    query="",
-                    search_type="fulltext",
-                    match_count=limit
-                )
-                
-                formatted_results = []
-                for result in results:
-                    formatted_results.append({
-                        "id": result.get('id'),
-                        "file_name": result.get('file_name'),
-                        "file_path": result.get('file_path'),
-                        "local_path": result.get('local_path', result.get('file_path')),
-                        "duration_seconds": result.get('duration_seconds', 0),
-                        "camera_make": result.get('camera_make'),
-                        "camera_model": result.get('camera_model'),
-                        "content_summary": result.get('content_summary'),
-                        "content_tags": result.get('content_tags', [])
+                auth_manager = AuthManager()
+                if auth_manager.get_current_session():
+                    client = auth_manager.get_authenticated_client()
+                    
+                    # Get recent clips from database
+                    result = client.table('clips').select(
+                        'id, file_name, local_path, content_summary, content_tags, '
+                        'duration_seconds, camera_make, camera_model, content_category, processed_at'
+                    ).order('processed_at', desc=True).limit(limit).execute()
+                    
+                    return jsonify({
+                        "results": result.data,
+                        "total": len(result.data),
+                        "source": "database"
                     })
-                
-                return jsonify({
-                    "results": formatted_results,
-                    "total": len(formatted_results),
-                    "source": "database"
-                })
             except Exception as e:
-                logger.warning(f"Database search failed: {str(e)}")
+                logger.warning(f"Database query failed: {str(e)}")
         
         # Fallback: look for recent JSON files
         output_dir = os.path.join(os.getcwd(), "output", "runs")
@@ -323,23 +480,26 @@ def get_recent_videos(limit: int = 20):
                     results = []
                     json_files = [f for f in os.listdir(json_dir) if f.endswith('.json')]
                     
-                    for json_file in json_files[-limit:]:
+                    for json_file in sorted(json_files)[-limit:]:
                         try:
                             with open(os.path.join(json_dir, json_file), 'r') as f:
                                 video_data = json.load(f)
-                                results.append({
-                                    "id": video_data.get('id'),
-                                    "file_name": video_data['file_info']['file_name'],
-                                    "file_path": video_data['file_info']['file_path'],
-                                    "local_path": os.path.abspath(video_data['file_info']['file_path']),
-                                    "duration_seconds": video_data.get('video', {}).get('duration_seconds', 0),
-                                    "camera_make": video_data.get('camera', {}).get('make'),
-                                    "camera_model": video_data.get('camera', {}).get('model'),
-                                    "content_summary": video_data.get('analysis', {}).get('content_summary'),
-                                    "content_tags": video_data.get('analysis', {}).get('content_tags', [])
-                                })
+                                
+                            # Extract relevant fields for display
+                            result = {
+                                'id': video_data.get('id'),
+                                'file_name': video_data.get('file_info', {}).get('file_name'),
+                                'local_path': video_data.get('file_info', {}).get('file_path'),
+                                'content_summary': video_data.get('analysis', {}).get('content_summary'),
+                                'content_tags': video_data.get('analysis', {}).get('content_tags', []),
+                                'duration_seconds': video_data.get('video', {}).get('resolution', {}).get('duration_seconds'),
+                                'camera_make': video_data.get('camera', {}).get('make'),
+                                'camera_model': video_data.get('camera', {}).get('model'),
+                                'processed_at': video_data.get('file_info', {}).get('processed_at')
+                            }
+                            results.append(result)
                         except Exception as e:
-                            logger.warning(f"Failed to load {json_file}: {str(e)}")
+                            logger.warning(f"Failed to parse JSON file {json_file}: {str(e)}")
                     
                     return jsonify({
                         "results": results,
@@ -347,6 +507,7 @@ def get_recent_videos(limit: int = 20):
                         "source": "json_files"
                     })
         
+        # No results found
         return jsonify({
             "results": [],
             "total": 0,
@@ -355,31 +516,32 @@ def get_recent_videos(limit: int = 20):
         
     except Exception as e:
         logger.error(f"Failed to get recent videos: {str(e)}")
-        return jsonify({"error": str(e)}), 500@app.route('/api/auth/status', methods=['GET'])
-def auth_status():
-    """Check authentication status."""
+        return jsonify({"error": "Failed to load recent videos"}), 500
+
+
+@app.route('/api/database/status', methods=['GET'])
+def database_status():
+    """Get database connection status."""
     if not BACKEND_AVAILABLE:
-        return jsonify({"authenticated": False, "error": "Backend not available"})
+        return jsonify({"connected": False, "error": "Backend not available"})
     
     try:
-        session = auth_manager.get_current_session()
+        connected = verify_connection()
+        status = get_database_status() if connected else {}
         
-        if session:
-            profile = auth_manager.get_user_profile()
-            return jsonify({
-                "authenticated": True,
-                "email": session.get('email'),
-                "profile": profile
-            })
-        else:
-            return jsonify({"authenticated": False})
+        return jsonify({
+            "connected": connected,
+            "status": status
+        })
     except Exception as e:
-        return jsonify({"authenticated": False, "error": str(e)})
+        logger.error(f"Database status check failed: {str(e)}")
+        return jsonify({"connected": False, "error": str(e)})
+
 
 if __name__ == '__main__':
     print("🚀 Starting Video Ingest API Server...")
-    print("📡 CEP Panel can connect to: http://localhost:8000")
-    print("🔍 Health check: http://localhost:8000/api/health")
+    print(f"📡 CEP Panel can connect to: http://localhost:8000")
+    print(f"🔍 Health check: http://localhost:8000/api/health")
     
     if BACKEND_AVAILABLE:
         print("✅ Backend modules loaded successfully")
@@ -392,6 +554,6 @@ if __name__ == '__main__':
     app.run(
         host='localhost',
         port=8000,
-        debug=False,  # Set to False for production
+        debug=True,  # Enable debug mode
         threaded=True
     )

@@ -27,7 +27,11 @@
                 <Resources>
                     <MainPath>./index.html</MainPath>
                     <ScriptPath>./jsx/main.jsx</ScriptPath>
-                    <CEFCommandLine/>
+                    <CEFCommandLine>
+                        <Parameter>--allow-file-access-from-files</Parameter>
+                        <Parameter>--disable-web-security</Parameter>
+                        <Parameter>--allow-running-insecure-content</Parameter>
+                    </CEFCommandLine>
                 </Resources>
                 <Lifecycle>
                     <AutoVisible>true</AutoVisible>

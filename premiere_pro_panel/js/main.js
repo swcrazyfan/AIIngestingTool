@@ -3,6 +3,10 @@
  * Integrates with Python backend via HTTP API
  */
 
+// Immediate debug log to verify JavaScript is loading
+console.log('🔥 MAIN.JS LOADING - This should appear immediately!');
+alert('JavaScript is working! Check console for details.');
+
 class VideoIngestPanel {
     constructor() {
         this.csInterface = new CSInterface();
@@ -12,10 +16,18 @@ class VideoIngestPanel {
         this.searchResults = [];
         this.progressInterval = null;
         this.connectionCheckInterval = null;
+        this.isAuthenticated = false;
+        this.currentUser = null;
+        
+        console.log('🎬 VideoIngestPanel constructor called');
+        console.log('🌐 API Base URL:', this.apiBaseUrl);
         
         // Bind methods
         this.init = this.init.bind(this);
         this.checkConnection = this.checkConnection.bind(this);
+        this.checkAuthStatus = this.checkAuthStatus.bind(this);
+        this.login = this.login.bind(this);
+        this.logout = this.logout.bind(this);
         this.selectDirectory = this.selectDirectory.bind(this);
         this.startIngest = this.startIngest.bind(this);
         this.searchVideos = this.searchVideos.bind(this);
@@ -32,6 +44,9 @@ class VideoIngestPanel {
         // Start connection monitoring
         this.startConnectionMonitoring();
         
+        // Check authentication status
+        this.checkAuthStatus();
+        
         // Load existing videos
         this.loadExistingVideos();
         
@@ -39,6 +54,13 @@ class VideoIngestPanel {
     }
 
     setupEventListeners() {
+        // Authentication
+        document.getElementById('loginBtn').addEventListener('click', this.login);
+        document.getElementById('logoutBtn').addEventListener('click', this.logout);
+        document.getElementById('passwordInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') this.login();
+        });
+
         // Directory selection
         document.getElementById('selectDirectory').addEventListener('click', this.selectDirectory);
         
@@ -74,20 +96,147 @@ class VideoIngestPanel {
         this.connectionCheckInterval = setInterval(this.checkConnection, 10000); // Every 10 seconds
     }
 
+    async checkAuthStatus() {
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/auth/status`, {
+                method: 'GET'
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                this.updateAuthStatus(data.authenticated, data.user);
+            } else {
+                this.updateAuthStatus(false);
+            }
+        } catch (error) {
+            console.warn('Auth status check failed:', error);
+            this.updateAuthStatus(false);
+        }
+    }
+
+    updateAuthStatus(isAuthenticated, user = null) {
+        this.isAuthenticated = isAuthenticated;
+        this.currentUser = user;
+
+        const loginForm = document.getElementById('loginForm');
+        const userInfo = document.getElementById('userInfo');
+        const authStatus = document.getElementById('authStatus');
+
+        if (isAuthenticated && user) {
+            loginForm.style.display = 'none';
+            userInfo.style.display = 'block';
+            document.getElementById('userEmail').textContent = user.email || 'Unknown';
+            authStatus.textContent = '✅ Authenticated';
+            authStatus.className = 'progress-text success';
+        } else {
+            loginForm.style.display = 'block';
+            userInfo.style.display = 'none';
+            authStatus.textContent = '🔐 Please log in to access database features';
+            authStatus.className = 'progress-text warning';
+        }
+
+        // Update UI based on auth status
+        this.updateUIForAuthStatus();
+    }
+
+    updateUIForAuthStatus() {
+        const storeDatabase = document.getElementById('storeDatabase');
+        const generateEmbeddings = document.getElementById('generateEmbeddings');
+        
+        if (!this.isAuthenticated) {
+            // Disable database features if not authenticated
+            storeDatabase.checked = false;
+            generateEmbeddings.checked = false;
+            storeDatabase.disabled = true;
+            generateEmbeddings.disabled = true;
+        } else {
+            storeDatabase.disabled = false;
+            generateEmbeddings.disabled = false;
+        }
+    }
+
+    async login() {
+        const email = document.getElementById('emailInput').value.trim();
+        const password = document.getElementById('passwordInput').value;
+        const authStatus = document.getElementById('authStatus');
+
+        if (!email || !password) {
+            authStatus.textContent = '❌ Please enter email and password';
+            authStatus.className = 'progress-text error';
+            return;
+        }
+
+        try {
+            authStatus.textContent = '🔄 Logging in...';
+            authStatus.className = 'progress-text';
+
+            const response = await fetch(`${this.apiBaseUrl}/auth/login`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ email, password })
+            });
+
+            const data = await response.json();
+
+            if (response.ok && data.success) {
+                this.updateAuthStatus(true, data.user);
+                // Clear form
+                document.getElementById('emailInput').value = '';
+                document.getElementById('passwordInput').value = '';
+            } else {
+                authStatus.textContent = `❌ ${data.error || 'Login failed'}`;
+                authStatus.className = 'progress-text error';
+            }
+        } catch (error) {
+            console.error('Login error:', error);
+            authStatus.textContent = '❌ Connection error';
+            authStatus.className = 'progress-text error';
+        }
+    }
+
+    async logout() {
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/auth/logout`, {
+                method: 'POST'
+            });
+
+            // Update UI regardless of response (local logout)
+            this.updateAuthStatus(false);
+        } catch (error) {
+            console.error('Logout error:', error);
+            // Still update UI for local logout
+            this.updateAuthStatus(false);
+        }
+    }
+
     async checkConnection() {
         try {
+            console.log('🔍 Checking API connection to:', `${this.apiBaseUrl}/health`);
+            
             const response = await fetch(`${this.apiBaseUrl}/health`, {
                 method: 'GET',
                 timeout: 5000
             });
             
+            console.log('📡 API Response status:', response.status);
+            
             if (response.ok) {
+                const data = await response.json();
+                console.log('✅ API Response data:', data);
                 this.updateConnectionStatus(true);
             } else {
+                console.error('❌ API Response not OK:', response.status, response.statusText);
                 this.updateConnectionStatus(false);
             }
         } catch (error) {
-            console.warn('API connection check failed:', error);
+            console.error('❌ API connection check failed:', error);
+            console.error('Error details:', {
+                name: error.name,
+                message: error.message,
+                stack: error.stack
+            });
             this.updateConnectionStatus(false);
         }
     }
@@ -261,6 +410,12 @@ class VideoIngestPanel {
             return;
         }
 
+        // Check if authentication is required for database search
+        if (['semantic', 'hybrid', 'transcripts'].includes(searchType) && !this.isAuthenticated) {
+            this.showError('Database search requires authentication. Please log in first.');
+            return;
+        }
+
         try {
             const response = await fetch(`${this.apiBaseUrl}/search`, {
                 method: 'POST',
@@ -279,8 +434,11 @@ class VideoIngestPanel {
                 this.searchResults = data.results || [];
                 this.displayResults(this.searchResults);
                 console.log(`📊 Found ${this.searchResults.length} matching videos`);
+            } else if (response.status === 401) {
+                this.showError('Authentication required for search. Please log in.');
             } else {
                 throw new Error(`Search failed: ${response.status}`);
+            }
             }
         } catch (error) {
             console.error('Search failed:', error);
