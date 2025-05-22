@@ -39,10 +39,22 @@ def setup_logging():
     
     # Create a timestamp for current run
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = os.path.join(log_dir, f"ingestor_{timestamp}.log")
     
-    # Ensure JSON output directory exists
-    json_dir = os.path.join(parent_dir, "json_output")
+    # Create consolidated output directory structure
+    output_dir = os.path.join(parent_dir, "output")
+    runs_dir = os.path.join(output_dir, "runs")
+    current_run_dir = os.path.join(runs_dir, f"run_{timestamp}")
+    
+    # Create run-specific directories
+    os.makedirs(current_run_dir, exist_ok=True)
+    run_logs_dir = os.path.join(current_run_dir, "logs")
+    os.makedirs(run_logs_dir, exist_ok=True)
+    
+    # Log file in run directory
+    log_file = os.path.join(run_logs_dir, f"ingestor_{timestamp}.log")
+    
+    # Create JSON directory in run structure  
+    json_dir = os.path.join(current_run_dir, "json")
     os.makedirs(json_dir, exist_ok=True)
     
     # Configure structlog to integrate with standard logging
