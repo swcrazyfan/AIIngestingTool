@@ -317,7 +317,64 @@ def list_steps():
 search_app = typer.Typer(help="Search video catalog")
 app.add_typer(search_app, name="search")
 
-@search_app.command("query")
+@search_app.command("recent")
+def list_recent_videos(
+    limit: int = typer.Option(10, "--limit", "-l", help="Maximum number of results"),
+    output_format: str = typer.Option("table", "--format", help="Output format: table, json")
+):
+    """List recent videos from your catalog."""
+    from .search import VideoSearcher, format_search_results # Import here to avoid circular deps
+    from .auth import AuthManager # Import AuthManager
+
+    auth_manager = AuthManager()
+    if not auth_manager.get_current_session():
+        console.print("[red]Authentication required. Please login using 'ait auth login'.[/red]")
+        raise typer.Exit(code=1)
+
+    try:
+        video_searcher = VideoSearcher()
+        # Call the new list_videos method, default sort is 'processed_at' descending
+        results = video_searcher.list_videos(limit=limit) 
+
+        if not results:
+            console.print("No recent videos found.")
+            return
+
+        if output_format == "json":
+            # For JSON, we might not need the 'format_search_results' if list_videos returns sufficient data
+            # Or, adapt format_search_results if specific formatting is still needed
+            console.print_json(data=results)
+        else:
+            # Assuming 'list_videos' returns data in a structure that format_search_results can handle
+            # or that we can adapt. For now, let's assume it's compatible or we'll adjust format_search_results later.
+            # We pass a generic search_type like 'recent' or None if format_search_results needs it.
+            # For now, let's try to display raw fields if format_search_results is not directly applicable.
+            
+            table = Table(title=f"Recent Videos (Top {limit})")
+            if results:
+                # Dynamically create columns from the keys of the first result
+                # This makes it flexible if list_videos returns different fields than search
+                headers = results[0].keys()
+                for header in headers:
+                    table.add_column(header.replace("_", " ").title())
+                
+                for item in results:
+                    table.add_row(*[str(item.get(header, "N/A")) for header in headers])
+            
+            console.print(table)
+
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        console.print(f"[red]An unexpected error occurred: {e}[/red]")
+        logger.exception("Error listing recent videos in CLI") # Make sure logger is defined
+        raise typer.Exit(code=1)
+
+
+@search_app.command("query") 
+# Renamed from 'search' to 'query' to avoid conflict with the 'search' subcommand group
+# and to be more descriptive of its action (querying with text)
 def search_videos(
     query: str = typer.Argument(..., help="Search query"),
     search_type: str = typer.Option("hybrid", "--type", "-t", help="Search type: semantic, fulltext, hybrid, transcripts"),
@@ -332,9 +389,19 @@ def search_videos(
     from .search import VideoSearcher, format_search_results, format_duration
     
     # Validate search type
-    valid_types = ["semantic", "fulltext", "hybrid", "transcripts"]
+    valid_types = ["semantic", "fulltext", "hybrid", "transcripts", "similar", "recent"]
     if search_type not in valid_types:
         console.print(f"[red]Error:[/red] Invalid search type. Must be one of: {', '.join(valid_types)}")
+        raise typer.Exit(1)
+        
+    # Handle special search types
+    if search_type == "recent":
+        # Redirect to the recent command
+        console.print("[yellow]Redirecting to 'recent' command...[/yellow]")
+        list_recent_videos(limit=limit, output_format=output_format)
+        return
+    elif search_type == "similar":
+        console.print("[red]Error:[/red] For similar search, use: python -m video_ingest_tool search similar <clip_id>")
         raise typer.Exit(1)
     
     try:

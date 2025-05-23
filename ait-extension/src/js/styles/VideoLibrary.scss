@@ -32,6 +32,54 @@
     }
   }
   
+  .filter-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px 18px;
+    padding: 16px;
+    background-color: var(--vscode-sideBar-background, #252526);
+    border-top: 1px solid var(--vscode-editorGroup-border, #333333);
+
+    .filter-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+
+      label {
+        font-size: 0.9em;
+        color: var(--vscode-foreground, #cccccc);
+        white-space: nowrap;
+      }
+
+      select,
+      input[type="date"] {
+        padding: 7px 9px;
+        border-radius: 3px;
+        border: 1px solid var(--vscode-input-border, #3c3c3c);
+        background-color: var(--vscode-input-background, #3c3c3c);
+        color: var(--vscode-input-foreground, #cccccc);
+        min-width: 170px;
+        font-size: 0.9em;
+
+        &:focus {
+          border-color: var(--vscode-focusBorder, #007acc);
+          outline: none;
+        }
+      }
+    }
+
+    .apply-filters-button {
+      padding: 7px 14px;
+      border: 1px solid var(--vscode-button-border, #007acc);
+      border-radius: 3px;
+      background-color: var(--vscode-button-background, #0e639c);
+      color: var(--vscode-button-foreground, #ffffff);
+      cursor: pointer;
+      font-size: 0.9em;
+    }
+  }
+  
   .video-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));

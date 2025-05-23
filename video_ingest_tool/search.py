@@ -32,6 +32,8 @@ def prepare_search_embeddings(query: str) -> Tuple[str, str]:
     return summary_content, keyword_content
 
 SearchType = Literal["semantic", "fulltext", "hybrid", "transcripts", "similar"]
+SortField = Literal["processed_at", "file_name", "duration_seconds", "created_at"]
+SortOrder = Literal["ascending", "descending"]
 
 class VideoSearcher:
     """
@@ -124,6 +126,58 @@ class VideoSearcher:
             logger.error(f"Similar search failed: {str(e)}")
             raise
     
+    def list_videos(
+        self,
+        sort_by: SortField = "processed_at",
+        sort_order: SortOrder = "descending",
+        limit: int = 20,
+        offset: int = 0,
+        filters: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        List videos from the catalog with sorting and filtering.
+
+        Args:
+            sort_by: Field to sort by (e.g., 'processed_at', 'file_name').
+            sort_order: 'ascending' or 'descending'.
+            limit: Number of videos to return.
+            offset: Offset for pagination.
+            filters: Dictionary of filters to apply. 
+                     Supported filters:
+                        'date_start': ISO format string for processed_at >= value
+                        'date_end': ISO format string for processed_at <= value
+
+        Returns:
+            List of video objects.
+        """
+        client = self._get_authenticated_client()
+        user_id = self._get_current_user_id()
+        filters = filters or {}
+
+        try:
+            query = client.from_("clips").select("*", count="exact").eq("user_id", user_id)
+
+            # Apply filters
+            if "date_start" in filters:
+                query = query.gte("processed_at", filters["date_start"])
+            if "date_end" in filters:
+                query = query.lte("processed_at", filters["date_end"])
+            
+            # Add other specific field filters if needed, e.g.:
+            # if "content_category" in filters:
+            #     query = query.eq("content_category", filters["content_category"])
+
+            is_descending = sort_order == "descending"
+            query = query.order(sort_by, desc=is_descending).limit(limit).offset(offset)
+            
+            result = query.execute()
+            return result.data if result.data else []
+
+        except Exception as e:
+            logger.error("Failed to list videos", error=str(e), sort_by=sort_by, sort_order=sort_order, filters=filters)
+            # Optionally, re-raise or return an empty list based on desired error handling
+            raise
+    
     def _semantic_search(
         self,
         client,
@@ -146,7 +200,7 @@ class VideoSearcher:
             search_params = {
                 'summary_weight': weights.get('summary_weight', 1.0) if weights else 1.0,
                 'keyword_weight': weights.get('keyword_weight', 0.8) if weights else 0.8,
-                'similarity_threshold': weights.get('similarity_threshold', 0.0) if weights else 0.0
+                'similarity_threshold': weights.get('similarity_threshold', 0.5) if weights else 0.5
             }
             
             # Execute semantic search

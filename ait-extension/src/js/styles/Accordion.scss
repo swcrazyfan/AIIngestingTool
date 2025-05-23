@@ -6,15 +6,17 @@
   overflow: hidden; // Ensures content doesn't spill before animation (if added)
 
   .accordion-header {
-    background-color: #333333;
-    padding: 10px 15px;
-    cursor: pointer;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    padding: 10px 15px;
+    background-color: #333333;
     color: #e0e0e0;
     font-weight: bold;
     font-size: 0.95em;
+    cursor: pointer;
+    -webkit-user-select: none; // Safari
+    user-select: none; // Prevents text selection on click
 
     &:hover {
       background-color: #3f3f3f;

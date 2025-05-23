@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { PlayCircle, Camera, Volume2, FileText, Settings, X } from 'lucide-react';
-import { FiPlay, FiFolder, FiSearch } from 'react-icons/fi';
+import { FiPlay, FiFolder, FiSearch, FiInfo } from 'react-icons/fi';
 import { VideoFile } from '../types/api';
 import { formatDuration } from '../utils/format';
 import '../styles/Modal.scss';
+import '../styles/VideoCard.scss';
 
 interface VideoDetailsCardProps {
   video: VideoFile;
@@ -166,6 +167,26 @@ const VideoDetailsModal: React.FC<VideoDetailsCardProps> = ({
           </div>
 
           {/* Navigation Tabs */}
+          <div className="video-actions">
+            {onAddToTimeline && (
+              <button onClick={onAddToTimeline} title="Add to Timeline">
+                <FiPlay /> Timeline
+              </button>
+            )}
+            
+            {onImport && (
+              <button onClick={onImport} title="Import to Project">
+                <FiFolder /> Import
+              </button>
+            )}
+            
+            {onFindSimilar && (
+              <button onClick={onFindSimilar} title="Find Similar">
+                <FiSearch /> Similar
+              </button>
+            )}
+          </div>
+
           <div className="modal-tabs">
             <div
               className={`modal-tab ${activeTab === 'overview' ? 'active' : ''}`}

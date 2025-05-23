@@ -46,6 +46,8 @@ const SearchBar: React.FC<SearchBarProps> = ({ onSearch }) => {
         value={searchType} 
         onChange={(e) => setSearchType(e.target.value as any)}
         className="search-type-select"
+        title="Search Type"
+        aria-label="Select search type"
       >
         <option value="hybrid">🔀 Hybrid</option>
         <option value="semantic">🧠 Semantic</option>

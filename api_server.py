@@ -513,25 +513,39 @@ def get_ingest_results():
 
 
 @app.route('/api/search', methods=['POST'])
-def search_videos():
-    """Search processed videos."""
-    try:
-        data = request.get_json()
-        query = data.get('query', '')
-        search_type = data.get('search_type', 'hybrid')
-        limit = data.get('limit', 20)
+def perform_search(query='', search_type='hybrid', limit=20):
+    """Shared search implementation for both HTTP API and WebSocket.
+    
+    Args:
+        query: Search query string
+        search_type: Type of search to perform (hybrid, semantic, fulltext, etc.)
+        limit: Maximum number of results to return
         
+    Returns:
+        Tuple of (success, results_or_error, status_code)
+        Where:
+        - success is a boolean indicating if the search was successful
+        - results_or_error is either the search results or an error message
+        - status_code is the HTTP status code (only relevant for HTTP API)
+    """
+    try:
         # If no query, return recent files from database or JSON
         if not query.strip() or search_type == 'recent':
-            return get_recent_videos(limit)
+            recent_results = get_recent_videos(limit, return_json=False)
+            if isinstance(recent_results, tuple):
+                return False, recent_results[0], recent_results[1]
+            return True, recent_results, 200
         
         if not BACKEND_AVAILABLE:
-            return jsonify({"error": "Backend not available for search"}), 500
+            return False, {"error": "Backend not available for search"}, 500
         
         # Check authentication for database search
         auth_manager = AuthManager()
         if not auth_manager.get_current_session():
-            return jsonify({"error": "Authentication required for search"}), 401
+            return False, {"error": "Authentication required for search"}, 401
+        
+        # Import required components
+        from video_ingest_tool.search import VideoSearcher, format_search_results
         
         # Initialize searcher
         searcher = VideoSearcher()
@@ -543,31 +557,41 @@ def search_videos():
             match_count=limit
         )
         
-        # Format results for CEP panel
-        formatted_results = []
-        for result in results:
-            formatted_results.append({
-                'id': result.get('id'),
-                'file_name': result.get('file_name'),
-                'local_path': result.get('local_path'),
-                'file_path': result.get('file_path'),
-                'content_summary': result.get('content_summary'),
-                'content_tags': result.get('content_tags', []),
-                'duration_seconds': result.get('duration_seconds'),
-                'camera_make': result.get('camera_make'),
-                'camera_model': result.get('camera_model'),
-                'content_category': result.get('content_category'),
-                'processed_at': result.get('processed_at'),
-                'similarity_score': result.get('similarity_score', 0),
-                'search_rank': result.get('search_rank', 0)
-            })
+        # Format results
+        formatted_results = format_search_results(results, search_type)
         
-        return jsonify({
+        # Return success with results
+        return True, {
             "results": formatted_results,
             "total": len(formatted_results),
             "search_type": search_type,
             "query": query
-        })
+        }, 200
+        
+    except Exception as e:
+        logger.error(f"Search failed: {str(e)}")
+        return False, {"error": f"Search failed: {str(e)}"}, 500
+
+
+def search_videos():
+    """HTTP API endpoint for searching processed videos."""
+    try:
+        data = request.get_json()
+        query = data.get('query', '')
+        search_type = data.get('search_type', 'hybrid')
+        limit = data.get('limit', 20)
+        
+        # Use the shared search implementation
+        success, result, status_code = perform_search(query, search_type, limit)
+        
+        if success:
+            return jsonify(result), status_code
+        else:
+            return jsonify(result), status_code
+            
+    except Exception as e:
+        logger.error(f"Search API endpoint failed: {str(e)}")
+        return jsonify({"error": f"Search failed: {str(e)}"}), 500
         
     except Exception as e:
         logger.error(f"Search failed: {str(e)}")
@@ -631,88 +655,80 @@ def search_similar_videos():
         return jsonify({"error": f"Similar search failed: {str(e)}"}), 500
 
 
-def get_recent_videos(limit: int = 20):
-    """Get recent videos from latest ingest or database."""
+def get_recent_videos(limit: int = 20, return_json: bool = True):
+    """Get recent videos from latest ingest or database.
+    
+    Args:
+        limit: Maximum number of videos to return
+        return_json: If True, returns a Flask JSON response; if False, returns a Python dict
+        
+    Returns:
+        If return_json is True: Flask JSON response
+        If return_json is False: Python dict with results
+    """
     try:
         # Try to get from current ingest job first
         if current_ingest_job and current_ingest_job.results:
             results = current_ingest_job.results[-limit:]
-            return jsonify({
+            response_data = {
                 "results": results,
                 "total": len(results),
                 "source": "current_job"
-            })
+            }
+            return jsonify(response_data) if return_json else response_data
         
         # Try to get from database if authenticated
-        if BACKEND_AVAILABLE:
+        if BACKEND_AVAILABLE and check_and_refresh_auth(log_to_console=False):
             try:
-                auth_manager = AuthManager()
-                if auth_manager.get_current_session():
-                    client = auth_manager.get_authenticated_client()
-                    
-                    # Get recent clips from database
-                    result = client.table('clips').select(
-                        'id, file_name, local_path, content_summary, content_tags, '
-                        'duration_seconds, camera_make, camera_model, content_category, processed_at'
-                    ).order('processed_at', desc=True).limit(limit).execute()
-                    
-                    return jsonify({
-                        "results": result.data,
-                        "total": len(result.data),
-                        "source": "database"
-                    })
+                from video_ingest_tool.search import VideoSearcher, format_search_results
+                
+                # Get recent videos from database
+                searcher = VideoSearcher()
+                results = searcher.search(
+                    query="",  # Empty query returns recent videos
+                    search_type="recent",
+                    match_count=limit
+                )
+                
+                # Format results
+                formatted_results = format_search_results(results, "recent")
+                
+                response_data = {
+                    "results": formatted_results,
+                    "total": len(formatted_results),
+                    "source": "database"
+                }
+                return jsonify(response_data) if return_json else response_data
             except Exception as e:
                 logger.warning(f"Database query failed: {str(e)}")
+                # Fall through to JSON files
         
-        # Fallback: look for recent JSON files
-        output_dir = os.path.join(os.getcwd(), "output", "runs")
-        if os.path.exists(output_dir):
-            run_dirs = [d for d in os.listdir(output_dir) if d.startswith("run_")]
-            if run_dirs:
-                latest_run = sorted(run_dirs)[-1]
-                json_dir = os.path.join(output_dir, latest_run, "json")
+        # Try to get from JSON files
+        json_files = get_json_files()
+        if json_files:
+            results = []
+            for json_file in sorted(json_files, key=lambda x: x.get('processed_at', ''), reverse=True)[:limit]:
+                results.append(json_file)
                 
-                if os.path.exists(json_dir):
-                    results = []
-                    json_files = [f for f in os.listdir(json_dir) if f.endswith('.json')]
-                    
-                    for json_file in sorted(json_files)[-limit:]:
-                        try:
-                            with open(os.path.join(json_dir, json_file), 'r') as f:
-                                video_data = json.load(f)
-                                
-                            # Extract relevant fields for display
-                            result = {
-                                'id': video_data.get('id'),
-                                'file_name': video_data.get('file_info', {}).get('file_name'),
-                                'local_path': video_data.get('file_info', {}).get('file_path'),
-                                'content_summary': video_data.get('analysis', {}).get('content_summary'),
-                                'content_tags': video_data.get('analysis', {}).get('content_tags', []),
-                                'duration_seconds': video_data.get('video', {}).get('resolution', {}).get('duration_seconds'),
-                                'camera_make': video_data.get('camera', {}).get('make'),
-                                'camera_model': video_data.get('camera', {}).get('model'),
-                                'processed_at': video_data.get('file_info', {}).get('processed_at')
-                            }
-                            results.append(result)
-                        except Exception as e:
-                            logger.warning(f"Failed to parse JSON file {json_file}: {str(e)}")
-                    
-                    return jsonify({
-                        "results": results,
-                        "total": len(results),
-                        "source": "json_files"
-                    })
+            response_data = {
+                "results": results,
+                "total": len(results),
+                "source": "json_files"
+            }
+            return jsonify(response_data) if return_json else response_data
         
         # No results found
-        return jsonify({
+        response_data = {
             "results": [],
             "total": 0,
             "source": "none"
-        })
+        }
+        return jsonify(response_data) if return_json else response_data
         
     except Exception as e:
         logger.error(f"Failed to get recent videos: {str(e)}")
-        return jsonify({"error": "Failed to load recent videos"}), 500
+        error_response = {"error": "Failed to load recent videos"}
+        return (jsonify(error_response), 500) if return_json else (error_response, 500)
 
 
 @app.route('/api/database/status', methods=['GET'])
@@ -902,64 +918,29 @@ def handle_search_request(data):
         query = data.get('query', '')
         search_type = data.get('search_type', 'hybrid')
         limit = data.get('limit', 20)
-        offset = data.get('offset', 0)
         
-        # Check if backend is available
-        if not BACKEND_AVAILABLE:
-            socketio.emit('response', {
-                "requestId": request_id,
-                "error": "Backend not available"
-            })
-            return
+        # Use the shared search implementation
+        success, result, _ = perform_search(query, search_type, limit)
         
-        # Check authentication
-        if not check_and_refresh_auth(log_to_console=False):
+        if success:
+            # Send successful results back through WebSocket
             socketio.emit('response', {
                 "requestId": request_id,
-                "error": "Authentication required"
+                "result": result
             })
-            return
-            
-        # Perform search
-        try:
-            from video_ingest_tool.search import VideoSearcher
-            
-            # Create searcher instance
-            searcher = VideoSearcher()
-            
-            # Perform search
-            results = searcher.search(
-                query=query,
-                search_type=search_type,
-                match_count=limit
-            )
-            
-            # Format results for display
-            from video_ingest_tool.search import format_search_results
-            formatted_results = format_search_results(results, search_type)
-            count = len(results)
-            
-            # Send results back through WebSocket
+        else:
+            # Send error response
             socketio.emit('response', {
                 "requestId": request_id,
-                "result": {
-                    "results": formatted_results,
-                    "count": count
-                }
+                "error": result.get("error", "Unknown error")
             })
             
-        except Exception as e:
-            logger.error(f"Search error: {str(e)}")
-            socketio.emit('response', {
-                "requestId": request_id,
-                "error": f"Search failed: {str(e)}"
-            })
     except Exception as e:
         logger.error(f"Error handling WebSocket search request: {str(e)}")
         if data and data.get('requestId'):
             socketio.emit('response', {
                 "requestId": data.get('requestId'),
-                "error": "Server error processing search"
+                "error": f"Request failed: {str(e)}"
             })
 
 @socketio.on('start_ingest')

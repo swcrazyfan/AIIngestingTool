@@ -75,14 +75,16 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       socketRef.current.disconnect();
     }
 
-    console.log('Setting up WebSocket connection...');
+    console.log('Setting up WebSocket connection to new API server...');
     
     // Create new socket connection
     const newSocket = io('http://localhost:8000', {
       transports: ['websocket', 'polling'],  // Try WebSocket first, fall back to polling
-      reconnectionAttempts: 10,              // Increased from 5 to 10
+      reconnectionAttempts: 15,              // Increased for better reliability
       reconnectionDelay: 1000,
-      timeout: 5000                          // Connection timeout in ms
+      timeout: 8000,                         // Increased timeout for better reliability
+      forceNew: true,                        // Force a new connection
+      autoConnect: true                      // Automatically connect
     });
     
     socketRef.current = newSocket;
@@ -198,30 +200,92 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
   }, [connected]);
   
-  // Search API
-  const search = useCallback((params: SearchParams): Promise<SearchResults> => {
-    return sendRequest<SearchResults>('search_request', params);
-  }, [sendRequest]);
+  // Search API with fallback to HTTP
+  const search = useCallback(async (params: SearchParams): Promise<SearchResults> => {
+    try {
+      // Try WebSocket first
+      if (connected && socketRef.current) {
+        return await sendRequest<SearchResults>('search_request', params);
+      } else {
+        throw new Error('WebSocket not connected');
+      }
+    } catch (error) {
+      console.warn('WebSocket search failed, falling back to HTTP API:', error);
+      // Fall back to HTTP API
+      const { searchApi } = await import('../api/client');
+      return searchApi.search(params.query, params.search_type as any, params.limit);
+    }
+  }, [connected, sendRequest]);
   
-  // Start ingest API
-  const startIngest = useCallback((params: IngestParams): Promise<any> => {
-    return sendRequest<any>('start_ingest', params);
-  }, [sendRequest]);
+  // Start ingest API with fallback to HTTP
+  const startIngest = useCallback(async (params: IngestParams): Promise<any> => {
+    try {
+      // Try WebSocket first
+      if (connected && socketRef.current) {
+        return await sendRequest<any>('start_ingest', params);
+      } else {
+        throw new Error('WebSocket not connected');
+      }
+    } catch (error) {
+      console.warn('WebSocket startIngest failed, falling back to HTTP API:', error);
+      // Fall back to HTTP API
+      const { ingestApi } = await import('../api/client');
+      return ingestApi.startIngest(params.directory, params.options || {});
+    }
+  }, [connected, sendRequest]);
   
-  // Get ingest progress API
-  const getIngestProgress = useCallback((): Promise<IngestProgress> => {
-    return sendRequest<IngestProgress>('get_ingest_progress', {});
-  }, [sendRequest]);
+  // Get ingest progress API with fallback to HTTP
+  const getIngestProgress = useCallback(async (): Promise<IngestProgress> => {
+    try {
+      // Try WebSocket first
+      if (connected && socketRef.current) {
+        return await sendRequest<IngestProgress>('get_ingest_progress', {});
+      } else {
+        throw new Error('WebSocket not connected');
+      }
+    } catch (error) {
+      console.warn('WebSocket getIngestProgress failed, falling back to HTTP API:', error);
+      // Fall back to HTTP API
+      const { ingestApi } = await import('../api/client');
+      return ingestApi.getProgress();
+    }
+  }, [connected, sendRequest]);
   
-  // Get video details API
-  const getVideoDetails = useCallback((id: string): Promise<VideoFile> => {
-    return sendRequest<VideoFile>('get_video_details', { id });
-  }, [sendRequest]);
+  // Get video details API with fallback to HTTP
+  const getVideoDetails = useCallback(async (id: string): Promise<VideoFile> => {
+    try {
+      // Try WebSocket first
+      if (connected && socketRef.current) {
+        return await sendRequest<VideoFile>('get_video_details', { clipId: id });
+      } else {
+        throw new Error('WebSocket not connected');
+      }
+    } catch (error) {
+      console.warn('WebSocket getVideoDetails failed, falling back to HTTP API:', error);
+      // Fall back to HTTP API
+      const { clipsApi } = await import('../api/client');
+      return clipsApi.getDetails(id);
+    }
+  }, [connected, sendRequest]);
   
-  // Get similar videos API
-  const getSimilarVideos = useCallback((id: string, limit: number = 5): Promise<VideoFile[]> => {
-    return sendRequest<VideoFile[]>('get_similar_videos', { id, limit });
-  }, [sendRequest]);
+  // Get similar videos API with fallback to HTTP
+  const getSimilarVideos = useCallback(async (id: string, limit: number = 5): Promise<VideoFile[]> => {
+    try {
+      // Try WebSocket first
+      if (connected && socketRef.current) {
+        const result = await sendRequest<any>('get_similar_videos', { clipId: id, limit });
+        return result.results || [];
+      } else {
+        throw new Error('WebSocket not connected');
+      }
+    } catch (error) {
+      console.warn('WebSocket getSimilarVideos failed, falling back to HTTP API:', error);
+      // Fall back to HTTP API
+      const { searchApi } = await import('../api/client');
+      const result = await searchApi.findSimilar(id, limit);
+      return result.results || [];
+    }
+  }, [connected, sendRequest]);
   
   // Function to manually reconnect
   const reconnect = useCallback(() => {
