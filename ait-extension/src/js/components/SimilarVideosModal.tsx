@@ -17,7 +17,7 @@ const SimilarVideosModal: React.FC<SimilarVideosModalProps> = ({ sourceVideo, on
   useEffect(() => {
     const loadSimilar = async () => {
       try {
-        const results = await searchApi.findSimilar(sourceVideo.id);
+        const results = await searchApi.findSimilar(String(sourceVideo.id));
         setSimilarVideos(results.results || []);
       } catch (error) {
         console.error('Failed to load similar videos:', error);

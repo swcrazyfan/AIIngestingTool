@@ -1,4 +1,4 @@
-import axios, { AxiosInstance } from 'axios';
+import axios, { AxiosInstance, AxiosError, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import { 
   IngestOptions, 
   SearchType, 
@@ -8,6 +8,11 @@ import {
   SearchResults,
   ApiResponse 
 } from '../types/api';
+
+// Connection status event handling
+type ConnectionListener = (isConnected: boolean) => void;
+const connectionListeners: ConnectionListener[] = [];
+let isConnected = true;
 
 // API configuration
 const API_BASE_URL = 'http://localhost:8000/api';
@@ -21,6 +26,41 @@ const apiClient: AxiosInstance = axios.create({
   },
   withCredentials: true
 });
+
+// Add interceptors to track connection status
+apiClient.interceptors.response.use(
+  (response: AxiosResponse) => {
+    // If we get a successful response, we're connected
+    if (!isConnected) {
+      isConnected = true;
+      notifyConnectionListeners(true);
+    }
+    return response;
+  },
+  (error: AxiosError) => {
+    // Network errors indicate disconnection
+    if (error.code === 'ECONNABORTED' || !error.response) {
+      if (isConnected) {
+        isConnected = false;
+        notifyConnectionListeners(false);
+      }
+    } 
+    // If we get a 401 on a protected endpoint, notify listeners
+    else if (error.response?.status === 401) {
+      // Don't trigger for auth endpoints
+      const url = error.config?.url || '';
+      if (!url.includes('/auth/')) {
+        notifyConnectionListeners(true); // We're connected but need to re-authenticate
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+// Function to notify all connection listeners
+function notifyConnectionListeners(connected: boolean) {
+  connectionListeners.forEach(listener => listener(connected));
+}
 
 // Auth API
 export const authApi = {
@@ -127,6 +167,59 @@ export const pipelineApi = {
   async getSteps() {
     const response = await apiClient.get('/pipeline/steps');
     return response.data;
+  }
+};
+
+// Connection status management
+export const connectionManager = {
+  /**
+   * Add a listener for connection status changes
+   * @param listener Function to call when connection status changes
+   */
+  addConnectionListener(listener: ConnectionListener) {
+    connectionListeners.push(listener);
+    // Immediately notify with current status
+    listener(isConnected);
+  },
+
+  /**
+   * Remove a connection listener
+   * @param listener The listener to remove
+   */
+  removeConnectionListener(listener: ConnectionListener) {
+    const index = connectionListeners.indexOf(listener);
+    if (index !== -1) {
+      connectionListeners.splice(index, 1);
+    }
+  },
+
+  /**
+   * Get current connection status
+   * @returns Whether the API is currently connected
+   */
+  isConnected() {
+    return isConnected;
+  },
+
+  /**
+   * Check connection to the API server
+   * @returns Promise resolving to connection status
+   */
+  async checkConnection() {
+    try {
+      await healthApi.check();
+      if (!isConnected) {
+        isConnected = true;
+        notifyConnectionListeners(true);
+      }
+      return true;
+    } catch (error) {
+      if (isConnected) {
+        isConnected = false;
+        notifyConnectionListeners(false);
+      }
+      return false;
+    }
   }
 };
 
