@@ -144,7 +144,10 @@ def perform_search(query='', search_type='hybrid', limit=20) -> Tuple[bool, Dict
         return True, {"results": formatted_results, "total": len(formatted_results), "query": query, "search_type": search_type}, 200
 
     except ValueError as ve:
-        logger.error("Search validation error", error=str(ve), query=query, search_type=search_type)
+        error_msg = str(ve)
+        logger.error("Search operation ValueError: {error_msg}")
+        if "Authentication required" in error_msg or "Invalid Refresh Token" in error_msg or "Failed to create authenticated client" in error_msg:
+            return False, {"error": error_msg}, 401
         return False, {"error": str(ve)}, 400 # Bad Request for validation errors
     except Exception as e:
         logger.error("Search failed", error=str(e), query=query, search_type=search_type)
@@ -469,9 +472,12 @@ def list_videos_endpoint():
         # For now, returning raw video objects.
         return jsonify({"results": videos, "total": len(videos)}), 200 # Consider adding total count from DB if pagination is used
 
-    except ValueError as ve:
-        logger.error("List videos validation error", error=str(ve), args=request.args)
-        return jsonify({"error": str(ve)}), 400
+    except ValueError as e:
+        error_msg = str(e)
+        logger.error("List videos validation error", error=str(e), args=request.args)
+        if "Authentication required" in error_msg or "Invalid Refresh Token" in error_msg or "Failed to create authenticated client" in error_msg:
+            return jsonify({"error": error_msg}), 401
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error("List videos failed", error=str(e), args=request.args)
         return jsonify({"error": f"Failed to list videos: {str(e)}"}), 500
@@ -509,6 +515,14 @@ def search_similar_videos():
             "source_clip_id": clip_id
         })
         
+    except ValueError as e:
+        error_msg = str(e)
+        logger.error(f"Similar search ValueError for clip {clip_id}: {error_msg}")
+        if "Authentication required" in error_msg or "Invalid Refresh Token" in error_msg or "Failed to create authenticated client" in error_msg:
+            return jsonify({"error": error_msg}), 401
+        if "Clip not found" in error_msg:
+             return jsonify({"error": error_msg}), 404
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Similar search failed: {str(e)}")
         return jsonify({"error": f"Similar search failed: {str(e)}"}), 500
@@ -574,6 +588,14 @@ def get_clip_details(clip_id):
             "analysis": analysis
         })
         
+    except ValueError as e:
+        error_msg = str(e)
+        logger.error(f"Get clip details ValueError for {clip_id}: {error_msg}")
+        if "Authentication required" in error_msg or "Invalid Refresh Token" in error_msg or "Failed to create authenticated client" in error_msg:
+            return jsonify({"error": error_msg}), 401
+        if "Clip not found" in error_msg: # Should be caught by earlier check, but good to have
+             return jsonify({"error": error_msg}), 404
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Failed to get clip details: {str(e)}")
         return jsonify({"error": f"Failed to get clip details: {str(e)}"}), 500
@@ -595,8 +617,14 @@ def get_catalog_stats():
         
         return jsonify(stats)
         
+    except ValueError as e:
+        error_msg = str(e)
+        logger.error(f"Get catalog stats ValueError: {error_msg}")
+        if "Authentication required" in error_msg or "Invalid Refresh Token" in error_msg or "Failed to create authenticated client" in error_msg:
+            return jsonify({"error": error_msg}), 401
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
-        logger.error(f"Failed to get catalog stats: {str(e)}")
+        logger.error(f"Error getting catalog stats: {str(e)}")
         return jsonify({"error": f"Failed to get catalog stats: {str(e)}"}), 500
 
 @app.route('/api/pipeline/steps', methods=['GET'])
@@ -767,135 +795,108 @@ def handle_get_ingest_progress(data):
 @socketio.on('get_video_details')
 def handle_get_video_details(data):
     """Handle video details requests through WebSocket."""
+    request_id = data.get('requestId')
+    clip_id = data.get('clipId')
     try:
-        logger.info("Received get video details request via WebSocket")
-        request_id = data.get('requestId')
-        clip_id = data.get('clipId')
-        
+        logger.info(f"Received get video details request via WebSocket for clip_id: {clip_id}")
         if not clip_id:
-            socketio.emit('response', {
-                "requestId": request_id,
-                "error": "Clip ID required"
-            })
+            emit_error(request_id, "Clip ID required")
             return
-        
+
         if not BACKEND_AVAILABLE:
-            socketio.emit('response', {
-                "requestId": request_id,
-                "error": "Backend not available"
-            })
+            emit_error(request_id, "Backend not available")
             return
-        
-        # Check authentication
+
         if not check_and_refresh_auth(log_to_console=False):
-            socketio.emit('response', {
-                "requestId": request_id,
-                "error": "Authentication required"
-            })
+            emit_error(request_id, "Authentication required") # Client needs to interpret this
             return
-        
-        # Get authenticated client
+            
         auth_manager = AuthManager()
         client = auth_manager.get_authenticated_client()
-        
-        # Get clip details
-        clip_result = client.rpc('get_clip_details', {
-            'clip_id_param': clip_id
-        }).execute()
-        
+
+        clip_result = client.rpc('get_clip_details', {'clip_id_param': clip_id}).execute()
         if not clip_result.data:
-            socketio.emit('response', {
-                "requestId": request_id,
-                "error": "Clip not found"
-            })
+            emit_error(request_id, "Clip not found")
             return
+        clip_data = clip_result.data[0]
         
-        clip = clip_result.data[0]
+        transcript_result = client.table('transcripts').select('*').eq('clip_id', clip_id).limit(1).execute()
+        transcript_data = transcript_result.data[0] if transcript_result.data else None
         
-        # Get transcript if available
-        transcript_result = client.table('transcripts').select('*').eq('clip_id', clip_id).execute()
-        transcript = transcript_result.data[0] if transcript_result.data else None
+        analysis_result = client.table('analyses').select('*').eq('clip_id', clip_id).limit(1).execute()
+        analysis_data = analysis_result.data[0] if analysis_result.data else None
         
-        # Get analysis if available
-        analysis_result = client.table('analyses').select('*').eq('clip_id', clip_id).execute()
-        analysis = analysis_result.data[0] if analysis_result.data else None
-        
-        # Send response
         socketio.emit('response', {
             "requestId": request_id,
-            "result": {
-                "clip": clip,
-                "transcript": transcript,
-                "analysis": analysis
-            }
+            "result": {"clip": clip_data, "transcript": transcript_data, "analysis": analysis_data}
         })
-        
+
+    except ValueError as e:
+        error_msg = str(e)
+        logger.error(f"WS get_video_details ValueError for clip {clip_id}: {error_msg}")
+        # For WebSocket, we send the error message. Client needs to detect auth errors.
+        if "Authentication required" in error_msg or "Invalid Refresh Token" in error_msg or "Failed to create authenticated client" in error_msg:
+            emit_error(request_id, f"Authentication error: {error_msg}")
+        elif "Clip not found" in error_msg:
+            emit_error(request_id, error_msg)
+        else:
+            emit_error(request_id, f"Request failed: {error_msg}")
     except Exception as e:
-        logger.error(f"Error handling WebSocket get video details request: {str(e)}")
-        if data and data.get('requestId'):
-            socketio.emit('response', {
-                "requestId": data.get('requestId'),
-                "error": f"Request failed: {str(e)}"
-            })
+        logger.error(f"Error handling WebSocket get video details for clip {clip_id}: {str(e)}", exc_info=True)
+        emit_error(request_id, f"Unexpected error: {str(e)}")
 
 @socketio.on('get_similar_videos')
 def handle_get_similar_videos(data):
     """Handle similar videos requests through WebSocket."""
+    request_id = data.get('requestId')
+    clip_id = data.get('clipId')
+    limit = data.get('limit', 5)
     try:
-        logger.info("Received get similar videos request via WebSocket")
-        request_id = data.get('requestId')
-        clip_id = data.get('clipId')
-        limit = data.get('limit', 5)
-        
+        logger.info(f"Received get similar videos request via WebSocket for clip_id: {clip_id}")
         if not clip_id:
-            socketio.emit('response', {
-                "requestId": request_id,
-                "error": "Clip ID required"
-            })
+            emit_error(request_id, "Clip ID required")
             return
         
         if not BACKEND_AVAILABLE:
-            socketio.emit('response', {
-                "requestId": request_id,
-                "error": "Backend not available"
-            })
+            emit_error(request_id, "Backend not available")
             return
         
-        # Check authentication
         if not check_and_refresh_auth(log_to_console=False):
-            socketio.emit('response', {
-                "requestId": request_id,
-                "error": "Authentication required"
-            })
+            emit_error(request_id, "Authentication required") # Client needs to interpret this
             return
         
-        # Use the VideoSearcher to find similar videos
         searcher = VideoSearcher()
-        results = searcher.find_similar(
-            clip_id=clip_id,
-            match_count=limit
-        )
-        
-        # Format results
+        results = searcher.find_similar(clip_id=clip_id, match_count=limit)
         formatted_results = format_search_results(results, "similar")
         
-        # Send response
         socketio.emit('response', {
             "requestId": request_id,
-            "result": {
-                "results": formatted_results,
-                "total": len(formatted_results),
-                "source_clip_id": clip_id
-            }
+            "result": {"results": formatted_results, "total": len(formatted_results), "source_clip_id": clip_id}
         })
-        
+
+    except ValueError as e:
+        error_msg = str(e)
+        logger.error(f"WS get_similar_videos ValueError for clip {clip_id}: {error_msg}")
+        if "Authentication required" in error_msg or "Invalid Refresh Token" in error_msg or "Failed to create authenticated client" in error_msg:
+            emit_error(request_id, f"Authentication error: {error_msg}")
+        elif "Clip not found" in error_msg:
+            emit_error(request_id, error_msg)
+        else:
+            emit_error(request_id, f"Request failed: {error_msg}")
     except Exception as e:
-        logger.error(f"Error handling WebSocket get similar videos request: {str(e)}")
-        if data and data.get('requestId'):
-            socketio.emit('response', {
-                "requestId": data.get('requestId'),
-                "error": f"Request failed: {str(e)}"
-            })
+        logger.error(f"Error handling WebSocket get similar videos for clip {clip_id}: {str(e)}", exc_info=True)
+        emit_error(request_id, f"Unexpected error: {str(e)}")
+
+# Helper to emit errors consistently for WebSocket
+def emit_error(request_id: Optional[str], message: str):
+    if request_id:
+        socketio.emit('response', {"requestId": request_id, "error": message})
+    else:
+        # If no request_id, it might be a general connection issue or unprompted error
+        # This case needs careful handling based on client capabilities
+        logger.warning(f"Emitting error without request_id: {message}")
+        # socketio.emit('error_occurred', {"error": message}) # Example of a general error event
+
 
 if __name__ == "__main__":
     # Print startup message

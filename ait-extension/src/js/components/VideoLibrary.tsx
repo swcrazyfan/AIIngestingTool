@@ -98,7 +98,15 @@ const VideoLibrary: React.FC = () => {
   }, []);
 
   const performKeywordSearch = useCallback(async (query: string, type: 'hybrid' | 'semantic' | 'fulltext' | 'transcripts') => {
+    // Reset filter and sort states
+    setSortBy('processed_at');
+    setSortOrder('descending');
+    setDateStart('');
+    setDateEnd('');
+
     setLoading(true);
+    setVideos([]); // Clear displayed videos immediately to show loading state
+    setOriginalFetchedVideos([]); // Clear original videos to avoid processing stale data
     setCurrentSearchTerm(query);
     setActiveSearchType(type);
     try {

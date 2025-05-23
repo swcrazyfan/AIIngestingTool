@@ -1,14 +1,16 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { authApi, connectionManager } from '../api/client';
-import { AuthStatus } from '../types/api';
+import { AuthStatus } from '../types/api'; 
 
 interface AuthContextType {
   authStatus: AuthStatus | null;
   loading: boolean;
   isConnected: boolean;
+  requiresReLogin: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
+  handleAuthError: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -25,72 +27,85 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [isConnected, setIsConnected] = useState(true);
+  const [requiresReLogin, setRequiresReLogin] = useState(false);
+
+  const handleAuthError = useCallback(() => {
+    console.warn('Authentication error detected, forcing re-login.');
+    setAuthStatus({ authenticated: false, user: undefined }); 
+    setRequiresReLogin(true);
+  }, []);
 
   const checkAuth = useCallback(async () => {
     try {
       setLoading(true);
       const status = await authApi.getStatus();
       setAuthStatus(status);
+      if (!status.authenticated) {
+        handleAuthError(); 
+      } else {
+        setRequiresReLogin(false); 
+      }
     } catch (error) {
-      setAuthStatus({ authenticated: false });
+      console.error('checkAuth failed:', error);
+      handleAuthError(); 
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [handleAuthError]);
 
   const login = async (email: string, password: string) => {
     const response = await authApi.login(email, password);
     if (response.success) {
-      await checkAuth();
+      await checkAuth(); 
     } else {
+      setRequiresReLogin(true); 
       throw new Error(response.error || 'Login failed');
     }
   };
 
   const logout = async () => {
-    await authApi.logout();
-    setAuthStatus({ authenticated: false });
+    try {
+      await authApi.logout();
+    } catch (error) {
+      console.error('Logout API call failed:', error);
+    }
+    setAuthStatus({ authenticated: false, user: undefined });
+    setRequiresReLogin(false); 
+    // Or, if you want to ensure the login modal appears: setRequiresReLogin(true);
   };
 
-  // Handle connection status changes
   useEffect(() => {
     const handleConnectionChange = async (connected: boolean) => {
       setIsConnected(connected);
       
-      // If we're reconnecting, verify authentication status
-      if (connected && authStatus?.authenticated) {
-        // Check if the authentication is still valid
-        try {
-          const status = await authApi.getStatus();
-          setAuthStatus(status);
-          
-          // If no longer authenticated, sign out
-          if (!status.authenticated) {
-            console.log('Session expired, logging out');
-            // No need to call the API since we're already logged out on the server
-            setAuthStatus({ authenticated: false });
-          }
-        } catch (error) {
-          console.error('Failed to verify authentication on reconnect:', error);
-          setAuthStatus({ authenticated: false });
-        }
+      if (connected) {
+        console.log('Reconnected to server, re-checking authentication.');
+        await checkAuth();
       }
     };
     
-    // Add connection listener
     connectionManager.addConnectionListener(handleConnectionChange);
     
-    // Initial auth check
     checkAuth();
     
-    // Clean up
     return () => {
       connectionManager.removeConnectionListener(handleConnectionChange);
     };
-  }, [checkAuth]);
+  }, [checkAuth]); 
+
+  useEffect(() => {
+    if (connectionManager.setAuthErrorCallback) {
+      connectionManager.setAuthErrorCallback(handleAuthError);
+    }
+    return () => {
+      if (connectionManager.setAuthErrorCallback) {
+        connectionManager.setAuthErrorCallback(null);
+      }
+    };
+  }, [handleAuthError]);
 
   return (
-    <AuthContext.Provider value={{ authStatus, loading, isConnected, login, logout, checkAuth }}>
+    <AuthContext.Provider value={{ authStatus, loading, isConnected, login, logout, checkAuth, requiresReLogin, handleAuthError }}>
       {children}
     </AuthContext.Provider>
   );

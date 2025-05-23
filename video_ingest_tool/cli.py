@@ -461,14 +461,20 @@ def search_videos(
                 
                 if show_scores:
                     if search_type == "hybrid":
+                        search_rank_val = result.get('search_rank')
+                        search_rank_str = f"{search_rank_val:.3f}" if search_rank_val is not None else "N/A"
                         row.extend([
-                            f"{result.get('search_rank', 0):.3f}",
+                            search_rank_str,
                             result.get('match_type', 'unknown')
                         ])
                     elif search_type == "semantic":
-                        row.append(f"{result.get('combined_similarity', 0):.3f}")
+                        combined_similarity_val = result.get('combined_similarity')
+                        combined_similarity_str = f"{combined_similarity_val:.3f}" if combined_similarity_val is not None else "N/A"
+                        row.append(combined_similarity_str)
                     elif search_type in ["fulltext", "transcripts"]:
-                        row.append(f"{result.get('fts_rank', 0):.3f}")
+                        fts_rank_val = result.get('fts_rank')
+                        fts_rank_str = f"{fts_rank_val:.3f}" if fts_rank_val is not None else "N/A"
+                        row.append(fts_rank_str)
                 
                 results_table.add_row(*row)
             

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { IngestProgress, VideoFile, SearchResults } from '../types/api';
+import { useAuth } from './AuthContext';
 
 // Define request types
 type RequestId = string;
@@ -61,6 +62,8 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [ingestProgress, setIngestProgress] = useState<IngestProgress | null>(null);
   const socketRef = useRef<Socket | null>(null);
   
+  const { handleAuthError } = useAuth();
+
   // Map to track pending requests
   const pendingRequests = useRef<Map<RequestId, PendingRequest>>(new Map());
   
@@ -69,7 +72,7 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
   };
 
-  const setupSocket = () => {
+  const setupSocket = useCallback(() => {
     // Close existing connection if any
     if (socketRef.current) {
       socketRef.current.disconnect();
@@ -77,20 +80,18 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     console.log('Setting up WebSocket connection to new API server...');
     
-    // Create new socket connection
     const newSocket = io('http://localhost:8000', {
-      transports: ['websocket', 'polling'],  // Try WebSocket first, fall back to polling
-      reconnectionAttempts: 15,              // Increased for better reliability
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 15,
       reconnectionDelay: 1000,
-      timeout: 8000,                         // Increased timeout for better reliability
-      forceNew: true,                        // Force a new connection
-      autoConnect: true                      // Automatically connect
+      timeout: 8000,
+      forceNew: true,
+      autoConnect: true
     });
     
     socketRef.current = newSocket;
     setSocket(newSocket);
 
-    // Set up event listeners
     newSocket.on('connect', () => {
       console.log('WebSocket connected');
       setConnected(true);
@@ -100,7 +101,6 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       console.log('WebSocket disconnected');
       setConnected(false);
       
-      // Reject all pending requests on disconnect
       pendingRequests.current.forEach((request, id) => {
         clearTimeout(request.timeout);
         request.reject(new Error('WebSocket disconnected'));
@@ -113,71 +113,67 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setConnected(false);
     });
 
-    // Listen for ingest progress updates
     newSocket.on('ingest_progress', (data) => {
       console.log('Received ingest progress update:', data);
       setIngestProgress(data);
     });
     
-    // Handle ping response to confirm connection is healthy
-    newSocket.on('pong', () => {
-      console.debug('Received pong from server');
-    });
-    
     // Generic response handler
     newSocket.on('response', (data) => {
-      const { requestId, result, error } = data;
-      
-      if (requestId && pendingRequests.current.has(requestId)) {
-        const request = pendingRequests.current.get(requestId)!;
+      const { requestId, payload } = data;
+      const request = pendingRequests.current.get(requestId);
+      if (request) {
         clearTimeout(request.timeout);
-        
-        if (error) {
-          request.reject(new Error(error));
-        } else {
-          request.resolve(result);
-        }
-        
+        request.resolve(payload);
         pendingRequests.current.delete(requestId);
       }
     });
-    
-    // Specific event handlers
-    newSocket.on('search_results', (data) => {
-      console.log('Received search results:', data);
-      // This will be handled by the search method's promise
+
+    // Generic error handler for responses
+    newSocket.on('response_error', (data) => {
+      const { requestId, error: errorMsg } = data;
+      if (typeof errorMsg === 'string' && (errorMsg.startsWith('Authentication required') || errorMsg.startsWith('Authentication error:'))) {
+        console.warn('WebSocket authentication error:', errorMsg);
+        handleAuthError();
+      }
+
+      const request = pendingRequests.current.get(requestId);
+      if (request) {
+        clearTimeout(request.timeout);
+        request.reject(new Error(errorMsg || 'Unknown WebSocket error'));
+        pendingRequests.current.delete(requestId);
+      }
     });
 
-    return newSocket;
-  };
+    // Handle any other errors (e.g. server-side exceptions not caught by specific handlers)
+    newSocket.on('error', (error) => {
+      console.error('Generic WebSocket error:', error);
+      if (typeof error.message === 'string' && (error.message.startsWith('Authentication required') || error.message.startsWith('Authentication error:'))) {
+        console.warn('Generic WebSocket authentication error:', error.message);
+        handleAuthError();
+      }
+    });
 
-  // Initialize socket on component mount
+  }, [handleAuthError]);
+
+  // Effect to setup and cleanup socket connection
   useEffect(() => {
-    const socket = setupSocket();
-    
-    // Set up a heartbeat interval to detect stale connections
-    const heartbeatInterval = setInterval(() => {
-      if (socketRef.current && connected) {
-        // Ping the server to keep the connection alive
-        socketRef.current.emit('ping');
-      }
-    }, 30000); // Every 30 seconds
-    
-    // Cleanup on unmount
+    setupSocket();
+
     return () => {
-      console.log('Cleaning up WebSocket connection');
-      clearInterval(heartbeatInterval);
-      if (socket) {
-        socket.disconnect();
+      if (socketRef.current) {
+        socketRef.current.disconnect();
       }
+      pendingRequests.current.forEach(request => clearTimeout(request.timeout));
+      pendingRequests.current.clear();
     };
-  }, []);
+  }, [setupSocket]);
 
   // Generic request sender with timeout
-  const sendRequest = useCallback(<T,>(eventName: string, data: any, timeoutMs: number = 10000): Promise<T> => {
+  const sendRequest = useCallback(async <T extends unknown>(event: string, payload: any, timeoutMs: number = 15000): Promise<T> => {
     return new Promise((resolve, reject) => {
       if (!socketRef.current || !connected) {
-        console.warn(`WebSocket not connected, cannot send ${eventName} request`);
+        console.warn(`WebSocket not connected, cannot send ${event} request`);
         reject(new Error('WebSocket not connected'));
         return;
       }
@@ -196,14 +192,13 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         timeout: timeoutId
       });
       
-      socketRef.current.emit(eventName, { ...data, requestId });
+      socketRef.current.emit(event, { ...payload, requestId });
     });
   }, [connected]);
-  
+
   // Search API with fallback to HTTP
   const search = useCallback(async (params: SearchParams): Promise<SearchResults> => {
     try {
-      // Try WebSocket first
       if (connected && socketRef.current) {
         return await sendRequest<SearchResults>('search_request', params);
       } else {
@@ -211,7 +206,6 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
     } catch (error) {
       console.warn('WebSocket search failed, falling back to HTTP API:', error);
-      // Fall back to HTTP API
       const { searchApi } = await import('../api/client');
       return searchApi.search(params.query, params.search_type as any, params.limit);
     }
@@ -220,7 +214,6 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Start ingest API with fallback to HTTP
   const startIngest = useCallback(async (params: IngestParams): Promise<any> => {
     try {
-      // Try WebSocket first
       if (connected && socketRef.current) {
         return await sendRequest<any>('start_ingest', params);
       } else {
@@ -228,7 +221,6 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
     } catch (error) {
       console.warn('WebSocket startIngest failed, falling back to HTTP API:', error);
-      // Fall back to HTTP API
       const { ingestApi } = await import('../api/client');
       return ingestApi.startIngest(params.directory, params.options || {});
     }
@@ -237,7 +229,6 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Get ingest progress API with fallback to HTTP
   const getIngestProgress = useCallback(async (): Promise<IngestProgress> => {
     try {
-      // Try WebSocket first
       if (connected && socketRef.current) {
         return await sendRequest<IngestProgress>('get_ingest_progress', {});
       } else {
@@ -245,7 +236,6 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
     } catch (error) {
       console.warn('WebSocket getIngestProgress failed, falling back to HTTP API:', error);
-      // Fall back to HTTP API
       const { ingestApi } = await import('../api/client');
       return ingestApi.getProgress();
     }
@@ -254,7 +244,6 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Get video details API with fallback to HTTP
   const getVideoDetails = useCallback(async (id: string): Promise<VideoFile> => {
     try {
-      // Try WebSocket first
       if (connected && socketRef.current) {
         return await sendRequest<VideoFile>('get_video_details', { clipId: id });
       } else {
@@ -262,16 +251,18 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
     } catch (error) {
       console.warn('WebSocket getVideoDetails failed, falling back to HTTP API:', error);
-      // Fall back to HTTP API
       const { clipsApi } = await import('../api/client');
-      return clipsApi.getDetails(id);
+      const videoDetails = await clipsApi.getDetails(id);
+      if (!videoDetails || !videoDetails.clip) {
+        throw new Error(`Failed to retrieve video details for ID: ${id} or clip data is missing.`);
+      }
+      return videoDetails.clip;
     }
   }, [connected, sendRequest]);
   
   // Get similar videos API with fallback to HTTP
   const getSimilarVideos = useCallback(async (id: string, limit: number = 5): Promise<VideoFile[]> => {
     try {
-      // Try WebSocket first
       if (connected && socketRef.current) {
         const result = await sendRequest<any>('get_similar_videos', { clipId: id, limit });
         return result.results || [];
@@ -280,7 +271,6 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
     } catch (error) {
       console.warn('WebSocket getSimilarVideos failed, falling back to HTTP API:', error);
-      // Fall back to HTTP API
       const { searchApi } = await import('../api/client');
       const result = await searchApi.findSimilar(id, limit);
       return result.results || [];
