@@ -3,7 +3,8 @@ import { searchApi } from '../api/client';
 import { VideoFile } from '../types/api';
 import VideoCard from './VideoCard';
 import SearchBar from './SearchBar';
-import { FiFilm } from 'react-icons/fi';
+import { FiFilm, FiRefreshCw } from 'react-icons/fi';
+import { useWebSocket } from '../contexts/WebSocketContext';
 import '../styles/VideoLibrary.scss';
 
 const VideoLibrary: React.FC = () => {
@@ -12,13 +13,37 @@ const VideoLibrary: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchType, setSearchType] = useState<'hybrid' | 'semantic' | 'fulltext' | 'transcripts'>('hybrid');
 
+  // Get the WebSocket connection
+  const { search, connected } = useWebSocket();
+
   const loadVideos = async (query?: string) => {
     setLoading(true);
     try {
       // If there's a search query, use it. Otherwise, pass empty string to get recent videos
       const searchQuery = query !== undefined ? query : '';
-      const results = await searchApi.search(searchQuery, searchType);
-      setVideos(results.results || []);
+      
+      // Try to use WebSocket for search if connected
+      if (connected) {
+        console.log('Using WebSocket for search');
+        try {
+          const results = await search({
+            query: searchQuery,
+            search_type: searchType,
+            limit: 50
+          });
+          setVideos(results.results || []);
+        } catch (wsError) {
+          console.error('WebSocket search failed, falling back to HTTP:', wsError);
+          // Fall back to HTTP API
+          const results = await searchApi.search(searchQuery, searchType);
+          setVideos(results.results || []);
+        }
+      } else {
+        // Use HTTP API if WebSocket is not connected
+        console.log('Using HTTP API for search (WebSocket not connected)');
+        const results = await searchApi.search(searchQuery, searchType);
+        setVideos(results.results || []);
+      }
     } catch (error) {
       console.error('Failed to load videos:', error);
       setVideos([]);
@@ -56,7 +81,7 @@ const VideoLibrary: React.FC = () => {
       <div className="video-grid">
         {loading ? (
           <div className="loading-state">
-            <div className="spinner" />
+            <FiRefreshCw className="loading-icon" />
             <p>Loading videos...</p>
           </div>
         ) : videos.length > 0 ? (

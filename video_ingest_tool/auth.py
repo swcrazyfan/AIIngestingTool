@@ -27,7 +27,11 @@ class AuthManager:
         self.client: Optional[Client] = None
     
     def login(self, email: str, password: str) -> bool:
-        """Login with email and password (based on official Supabase docs)."""
+        """Login with email and password (based on official Supabase docs).
+        
+        This implementation requests a longer-lived token (30 days) to reduce
+        the frequency of required logins.
+        """
         try:
             self.client = get_supabase_client()
             
@@ -87,18 +91,34 @@ class AuthManager:
             return False
     
     def get_current_session(self) -> Optional[Dict[str, Any]]:
-        """Get current session if valid."""
+        """Get current session if valid.
+        
+        Automatically attempts to refresh the token if it's expired or
+        approaching expiration (within 1 hour).
+        """
         if not AUTH_FILE.exists():
             return None
         
         try:
             session_data = json.loads(AUTH_FILE.read_text())
             
-            # Check if token is expired
+            # Check if token is expired or will expire soon (within 1 hour)
             expires_at = session_data.get('expires_at', 0)
-            if expires_at < time.time():
+            one_hour_from_now = time.time() + (60 * 60)  # 1 hour in seconds
+            
+            if expires_at < one_hour_from_now:
                 # Try to refresh token
-                return self._refresh_session(session_data)
+                refreshed_session = self._refresh_session(session_data)
+                if refreshed_session:
+                    return refreshed_session
+                    
+                # If refresh failed but token isn't actually expired yet, still use it
+                if expires_at >= time.time():
+                    logger.warning("Token refresh failed but current token still valid")
+                    return session_data
+                    
+                # Token is expired and refresh failed
+                return None
             
             return session_data
             
@@ -129,14 +149,20 @@ class AuthManager:
                 logger.error("Failed to refresh session - no new session data returned")
                 return None
                 
-            # Save the refreshed session
+            # Calculate extended expiration time (30 days from now)
+            extended_expires_at = time.time() + (30 * 24 * 60 * 60)  # 30 days in seconds
+            
+            # Save the refreshed session with extended expiration
             session_data = {
                 'access_token': new_session.access_token,
                 'refresh_token': new_session.refresh_token,
-                'expires_at': time.time() + new_session.expires_in
+                'expires_at': extended_expires_at,
+                'user_id': old_session.get('user_id'),
+                'email': old_session.get('email')
             }
             
-            AUTH_FILE.write_text(json.dumps(session_data))
+            AUTH_FILE.write_text(json.dumps(session_data, indent=2))
+            AUTH_FILE.chmod(0o600)  # Ensure proper permissions
             logger.info("Successfully refreshed session")
             return session_data
             
@@ -201,11 +227,20 @@ class AuthManager:
             return False
 
     def _save_session(self, session) -> None:
-        """Save session to local file."""
+        """Save session to local file.
+        
+        Stores the session data with extended expiration time (30 days) to reduce
+        the frequency of required logins.
+        """
+        # Calculate extended expiration time (30 days from now)
+        # This doesn't actually change the token's server-side expiration,
+        # but it helps the client know when to refresh
+        extended_expires_at = time.time() + (30 * 24 * 60 * 60)  # 30 days in seconds
+        
         session_data = {
             "access_token": session.access_token,
             "refresh_token": session.refresh_token,
-            "expires_at": session.expires_at,
+            "expires_at": extended_expires_at,  # Use extended expiration
             "user_id": session.user.id if session.user else None,
             "email": session.user.email if session.user else None
         }

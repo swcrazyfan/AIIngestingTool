@@ -8,11 +8,13 @@ import os
 import time
 import json
 import typer
+import requests
 from typing import List, Dict, Optional
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn
 from rich.panel import Panel
 from rich.table import Table
+from rich.progress import BarColumn, Progress
 
 from .config import setup_logging, console
 from .discovery import scan_directory
@@ -27,6 +29,9 @@ from .utils import calculate_checksum
 
 # Create Typer app
 app = typer.Typer(help="AI-Powered Video Ingest & Catalog Tool")
+
+# API server URL
+API_SERVER_URL = "http://localhost:8000/api"
 
 @app.command()
 def ingest(
@@ -576,6 +581,91 @@ def show_catalog_stats():
     except Exception as e:
         console.print(f"[red]Failed to get statistics:[/red] {str(e)}")
         raise typer.Exit(1)
+
+@app.command("check-progress")
+def check_ingest_progress():
+    """Check the progress of the current ingest job running on the API server.
+    
+    This command connects to the API server (http://localhost:8000) and retrieves
+    the current status of any running ingest job. If no job is running, it will
+    show an idle status.
+    """
+    try:
+        console.print("[bold]Checking ingest progress on API server...[/bold]")
+        response = requests.get(f"{API_SERVER_URL}/ingest/progress")
+        
+        if response.status_code != 200:
+            console.print(f"[red]Error: API server returned status code {response.status_code}[/red]")
+            if response.status_code == 404:
+                console.print("[yellow]Endpoint not found. Make sure the API server is running and up to date.[/yellow]")
+            return
+            
+        progress_data = response.json()
+        
+        # Create a styled status indicator
+        status = progress_data.get("status", "unknown")
+        status_color = {
+            "idle": "white",
+            "running": "blue",
+            "scanning": "cyan",
+            "processing": "green",
+            "completed": "green",
+            "failed": "red"
+        }.get(status, "yellow")
+        
+        # Create a progress bar
+        progress_value = progress_data.get("progress", 0)
+        progress = Progress(
+            "[progress.description]{task.description}",
+            BarColumn(bar_width=40),
+            "[progress.percentage]{task.percentage:>3.0f}%",
+            console=console
+        )
+        
+        # Display the progress information in a panel
+        console.print(Panel.fit(
+            f"[bold]Status:[/bold] [{status_color}]{status.upper()}[/{status_color}]\n"
+            f"[bold]Message:[/bold] {progress_data.get('message', 'No message')}\n",
+            title="Ingest Progress"
+        ))
+        
+        # Show the progress bar
+        with progress:
+            task = progress.add_task("Progress", total=100, completed=progress_value)
+            progress.update(task, completed=progress_value)
+        
+        # Show additional statistics if available
+        if "processed_count" in progress_data or "results_count" in progress_data:
+            stats_table = Table(title="Processing Statistics")
+            stats_table.add_column("Metric", style="cyan")
+            stats_table.add_column("Value", style="green")
+            
+            processed = progress_data.get("processed_count", progress_data.get("results_count", 0))
+            stats_table.add_row("Processed Files", str(processed))
+            
+            if "total_count" in progress_data:
+                stats_table.add_row("Total Files", str(progress_data["total_count"]))
+                
+            if "failed_count" in progress_data:
+                failed_color = "red" if progress_data["failed_count"] > 0 else "green"
+                stats_table.add_row("Failed Files", f"[{failed_color}]{progress_data['failed_count']}[/{failed_color}]")
+                
+            console.print(stats_table)
+            
+        # Show next steps based on status
+        if status == "idle":
+            console.print("\n[yellow]No active ingest job. Use 'ingest' command or the API to start processing.[/yellow]")
+        elif status == "completed":
+            console.print("\n[green]Processing completed successfully![/green]")
+        elif status == "failed":
+            console.print("\n[red]Processing failed. Check the API server logs for details.[/red]")
+                
+    except requests.exceptions.ConnectionError:
+        console.print("[red]Error: Could not connect to the API server[/red]")
+        console.print("[yellow]Make sure the API server is running on http://localhost:8000[/yellow]")
+        console.print("[yellow]Start it with 'python api_server.py' from the project root[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error checking progress: {str(e)}[/red]")
 
 if __name__ == "__main__":
     app()

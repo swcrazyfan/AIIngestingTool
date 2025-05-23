@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import { VideoFile } from '../types/api';
 import { evalTS } from '../lib/utils/bolt';
 import { formatDuration } from '../utils/format';
-import { FiPlay, FiFolder, FiSearch, FiClock, FiCamera } from 'react-icons/fi';
+import { FiPlay, FiFolder, FiSearch, FiClock, FiCamera, FiInfo } from 'react-icons/fi';
 import SimilarVideosModal from './SimilarVideosModal';
+import VideoDetailsModal from './VideoDetailsModal';
 import '../styles/VideoCard.scss';
 
 interface VideoCardProps {
@@ -13,6 +14,7 @@ interface VideoCardProps {
 
 const VideoCard: React.FC<VideoCardProps> = ({ video, onRefresh }) => {
   const [showSimilar, setShowSimilar] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
 
   const addToTimeline = async () => {
     try {
@@ -75,6 +77,9 @@ const VideoCard: React.FC<VideoCardProps> = ({ video, onRefresh }) => {
           <button onClick={() => setShowSimilar(true)} title="Find Similar">
             <FiSearch /> Similar
           </button>
+          <button onClick={() => setShowDetails(true)} title="Show Details">
+            <FiInfo /> Details 
+          </button>
         </div>
       </div>
 
@@ -82,6 +87,13 @@ const VideoCard: React.FC<VideoCardProps> = ({ video, onRefresh }) => {
         <SimilarVideosModal
           sourceVideo={video}
           onClose={() => setShowSimilar(false)}
+        />
+      )}
+
+      {showDetails && (
+        <VideoDetailsModal
+          video={video} 
+          onClose={() => setShowDetails(false)}
         />
       )}
     </>

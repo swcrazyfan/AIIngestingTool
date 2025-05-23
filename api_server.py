@@ -13,9 +13,11 @@ import time
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime
+from functools import wraps
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from flask_socketio import SocketIO
 import structlog
 
 # Add the parent directory to Python path so we can import video_ingest_tool
@@ -48,9 +50,43 @@ CORS(
     supports_credentials=True
 )
 
+# Initialize SocketIO with proper configuration
+socketio = SocketIO(
+    app, 
+    cors_allowed_origins=['http://localhost:3000', 'cep://com.ai-ingest-tool.cep.main', 'null'], 
+    async_mode='threading',
+    engineio_logger=True,  # Enable engine logging for debugging
+    logger=True,          # Enable socketio logging
+    ping_timeout=5,       # Shorter ping timeout for faster detection of disconnects
+    ping_interval=25      # Ping interval in seconds
+)
+
+# Last successful token refresh timestamp
+last_token_refresh = 0
+# Minimum time between refresh attempts (5 minutes)
+MIN_REFRESH_INTERVAL = 5 * 60  # seconds
+
+# List of endpoints that don't require authentication
+PUBLIC_ENDPOINTS = [
+    '/api/health',
+    '/api/auth/status',
+    '/api/auth/login',
+    '/api/auth/signup',
+    '/api/auth/logout',
+    '/api/thumbnail/',  # For serving thumbnails
+]
+
 # Global state
 current_ingest_job = None
 ingest_progress = {"status": "idle", "progress": 0, "message": ""}
+
+# Function to emit progress updates via WebSocket
+def emit_progress_update():
+    """Emit the current progress state to all connected clients."""
+    try:
+        socketio.emit('ingest_progress', ingest_progress)
+    except Exception as e:
+        logger.error(f"Error emitting progress update: {str(e)}")
 
 class IngestJob:
     """Manages background ingest processing."""
@@ -79,6 +115,9 @@ class IngestJob:
                 "message": self.message,
                 "error": self.error
             })
+            
+            # Emit error update via WebSocket
+            emit_progress_update()
             return
         
         try:
@@ -90,8 +129,11 @@ class IngestJob:
                 "message": self.message
             })
             
+            # Emit scanning update via WebSocket
+            emit_progress_update()
+            
             # Setup logging
-            logger_instance, json_dir, timestamp = setup_logging()
+            logger_instance, timestamp, json_dir, log_file = setup_logging()
             run_dir = os.path.dirname(json_dir)
             thumbnails_dir = os.path.join(run_dir, "thumbnails")
             os.makedirs(thumbnails_dir, exist_ok=True)
@@ -116,6 +158,9 @@ class IngestJob:
                     "progress": 100,
                     "message": self.message
                 })
+                
+                # Emit update via WebSocket
+                emit_progress_update()
                 return
             
             self.status = "processing"
@@ -125,6 +170,9 @@ class IngestJob:
                 "progress": 20,
                 "message": self.message
             })
+            
+            # Emit processing update via WebSocket
+            emit_progress_update()
             
             # Process videos with progress tracking
             processed_files = []
@@ -142,6 +190,9 @@ class IngestJob:
                         "failed_count": len(failed_files),
                         "total_count": len(video_files)
                     })
+                    
+                    # Emit progress update via WebSocket
+                    emit_progress_update()
                     
                     # Get pipeline configuration
                     pipeline_config = get_default_pipeline_config()
@@ -199,18 +250,22 @@ class IngestJob:
                     })
             
             self.status = "completed"
-            self.message = f"Processing completed! {len(processed_files)} processed, {len(failed_files)} failed"
+            self.message = f"Processing complete. {len(processed_files)} files processed, {len(failed_files)} failed."
             self.results = processed_files
+            
             ingest_progress.update({
                 "status": self.status,
                 "progress": 100,
                 "message": self.message,
-                "results": processed_files,
                 "processed_count": len(processed_files),
                 "failed_count": len(failed_files),
-                "total_count": len(video_files)
+                "total_count": len(video_files),
+                "results_count": len(processed_files)
             })
             
+            # Emit final progress update via WebSocket
+            emit_progress_update()
+        
         except Exception as e:
             self.status = "error"
             self.error = str(e)
@@ -225,8 +280,32 @@ class IngestJob:
 
 @app.before_request
 def log_request():
-    """Log all incoming requests for debugging."""
-    print(f"📥 Request: {request.method} {request.path} from {request.remote_addr}")
+    """Log all incoming requests for debugging.
+    Also refreshes authentication token if needed and enforces authentication.
+    """
+    if request.path.startswith('/api/'):
+        logger.info(f"Request: {request.method} {request.path}")
+        
+        # Skip auth refresh for auth-related endpoints to avoid loops
+        if not request.path.startswith('/api/auth/'):
+            # Silently refresh token if needed (no console logs)
+            check_and_refresh_auth(log_to_console=False)
+            
+        # Check if endpoint requires authentication
+        requires_auth = True
+        for public_endpoint in PUBLIC_ENDPOINTS:
+            if request.path.startswith(public_endpoint):
+                requires_auth = False
+                break
+                
+        # Enforce authentication for protected endpoints
+        if requires_auth and BACKEND_AVAILABLE:
+            auth_manager = AuthManager()
+            if not auth_manager.get_current_session():
+                # Return 401 for API requests that require authentication
+                if request.path.startswith('/api/'):
+                    return jsonify({"error": "Authentication required"}), 401
+                    
     if request.method == 'POST' and request.content_type == 'application/json':
         print(f"📄 Body: {request.get_json()}")
 
@@ -695,17 +774,30 @@ def get_clip_details(clip_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/stats', methods=['GET'])
-def get_catalog_stats():
-    """Get catalog statistics for the current user."""
-    if not BACKEND_AVAILABLE:
-        return jsonify({"error": "Backend not available"}), 500
+def require_auth(f):
+    """Decorator to require authentication for an endpoint.
     
-    try:
+    Note: This is kept for backward compatibility but is no longer needed
+    since authentication is now enforced at the middleware level.
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not BACKEND_AVAILABLE:
+            return jsonify({"error": "Backend not available"}), 500
+            
         auth_manager = AuthManager()
         if not auth_manager.get_current_session():
             return jsonify({"error": "Authentication required"}), 401
-        
+            
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.route('/api/stats', methods=['GET'])
+@require_auth
+def get_catalog_stats():
+    """Get catalog statistics for the current user."""
+    try:
         from .search import VideoSearcher
         searcher = VideoSearcher()
         stats = searcher.get_user_stats()
@@ -733,22 +825,388 @@ def get_pipeline_steps():
         return jsonify({"error": str(e)}), 500
 
 
+def check_and_refresh_auth(log_to_console=True):
+    """Check authentication status and refresh token if needed.
+    
+    This runs when the server starts and periodically during requests
+    to ensure the token is valid, preventing the need for users to log in again.
+    
+    Args:
+        log_to_console: Whether to print status messages to console
+    
+    Returns:
+        bool: True if authenticated with a valid session, False otherwise
+    """
+    global last_token_refresh
+    
+    if not BACKEND_AVAILABLE:
+        return False
+    
+    # Skip refresh if we've refreshed recently
+    current_time = time.time()
+    if current_time - last_token_refresh < MIN_REFRESH_INTERVAL:
+        return True
+        
+    try:
+        auth_manager = AuthManager()
+        session = auth_manager.get_current_session()
+        
+        if session:
+            # Session exists and has been refreshed if needed
+            last_token_refresh = current_time
+            user_email = session.get('email')
+            if log_to_console:
+                if user_email:
+                    print(f"✅ Authenticated as {user_email}")
+                else:
+                    print(f"✅ Authentication token refreshed successfully")
+            return True
+        else:
+            if log_to_console:
+                print("ℹ️ No active session found - login required")
+            return False
+            
+    except Exception as e:
+        if log_to_console:
+            print(f"⚠️ Auth check failed: {str(e)}")
+        logger.error(f"Auth check failed: {str(e)}")
+        return False
+
+# WebSocket event handlers
+@socketio.on('connect')
+def handle_connect():
+    """Handle client connection to WebSocket."""
+    try:
+        logger.info("Client connected to WebSocket")
+        # Send current progress state to newly connected client
+        socketio.emit('ingest_progress', ingest_progress)
+    except Exception as e:
+        logger.error(f"Error in connect handler: {str(e)}")
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Handle client disconnection from WebSocket."""
+    try:
+        logger.info("Client disconnected from WebSocket")
+    except Exception as e:
+        logger.error(f"Error in disconnect handler: {str(e)}")
+        
+@socketio.on('search_request')
+def handle_search_request(data):
+    """Handle search requests through WebSocket."""
+    try:
+        logger.info("Received search request via WebSocket")
+        request_id = data.get('requestId')
+        
+        # Extract search parameters
+        query = data.get('query', '')
+        search_type = data.get('search_type', 'hybrid')
+        limit = data.get('limit', 20)
+        offset = data.get('offset', 0)
+        
+        # Check if backend is available
+        if not BACKEND_AVAILABLE:
+            socketio.emit('response', {
+                "requestId": request_id,
+                "error": "Backend not available"
+            })
+            return
+        
+        # Check authentication
+        if not check_and_refresh_auth(log_to_console=False):
+            socketio.emit('response', {
+                "requestId": request_id,
+                "error": "Authentication required"
+            })
+            return
+            
+        # Perform search
+        try:
+            from video_ingest_tool.search import VideoSearcher
+            
+            # Create searcher instance
+            searcher = VideoSearcher()
+            
+            # Perform search
+            results = searcher.search(
+                query=query,
+                search_type=search_type,
+                match_count=limit
+            )
+            
+            # Format results for display
+            from video_ingest_tool.search import format_search_results
+            formatted_results = format_search_results(results, search_type)
+            count = len(results)
+            
+            # Send results back through WebSocket
+            socketio.emit('response', {
+                "requestId": request_id,
+                "result": {
+                    "results": formatted_results,
+                    "count": count
+                }
+            })
+            
+        except Exception as e:
+            logger.error(f"Search error: {str(e)}")
+            socketio.emit('response', {
+                "requestId": request_id,
+                "error": f"Search failed: {str(e)}"
+            })
+    except Exception as e:
+        logger.error(f"Error handling WebSocket search request: {str(e)}")
+        if data and data.get('requestId'):
+            socketio.emit('response', {
+                "requestId": data.get('requestId'),
+                "error": "Server error processing search"
+            })
+
+@socketio.on('start_ingest')
+def handle_start_ingest(data):
+    """Handle ingest start requests through WebSocket."""
+    try:
+        logger.info("Received start ingest request via WebSocket")
+        request_id = data.get('requestId')
+        
+        # Extract parameters
+        directory = data.get('directory')
+        options = data.get('options', {})
+        
+        if not directory or not os.path.exists(directory):
+            socketio.emit('response', {
+                "requestId": request_id,
+                "error": "Invalid directory path"
+            })
+            return
+            
+        global current_ingest_job, ingest_progress
+            
+        # Check if already running
+        if current_ingest_job and current_ingest_job.status in ["starting", "scanning", "processing"]:
+            socketio.emit('response', {
+                "requestId": request_id,
+                "error": "Ingest job already running"
+            })
+            return
+            
+        # Create and start job
+        try:
+            
+            # Extract options
+            recursive = options.get('recursive', True)
+            ai_analysis = options.get('ai_analysis', True)
+            generate_embeddings = options.get('generate_embeddings', True)
+            store_database = options.get('store_database', True)
+            force_reprocess = options.get('force_reprocess', False)
+            
+            # Start ingest job in background thread
+            current_ingest_job = IngestJob(directory, recursive, ai_analysis, generate_embeddings, store_database, force_reprocess)
+            ingest_thread = threading.Thread(target=current_ingest_job.run)
+            ingest_thread.daemon = True
+            ingest_thread.start()
+            
+            # Return success response
+            socketio.emit('response', {
+                "requestId": request_id,
+                "result": {
+                    "success": True,
+                    "message": "Ingest job started"
+                }
+            })
+            
+        except Exception as e:
+            logger.error(f"Error starting ingest job: {str(e)}")
+            socketio.emit('response', {
+                "requestId": request_id,
+                "error": f"Failed to start ingest job: {str(e)}"
+            })
+            
+    except Exception as e:
+        logger.error(f"Error handling WebSocket start ingest request: {str(e)}")
+        if data and data.get('requestId'):
+            socketio.emit('response', {
+                "requestId": data.get('requestId'),
+                "error": "Server error processing ingest request"
+            })
+
+@socketio.on('get_ingest_progress')
+def handle_get_ingest_progress(data):
+    """Handle ingest progress requests through WebSocket."""
+    try:
+        logger.info("Received get ingest progress request via WebSocket")
+        request_id = data.get('requestId')
+        
+        # Return current progress
+        if not current_ingest_job:
+            socketio.emit('response', {
+                "requestId": request_id,
+                "result": {
+                    "status": "idle",
+                    "progress": 0,
+                    "message": "No active ingest job"
+                }
+            })
+        else:
+            socketio.emit('response', {
+                "requestId": request_id,
+                "result": ingest_progress
+            })
+            
+    except Exception as e:
+        logger.error(f"Error handling WebSocket get ingest progress request: {str(e)}")
+        if data and data.get('requestId'):
+            socketio.emit('response', {
+                "requestId": data.get('requestId'),
+                "error": "Server error getting ingest progress"
+            })
+
+@socketio.on('get_video_details')
+def handle_get_video_details(data):
+    """Handle video details requests through WebSocket."""
+    try:
+        logger.info("Received get video details request via WebSocket")
+        request_id = data.get('requestId')
+        video_id = data.get('id')
+        
+        if not video_id:
+            socketio.emit('response', {
+                "requestId": request_id,
+                "error": "Missing video ID"
+            })
+            return
+            
+        # Check authentication
+        if not check_and_refresh_auth(log_to_console=False):
+            socketio.emit('response', {
+                "requestId": request_id,
+                "error": "Authentication required"
+            })
+            return
+            
+        try:
+            from video_ingest_tool.supabase_config import get_supabase_client
+            
+            supabase = get_supabase_client()
+            if not supabase:
+                socketio.emit('response', {
+                    "requestId": request_id,
+                    "error": "Database connection failed"
+                })
+                return
+                
+            # Get video details from database
+            result = supabase.table('videos').select('*').eq('id', video_id).execute()
+            
+            if not result.data or len(result.data) == 0:
+                socketio.emit('response', {
+                    "requestId": request_id,
+                    "error": "Video not found"
+                })
+                return
+                
+            # Return video details
+            socketio.emit('response', {
+                "requestId": request_id,
+                "result": result.data[0]
+            })
+            
+        except Exception as e:
+            logger.error(f"Error getting video details: {str(e)}")
+            socketio.emit('response', {
+                "requestId": request_id,
+                "error": f"Failed to get video details: {str(e)}"
+            })
+            
+    except Exception as e:
+        logger.error(f"Error handling WebSocket get video details request: {str(e)}")
+        if data and data.get('requestId'):
+            socketio.emit('response', {
+                "requestId": data.get('requestId'),
+                "error": "Server error getting video details"
+            })
+
+@socketio.on('get_similar_videos')
+def handle_get_similar_videos(data):
+    """Handle similar videos requests through WebSocket."""
+    try:
+        logger.info("Received get similar videos request via WebSocket")
+        request_id = data.get('requestId')
+        video_id = data.get('id')
+        limit = data.get('limit', 5)
+        
+        if not video_id:
+            socketio.emit('response', {
+                "requestId": request_id,
+                "error": "Missing video ID"
+            })
+            return
+            
+        # Check authentication
+        if not check_and_refresh_auth(log_to_console=False):
+            socketio.emit('response', {
+                "requestId": request_id,
+                "error": "Authentication required"
+            })
+            return
+            
+        try:
+            from video_ingest_tool.search import find_similar_videos
+            from video_ingest_tool.supabase_config import get_supabase_client
+            
+            supabase = get_supabase_client()
+            if not supabase:
+                socketio.emit('response', {
+                    "requestId": request_id,
+                    "error": "Database connection failed"
+                })
+                return
+                
+            # Get similar videos
+            similar_videos = find_similar_videos(video_id, limit, supabase=supabase)
+            
+            # Return similar videos
+            socketio.emit('response', {
+                "requestId": request_id,
+                "result": similar_videos
+            })
+            
+        except Exception as e:
+            logger.error(f"Error getting similar videos: {str(e)}")
+            socketio.emit('response', {
+                "requestId": request_id,
+                "error": f"Failed to get similar videos: {str(e)}"
+            })
+            
+    except Exception as e:
+        logger.error(f"Error handling WebSocket get similar videos request: {str(e)}")
+        if data and data.get('requestId'):
+            socketio.emit('response', {
+                "requestId": data.get('requestId'),
+                "error": "Server error getting similar videos"
+            })
+
 if __name__ == '__main__':
     print("🚀 Starting Video Ingest API Server...")
     print(f"📡 CEP Panel can connect to: http://localhost:8000")
     print(f"🔍 Health check: http://localhost:8000/api/health")
+    print(f"🔌 WebSocket available at: ws://localhost:8000/socket.io/")
     
     if BACKEND_AVAILABLE:
         print("✅ Backend modules loaded successfully")
+        # Check and refresh authentication on startup
+        check_and_refresh_auth()
     else:
         print("⚠️  Backend modules not available - some features will be limited")
     
     print("⚡ Ready for Adobe Premiere Pro CEP panel!")
     
-    # Run Flask app
-    app.run(
+    # Run Flask app with SocketIO
+    socketio.run(
+        app,
         host='localhost',
         port=8000,
-        debug=True,  # Enable debug mode
-        threaded=True
+        debug=False,  # Disable debug mode to avoid issues with WebSocket
+        use_reloader=False,  # Disable reloader to avoid duplicate socketio instances
+        allow_unsafe_werkzeug=True  # Allow unsafe Werkzeug server for development
     )
