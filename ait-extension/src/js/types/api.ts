@@ -8,7 +8,10 @@ export interface IngestOptions {
   force_reprocess?: boolean;
 }
 
-export type SearchType = 'semantic' | 'fulltext' | 'hybrid' | 'transcripts' | 'similar';
+export type SearchType = 'semantic' | 'fulltext' | 'hybrid' | 'transcripts' | 'similar' | 'recent';
+
+export type SortField = "processed_at" | "file_name" | "duration_seconds" | "created_at";
+export type SortOrder = "ascending" | "descending";
 
 export interface VideoFile {
   id: string | number;
@@ -101,11 +104,58 @@ export interface AuthStatus {
 
 export interface SearchResults {
   results: VideoFile[];
-  count: number;
+  total: number; 
+  query?: string; 
+  search_type?: SearchType; 
 }
 
 export interface ApiResponse<T = any> {
   success: boolean;
   data?: T;
   error?: string;
+}
+
+export interface TranscriptData {
+  id?: string;
+  clip_id?: string;
+  language?: string;
+  text?: string;
+  segments?: Array<{ start_time: number; end_time: number; text: string; speaker?: string }>;
+}
+
+export interface AnalysisData {
+  id?: string;
+  clip_id?: string;
+  summary?: string;
+  tags?: string[];
+  key_frames?: Array<{ timestamp: number; image_url: string; score?: number }>;
+}
+
+export interface VideoDetails {
+  clip: VideoFile; 
+  transcript?: TranscriptData | null;
+  analysis?: AnalysisData | null;
+}
+
+export interface CatalogStats {
+  total_videos: number;
+  total_duration_seconds: number;
+  total_file_size_bytes: number;
+  videos_by_category?: Record<string, number>;
+}
+
+export interface PipelineStep {
+  id: string;
+  name: string;
+  description?: string;
+  enabled_by_default?: boolean;
+}
+
+export interface ListVideoOptions {
+  sortBy?: SortField;
+  sortOrder?: SortOrder;
+  limit?: number;
+  offset?: number;
+  dateStart?: string; 
+  dateEnd?: string;   
 }

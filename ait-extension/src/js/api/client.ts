@@ -6,7 +6,13 @@ import {
   IngestProgress, 
   AuthStatus,
   SearchResults,
-  ApiResponse 
+  ApiResponse,
+  VideoDetails,
+  CatalogStats,
+  PipelineStep,
+  SortField,
+  SortOrder,
+  ListVideoOptions
 } from '../types/api';
 
 // Connection status event handling
@@ -14,7 +20,7 @@ type ConnectionListener = (isConnected: boolean) => void;
 const connectionListeners: ConnectionListener[] = [];
 let isConnected = true;
 
-// API configuration
+// API configuration - connects to the new API server (api_server_new.py)
 const API_BASE_URL = 'http://localhost:8000/api';
 
 // Create axios instance with default config
@@ -108,28 +114,56 @@ export const ingestApi = {
 
 // Search API
 export const searchApi = {
-  async search(query: string, searchType: SearchType = 'hybrid', limit: number = 20) {
-    // For similar search, this shouldn't be called directly
+  async search(query: string, searchType: SearchType = 'hybrid', limit: number = 20): Promise<SearchResults> {
+    // For similar search, this shouldn't be called directly from generic search UI
     if (searchType === 'similar') {
-      throw new Error('Use findSimilar method for similar searches');
+      // UI should ideally use findSimilar directly
+      console.warn('Attempted to use general search for similar items. Use findSimilar instead.');
+      return { results: [], total: 0, query, search_type: searchType }; 
     }
     
-    const response = await apiClient.post('/search', {
-      query,
-      search_type: searchType,
-      limit
+    if (!query.trim()) {
+      // Keyword search requires a query. Return empty if query is blank.
+      // UI should guide user to use video listing for browsing all videos.
+      console.warn('Search query is empty. Returning empty results for keyword search.');
+      return { results: [], total: 0, query, search_type: searchType };
+    }
+    
+    // Backend /api/search is now GET
+    const response = await apiClient.get<SearchResults>('/search', {
+      params: {
+        query,
+        type: searchType,
+        limit
+      }
     });
     return response.data;
   },
 
-  async findSimilar(clipId: string, limit: number = 5) {
-    // The backend expects a different endpoint or handling for similar searches
-    // Based on the Python code, it seems we need to call a separate method
-    // Let's check if the API server has a similar endpoint
-    const response = await apiClient.post('/search/similar', {
-      clip_id: clipId,
-      limit
+  async findSimilar(clipId: string, limit: number = 5): Promise<SearchResults> {
+    // Backend /api/similar is now GET
+    const response = await apiClient.get<SearchResults>('/similar', {
+      params: {
+        clip_id: clipId,
+        limit
+      }
     });
+    return response.data;
+  }
+};
+
+// Videos API (New)
+export const videosApi = {
+  async list(options?: ListVideoOptions): Promise<SearchResults> { // Assuming SearchResults can represent a list of videos
+    const params: Record<string, any> = {};
+    if (options?.sortBy) params.sort_by = options.sortBy;
+    if (options?.sortOrder) params.sort_order = options.sortOrder;
+    if (options?.limit) params.limit = options.limit;
+    if (options?.offset) params.offset = options.offset;
+    if (options?.dateStart) params.date_start = options.dateStart;
+    if (options?.dateEnd) params.date_end = options.dateEnd;
+
+    const response = await apiClient.get<SearchResults>('/videos', { params });
     return response.data;
   }
 };
@@ -148,24 +182,24 @@ export const healthApi = {
 
 // Clips API
 export const clipsApi = {
-  async getDetails(clipId: string) {
-    const response = await apiClient.get(`/clips/${clipId}`);
+  async getDetails(clipId: string): Promise<VideoDetails> {
+    const response = await apiClient.get<VideoDetails>(`/clips/${clipId}`);
     return response.data;
   }
 };
 
 // Stats API
 export const statsApi = {
-  async getCatalogStats() {
-    const response = await apiClient.get('/stats');
+  async getCatalogStats(): Promise<CatalogStats> {
+    const response = await apiClient.get<CatalogStats>('/stats');
     return response.data;
   }
 };
 
 // Pipeline API
 export const pipelineApi = {
-  async getSteps() {
-    const response = await apiClient.get('/pipeline/steps');
+  async getSteps(): Promise<PipelineStep[]> {
+    const response = await apiClient.get<PipelineStep[]>('/pipeline/steps');
     return response.data;
   }
 };
