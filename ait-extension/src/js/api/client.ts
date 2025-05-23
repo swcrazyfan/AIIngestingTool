@@ -19,6 +19,7 @@ import {
 type ConnectionListener = (isConnected: boolean) => void;
 const connectionListeners: ConnectionListener[] = [];
 let isConnected = true;
+let authErrorCallback: (() => void) | null = null;
 
 // API configuration - connects to the new API server (api_server_new.py)
 const API_BASE_URL = 'http://localhost:8000/api';
@@ -56,7 +57,9 @@ apiClient.interceptors.response.use(
       // Don't trigger for auth endpoints
       const url = error.config?.url || '';
       if (!url.includes('/auth/')) {
-        notifyConnectionListeners(true); // We're connected but need to re-authenticate
+        if (connectionManager.triggerAuthError) { 
+          connectionManager.triggerAuthError();
+        }
       }
     }
     return Promise.reject(error);
@@ -233,6 +236,24 @@ export const connectionManager = {
    */
   isConnected() {
     return isConnected;
+  },
+
+  /**
+   * Sets the callback function to be invoked when a 401 auth error occurs.
+   * @param callback The function to call on auth error, or null to clear.
+   */
+  setAuthErrorCallback(callback: (() => void) | null) {
+    authErrorCallback = callback;
+  },
+
+  /**
+   * Triggers the registered auth error callback.
+   * Called internally when a 401 error is detected on a non-auth endpoint.
+   */
+  triggerAuthError() {
+    if (authErrorCallback) {
+      authErrorCallback();
+    }
   },
 
   /**

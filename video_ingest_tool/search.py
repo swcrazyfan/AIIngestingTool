@@ -187,30 +187,29 @@ class VideoSearcher:
         weights: Optional[Dict[str, float]] = None
     ) -> List[Dict[str, Any]]:
         """Perform semantic search using vector embeddings."""
+        current_weights = weights or {}
+        summary_content, keyword_content = prepare_search_embeddings(query)
+        
+        # Call generate_embeddings once with both content types and unpack the tuple
+        query_summary_embedding, query_keyword_embedding = generate_embeddings(summary_content, keyword_content)
+        
+        search_params = {
+            'p_summary_weight': current_weights.get('summary_weight', 1.0),
+            'p_keyword_weight': current_weights.get('keyword_weight', 0.8),
+            'p_similarity_threshold': current_weights.get('similarity_threshold', 0.1) # Matched SQL default
+        }
+        
+        rpc_params = {
+            'p_query_summary_embedding': query_summary_embedding,
+            'p_query_keyword_embedding': query_keyword_embedding,
+            'p_user_id_filter': user_id,
+            'p_match_count': match_count,
+            **search_params
+        }
+
         try:
-            # Prepare content for embedding
-            summary_content, keyword_content = prepare_search_embeddings(query)
-            
-            # Generate embeddings
-            summary_embedding, keyword_embedding = generate_embeddings(
-                summary_content, keyword_content, logger
-            )
-            
-            # Set default weights (only semantic search parameters)
-            search_params = {
-                'summary_weight': weights.get('summary_weight', 1.0) if weights else 1.0,
-                'keyword_weight': weights.get('keyword_weight', 0.8) if weights else 0.8,
-                'similarity_threshold': weights.get('similarity_threshold', 0.5) if weights else 0.5
-            }
-            
-            # Execute semantic search
-            result = client.rpc('semantic_search_clips', {
-                'query_summary_embedding': summary_embedding,
-                'query_keyword_embedding': keyword_embedding,
-                'user_id_filter': user_id,
-                'match_count': match_count,
-                **search_params
-            }).execute()
+            logger.info("Performing semantic search", query=query, params=rpc_params)
+            result = client.rpc('semantic_search_clips_bp', rpc_params).execute()
             
             return result.data if result.data else []
             
@@ -248,33 +247,30 @@ class VideoSearcher:
         weights: Optional[Dict[str, float]] = None
     ) -> List[Dict[str, Any]]:
         """Perform hybrid search combining full-text and semantic search."""
+        current_weights = weights or {}
+        summary_content, keyword_content = prepare_search_embeddings(query)
+
+        query_summary_embedding, query_keyword_embedding = generate_embeddings(summary_content, keyword_content)
+        
+        # Prepare parameters for the RPC call with 'p_' prefix
+        rpc_params = {
+            'p_query_text': query,
+            'p_query_summary_embedding': query_summary_embedding,
+            'p_query_keyword_embedding': query_keyword_embedding,
+            'p_user_id_filter': user_id,
+            'p_match_count': match_count,
+            'p_fulltext_weight': current_weights.get('fulltext_weight', 1.0),
+            'p_summary_weight': current_weights.get('summary_weight', 1.0),
+            'p_keyword_weight': current_weights.get('keyword_weight', 0.8),
+            'p_rrf_k': int(current_weights.get('rrf_k', 50)), # Defaults to 50 as 'rrf_k' is not in current_weights from CLI
+            'p_summary_threshold': current_weights.get('similarity_threshold', 0.1), # Use existing similarity_threshold for p_summary_threshold
+            'p_keyword_threshold': current_weights.get('similarity_threshold', 0.1)  # Use existing similarity_threshold for p_keyword_threshold
+        }
+
         try:
-            # Prepare content for embedding
-            summary_content, keyword_content = prepare_search_embeddings(query)
-            
-            # Generate embeddings
-            summary_embedding, keyword_embedding = generate_embeddings(
-                summary_content, keyword_content, logger
-            )
-            
-            # Set default weights for RRF
-            search_params = {
-                'fulltext_weight': weights.get('fulltext_weight', 1.0) if weights else 1.0,
-                'summary_weight': weights.get('summary_weight', 1.0) if weights else 1.0,
-                'keyword_weight': weights.get('keyword_weight', 0.8) if weights else 0.8,
-                'rrf_k': weights.get('rrf_k', 50) if weights else 50
-            }
-            
-            # Execute hybrid search
-            result = client.rpc('hybrid_search_clips', {
-                'query_text': query,
-                'query_summary_embedding': summary_embedding,
-                'query_keyword_embedding': keyword_embedding,
-                'user_id_filter': user_id,
-                'match_count': match_count,
-                **search_params
-            }).execute()
-            
+            logger.info("Performing hybrid search", query=query, params=rpc_params)
+            result = client.rpc('hybrid_search_clips_bp', rpc_params).execute()
+
             return result.data if result.data else []
             
         except Exception as e:
