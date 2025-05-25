@@ -1,12 +1,10 @@
-#!/usr/bin/env python3
 """
-Entry point for running the video ingest tool as a module.
-Example: python -m video_ingest_tool /path/to/videos
+Entry point for the video ingest tool.
+
+Import and run the CLI when the package is invoked directly.
 """
 
-import sys
-from .video_ingestor import app
+from .cli import app
 
 if __name__ == "__main__":
-    # Forward command line arguments to the Typer app
     app()

@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "repomix": {
+      "command": "npx",
+      "args": ["-y", "repomix", "--mcp"]
+    },
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@latest"]
+    },
+    "dart": {
+      "command": "npx",
+      "args": ["-y", "dart-mcp-server"],
+      "env": {
+        "DART_TOKEN": "dsa_4782353e6356c556f2b7607e1b5bdf10e376a88e0c39b903f9dd6247455e5be0"
+      }
+    },
+    "desktop-commander": {
+      "command": "npx",
+      "args": ["-y", "@wonderwhy-er/desktop-commander"]
+    }
+  }
+}
