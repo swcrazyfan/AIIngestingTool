@@ -199,12 +199,23 @@ class ProcessingPipeline:
         """
         result = initial_data.copy()
         
+        # Extract step_callback if provided
+        step_callback = kwargs.pop('step_callback', None)
+        
         for step in self.steps:
             if not step.enabled:
                 self.logger.info(f"Skipping disabled step: {step.name}")
                 continue
             
             self.logger.info(f"Executing step: {step.name}")
+            
+            # Call the step callback if provided
+            if step_callback:
+                try:
+                    step_callback(step.name)
+                except Exception as e:
+                    self.logger.error(f"Error in step callback: {str(e)}")
+            
             try:
                 # Execute the step with the current result and kwargs
                 # The step itself will filter kwargs to only those it accepts

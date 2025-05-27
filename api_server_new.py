@@ -31,9 +31,12 @@ from video_ingest_tool.cli import auth_status as cli_auth_status
 # Import additional components as needed
 from video_ingest_tool.auth import AuthManager
 from video_ingest_tool.search import VideoSearcher, format_search_results
-from video_ingest_tool.processor import get_available_pipeline_steps
+from video_ingest_tool.processor import get_available_pipeline_steps, process_video_file, get_default_pipeline_config
 from video_ingest_tool.discovery import scan_directory
+from video_ingest_tool.config import setup_logging
+from video_ingest_tool.output import save_to_json, save_run_outputs
 from video_ingest_tool.utils import calculate_checksum
+from video_ingest_tool.video_processor import DEFAULT_COMPRESSION_CONFIG
 
 # Setup logging
 logger = structlog.get_logger(__name__)
@@ -45,7 +48,7 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 # Global variables for ingest job tracking
 current_ingest_job = None
-ingest_progress = {"status": "idle", "progress": 0, "total": 0, "current_file": "", "results": []}
+ingest_progress = {"status": "idle", "progress": 0, "total": 0, "current_file": "", "results": [], "processed_files": []}
 BACKEND_AVAILABLE = True
 
 # Helper functions
@@ -342,7 +345,7 @@ def auth_logout():
 @app.route('/api/ingest', methods=['POST'])
 def start_ingest():
     """Start video ingest process."""
-    global current_ingest_job, ingest_progress
+    global ingest_progress
     
     if not BACKEND_AVAILABLE:
         return jsonify({
@@ -350,18 +353,26 @@ def start_ingest():
         }), 500
     
     # Check if already running
-    if current_ingest_job and current_ingest_job.status in ["starting", "scanning", "processing"]:
+    if ingest_progress["status"] in ["starting", "scanning", "processing"]:
         return jsonify({
             "error": "Ingest job already running",
-            "current_status": current_ingest_job.status
+            "current_status": ingest_progress["status"]
         }), 400
     
-    data = request.get_json()
-    directory = data.get('directory')
-    
+    try:
+        data = request.get_json()
+        if data is None:
+            # This case handles if get_json() returns None (e.g. wrong content type and not force=True)
+            logger.error("Failed to parse request JSON: request.get_json() returned None. Check Content-Type header.")
+            return jsonify({"error": "Invalid request: Could not parse JSON body. Ensure Content-Type is application/json."}), 400
+        directory = data.get('directory')
+    except Exception as e: # Catches errors during get_json() itself (e.g. malformed JSON)
+        logger.error("Error parsing request JSON for ingest", exc_info=True, error=str(e))
+        return jsonify({"error": "Invalid request: Failed to parse JSON body.", "details": str(e)}), 400
+
     if not directory or not os.path.exists(directory):
         return jsonify({
-            "error": f"Directory not found: {directory}"
+            "error": f"Directory not found or not accessible: {directory}"
         }), 400
     
     # Reset progress
@@ -370,30 +381,43 @@ def start_ingest():
         "progress": 0,
         "total": 0,
         "current_file": "",
-        "results": []
+        "message": "Initializing...",
+        "results": [],
+        "processed_files": []
     }
     
-    # Start ingest job in background thread
+    # Start ingest task in background thread
     from threading import Thread
-    from video_ingest_tool.ingest import IngestJob
     
-    # Create ingest job
-    current_ingest_job = IngestJob(
-        directory=directory,
-        recursive=data.get('recursive', True),
-        limit=data.get('limit', 0),
-        store_database=data.get('store_database', False),
-        generate_embeddings=data.get('generate_embeddings', False),
-        force_reprocess=data.get('force_reprocess', False)
-    )
-    
-    # Start job in background
-    Thread(target=current_ingest_job.run, daemon=True).start()
-    
-    return jsonify({
-        "status": "started",
-        "directory": directory
-    })
+    try:
+        # Create thread with execute_ingest_task
+        ingest_thread = Thread(
+            target=execute_ingest_task,
+            args=(directory,),
+            kwargs={
+                'recursive': data.get('recursive', True),
+                'limit': data.get('limit', 0),
+                'store_database': data.get('store_database', False),
+                'generate_embeddings': data.get('generate_embeddings', False),
+                'force_reprocess': data.get('force_reprocess', False),
+                'ai_analysis': data.get('ai_analysis', False),
+                'compression_fps': data.get('compression_fps', DEFAULT_COMPRESSION_CONFIG['fps']),
+                'compression_bitrate': data.get('compression_bitrate', DEFAULT_COMPRESSION_CONFIG['video_bitrate'])
+            },
+            daemon=True
+        )
+        
+        # Start the thread
+        ingest_thread.start()
+        
+        return jsonify({
+            "status": "started",
+            "directory": directory
+        })
+    except Exception as e:
+        logger.error("Error starting ingest thread", exc_info=True, error=str(e))
+        ingest_progress["status"] = "idle"
+        return jsonify({"error": "Failed to start ingest job", "details": str(e)}), 500
 
 @app.route('/api/ingest/progress', methods=['GET'])
 def get_ingest_progress():
@@ -405,12 +429,12 @@ def get_ingest_progress():
 @app.route('/api/ingest/results', methods=['GET'])
 def get_ingest_results():
     """Get results from the most recent ingest job."""
-    global current_ingest_job
+    global ingest_progress
     
-    if current_ingest_job and current_ingest_job.results:
+    if ingest_progress and "results" in ingest_progress and ingest_progress["results"]:
         return jsonify({
-            "results": current_ingest_job.results,
-            "count": len(current_ingest_job.results)
+            "results": ingest_progress["results"],
+            "count": len(ingest_progress["results"])
         })
     else:
         return jsonify({
@@ -703,29 +727,20 @@ def handle_search_request(data):
 @socketio.on('start_ingest')
 def handle_start_ingest(data):
     """Handle ingest start requests through WebSocket."""
+    global ingest_progress
+    request_id = data.get('requestId')
+    
     try:
         logger.info("Received start ingest request via WebSocket")
-        request_id = data.get('requestId')
-        
-        # Extract ingest parameters
         directory = data.get('directory')
         options = data.get('options', {})
         
         if not directory or not os.path.exists(directory):
-            socketio.emit('response', {
-                "requestId": request_id,
-                "error": f"Directory not found: {directory}"
-            })
+            emit_error(request_id, f"Directory not found: {directory}")
             return
         
-        # Check if already running
-        global current_ingest_job, ingest_progress
-        if current_ingest_job and current_ingest_job.status in ["starting", "scanning", "processing"]:
-            socketio.emit('response', {
-                "requestId": request_id,
-                "error": "Ingest job already running",
-                "current_status": current_ingest_job.status
-            })
+        if ingest_progress["status"] in ["starting", "scanning", "processing"]:
+            emit_error(request_id, "Ingest job already running")
             return
         
         # Reset progress
@@ -734,25 +749,33 @@ def handle_start_ingest(data):
             "progress": 0,
             "total": 0,
             "current_file": "",
-            "results": []
+            "message": "Initializing...",
+            "results": [],
+            "processed_files": []
         }
         
-        # Start ingest job in background thread
+        # Start ingest task in background thread
         from threading import Thread
-        from video_ingest_tool.ingest import IngestJob
         
-        # Create ingest job
-        current_ingest_job = IngestJob(
-            directory=directory,
-            recursive=options.get('recursive', True),
-            limit=options.get('limit', 0),
-            store_database=options.get('store_database', False),
-            generate_embeddings=options.get('generate_embeddings', False),
-            force_reprocess=options.get('force_reprocess', False)
+        # Create thread with execute_ingest_task
+        ingest_thread = Thread(
+            target=execute_ingest_task,
+            args=(directory,),
+            kwargs={
+                'recursive': options.get('recursive', True),
+                'limit': options.get('limit', 0),
+                'store_database': options.get('store_database', False),
+                'generate_embeddings': options.get('generate_embeddings', False),
+                'force_reprocess': options.get('force_reprocess', False),
+                'ai_analysis': options.get('ai_analysis', False),
+                'compression_fps': options.get('compression_fps', DEFAULT_COMPRESSION_CONFIG['fps']),
+                'compression_bitrate': options.get('compression_bitrate', DEFAULT_COMPRESSION_CONFIG['video_bitrate'])
+            },
+            daemon=True
         )
         
-        # Start job in background
-        Thread(target=current_ingest_job.run, daemon=True).start()
+        # Start the thread
+        ingest_thread.start()
         
         # Send response
         socketio.emit('response', {
@@ -764,12 +787,9 @@ def handle_start_ingest(data):
         })
         
     except Exception as e:
-        logger.error(f"Error handling WebSocket start ingest request: {str(e)}")
-        if data and data.get('requestId'):
-            socketio.emit('response', {
-                "requestId": data.get('requestId'),
-                "error": f"Request failed: {str(e)}"
-            })
+        logger.error("Error starting ingest thread (WebSocket)", exc_info=True, error=str(e))
+        ingest_progress["status"] = "idle"
+        emit_error(request_id, f"Failed to start ingest job: {str(e)}")
 
 @socketio.on('get_ingest_progress')
 def handle_get_ingest_progress(data):
@@ -897,6 +917,423 @@ def emit_error(request_id: Optional[str], message: str):
         logger.warning(f"Emitting error without request_id: {message}")
         # socketio.emit('error_occurred', {"error": message}) # Example of a general error event
 
+# Helper functions for ingest
+def update_ingest_progress(status, message="", current_file="", progress=0, total=0, processed_count=0, total_count=0, results=None, processed_file=None):
+    """Update the global ingest_progress dictionary with new values."""
+    global ingest_progress
+    
+    # Update values
+    ingest_progress["status"] = status
+    ingest_progress["message"] = message
+    ingest_progress["current_file"] = current_file
+    
+    # Calculate progress percentage if total_count is provided
+    if total_count > 0:
+        ingest_progress["progress"] = int(processed_count / total_count * 100)
+    else:
+        ingest_progress["progress"] = progress
+    
+    ingest_progress["total"] = total_count if total_count > 0 else total
+    
+    # Add results if provided
+    if results:
+        if "results" not in ingest_progress:
+            ingest_progress["results"] = []
+        ingest_progress["results"].extend(results)
+    
+    # Add processed_count and failed_count for better UI display
+    if processed_count > 0:
+        ingest_progress["processed_count"] = processed_count
+    
+    # Add or update processed file in the processed_files list
+    if processed_file:
+        if "processed_files" not in ingest_progress:
+            ingest_progress["processed_files"] = []
+        
+        # Check if file already exists in the list (by path)
+        file_path = processed_file.get('path', '')
+        file_name = processed_file.get('file_name', '')
+        
+        # Look for existing entry to update
+        found = False
+        for i, pf in enumerate(ingest_progress["processed_files"]):
+            if (file_path and pf.get('path') == file_path) or (file_name and pf.get('file_name') == file_name):
+                ingest_progress["processed_files"][i] = processed_file
+                found = True
+                break
+        
+        # If not found, add it
+        if not found:
+            ingest_progress["processed_files"].append(processed_file)
+    
+    logger.info(f"Ingest progress updated: {status}", 
+                progress=ingest_progress["progress"],
+                total=ingest_progress["total"],
+                current_file=current_file,
+                message=message)
+                
+    # Emit WebSocket event for real-time updates to all connected clients
+    try:
+        # Create a simplified progress object for the WebSocket event
+        progress_update = {
+            "status": status,
+            "progress": ingest_progress["progress"],
+            "total": ingest_progress["total"],
+            "current_file": current_file,
+            "message": message
+        }
+        
+        # Add additional information if available
+        if "processed_count" in ingest_progress:
+            progress_update["processed_count"] = ingest_progress["processed_count"]
+        if "failed_count" in ingest_progress:
+            progress_update["failed_count"] = ingest_progress["failed_count"]
+        if "processed_files" in ingest_progress:
+            progress_update["processed_files"] = ingest_progress["processed_files"]
+            
+        # Broadcast progress update to all clients
+        socketio.emit('ingest_progress_update', progress_update)
+    except Exception as e:
+        logger.error(f"Failed to emit WebSocket progress update: {str(e)}")
+
+def execute_ingest_task(directory, recursive=True, limit=0, store_database=False, 
+                        generate_embeddings=False, force_reprocess=False, ai_analysis=False,
+                        compression_fps=DEFAULT_COMPRESSION_CONFIG['fps'],
+                        compression_bitrate=DEFAULT_COMPRESSION_CONFIG['video_bitrate']):
+    """
+    Execute an ingest task on a directory of video files.
+    
+    This function replicates the core functionality of the CLI's ingest command,
+    but adapted for the API server with progress updates.
+    
+    Args:
+        directory: Directory to scan for video files
+        recursive: Whether to scan subdirectories
+        limit: Limit number of files to process (0 = no limit)
+        store_database: Whether to store results in the database
+        generate_embeddings: Whether to generate vector embeddings
+        force_reprocess: Whether to force reprocessing of files
+        ai_analysis: Whether to enable AI analysis steps
+        compression_fps: Frame rate for compressed videos
+        compression_bitrate: Video bitrate for compression
+    """
+    global ingest_progress
+    
+    # Initial progress update
+    update_ingest_progress("starting", message="Initializing ingest...")
+    
+    try:
+        # Setup logging and get paths - similar to cli.py
+        logger_task, timestamp, json_dir, log_file = setup_logging()
+        
+        # Get run directory from json_dir path
+        run_dir = os.path.dirname(json_dir)
+        
+        # Create subdirectories
+        thumbnails_dir = os.path.join(run_dir, "thumbnails")
+        os.makedirs(thumbnails_dir, exist_ok=True)
+        
+        # Create summary filename
+        summary_filename = f"api_ingest_{os.path.basename(directory)}_{timestamp}.json"
+        
+        logger_task.info("Starting API ingest task", 
+                    directory=directory, 
+                    recursive=recursive,
+                    run_dir=run_dir,
+                    limit=limit,
+                    compression_fps=compression_fps,
+                    compression_bitrate=compression_bitrate)
+        
+        # Update progress for scanning stage
+        update_ingest_progress("scanning", message="Scanning directory for video files...")
+        
+        # Scan directory for video files
+        video_files = scan_directory(directory, recursive, logger_task)
+        
+        # Apply limit if specified
+        if limit > 0 and len(video_files) > limit:
+            video_files = video_files[:limit]
+            logger_task.info("Applied file limit", limit=limit)
+        
+        # Update progress after scanning
+        update_ingest_progress(
+            "scanning", 
+            message=f"Found {len(video_files)} video files",
+            total_count=len(video_files)
+        )
+        
+        if not video_files:
+            update_ingest_progress("completed", message="No video files found")
+            logger_task.info("No video files found, task completed")
+            return
+        
+        # Add all files to processed_files list with status "waiting"
+        for file_path in video_files:
+            file_name = os.path.basename(file_path)
+            update_ingest_progress(
+                "scanning",
+                message=f"Preparing to process {len(video_files)} files",
+                total_count=len(video_files),
+                processed_file={
+                    "file_name": file_name,
+                    "path": file_path,
+                    "status": "waiting",
+                    "progress_percentage": 0
+                }
+            )
+        
+        # Set up pipeline configuration
+        pipeline_config = get_default_pipeline_config()
+        
+        # Apply API options to pipeline configuration
+        if store_database:
+            pipeline_config['database_storage'] = True
+            logger_task.info("Enabled database storage")
+        
+        if generate_embeddings:
+            pipeline_config['generate_embeddings'] = True
+            pipeline_config['database_storage'] = True  # Embeddings require database
+            logger_task.info("Enabled vector embeddings generation")
+        
+        # Apply AI analysis options
+        if ai_analysis:
+            # Enable AI-related steps
+            pipeline_config['ai_summary_generation'] = True
+            pipeline_config['ai_tag_generation'] = True
+            # Enable the main AI video analysis step
+            pipeline_config['ai_video_analysis'] = True
+            # Other related steps
+            pipeline_config['transcript_generation'] = True
+            
+            logger_task.info("Enabled AI analysis steps including comprehensive video analysis")
+        
+        # Handle database checks for store_database or generate_embeddings
+        if store_database or generate_embeddings:
+            from video_ingest_tool.supabase_config import verify_connection
+            
+            # Check Supabase connection
+            if not verify_connection():
+                error_msg = "Cannot connect to Supabase database"
+                logger_task.error(error_msg)
+                update_ingest_progress("failed", message=error_msg)
+                return
+            
+            # Check authentication
+            auth_manager = AuthManager()
+            if not auth_manager.get_current_session():
+                error_msg = "Database storage/embeddings require authentication"
+                logger_task.error(error_msg)
+                update_ingest_progress("failed", message=error_msg)
+                return
+        
+        # Save the active configuration to the run directory
+        config_path = os.path.join(run_dir, "pipeline_config.json")
+        with open(config_path, 'w') as f:
+            json.dump(pipeline_config, f, indent=2)
+        
+        # Update progress for processing stage
+        update_ingest_progress(
+            "processing", 
+            message="Starting to process video files...",
+            total_count=len(video_files)
+        )
+        
+        # Process each video file
+        processed_files = []
+        failed_files = []
+        skipped_files = []
+        
+        for i, file_path in enumerate(video_files):
+            # Update progress for current file
+            file_name = os.path.basename(file_path)
+            update_ingest_progress(
+                "processing",
+                message=f"Processing file {i+1} of {len(video_files)}",
+                current_file=file_name,
+                processed_count=i,
+                total_count=len(video_files),
+                processed_file={
+                    "file_name": file_name,
+                    "path": file_path,
+                    "status": "processing",
+                    "current_step": "initializing"  # Add initial step
+                }
+            )
+            
+            logger_task.info(f"Processing video file ({i+1}/{len(video_files)})", path=file_path)
+            
+            try:
+                # Create a callback to update progress with current step
+                def step_progress_callback(step_name):
+                    # Define pipeline steps for progress calculation
+                    # This is a simplified list of steps in typical processing order
+                    pipeline_steps = [
+                        "checksum_generation", "duplicate_check", "mediainfo_extraction", 
+                        "ffprobe_extraction", "exiftool_extraction", "extended_exif_extraction",
+                        "codec_extraction", "hdr_extraction", "audio_extraction", 
+                        "subtitle_extraction", "thumbnail_generation", "exposure_analysis",
+                        "ai_focal_length", "ai_video_analysis", "metadata_consolidation",
+                        "model_creation", "database_storage", "generate_embeddings"
+                    ]
+                    
+                    # Find current step index
+                    try:
+                        current_step_index = pipeline_steps.index(step_name)
+                    except ValueError:
+                        current_step_index = 0
+                    
+                    # Calculate progress percentage (0-100)
+                    total_steps = len(pipeline_steps)
+                    step_progress = int((current_step_index / total_steps) * 100) if total_steps > 0 else 0
+                    
+                    # Log step progress
+                    logger_task.info(f"Step progress: {step_name} ({current_step_index+1}/{total_steps}): {step_progress}%")
+                    
+                    update_ingest_progress(
+                        "processing",
+                        message=f"Processing file {i+1} of {len(video_files)} - {step_name}",
+                        current_file=file_name,
+                        processed_count=i,
+                        total_count=len(video_files),
+                        processed_file={
+                            "file_name": file_name,
+                            "path": file_path,
+                            "status": "processing",
+                            "current_step": step_name,
+                            "progress_percentage": step_progress
+                        }
+                    )
+                
+                # Pass the callback to process_video_file
+                result = process_video_file(
+                    file_path, 
+                    thumbnails_dir, 
+                    logger_task,
+                    config=pipeline_config,
+                    compression_fps=compression_fps,
+                    compression_bitrate=compression_bitrate,
+                    force_reprocess=force_reprocess,
+                    step_callback=step_progress_callback
+                )
+                
+                # Handle skipped files (duplicates)
+                if isinstance(result, dict) and result.get('skipped'):
+                    skipped_files.append({
+                        'file_path': file_path,
+                        'reason': result.get('reason'),
+                        'existing_clip_id': result.get('existing_clip_id'),
+                        'existing_file_name': result.get('existing_file_name'),
+                        'existing_processed_at': result.get('existing_processed_at')
+                    })
+                    logger_task.info("Skipped duplicate file", 
+                               file=file_path, 
+                               existing_id=result.get('existing_clip_id'))
+                    
+                    # Update processed file status to skipped
+                    update_ingest_progress(
+                        "processing",
+                        message=f"Skipped duplicate file {i+1} of {len(video_files)}",
+                        current_file=file_name,
+                        processed_count=i+1,
+                        total_count=len(video_files),
+                        processed_file={
+                            "file_name": file_name,
+                            "path": file_path,
+                            "status": "skipped",
+                            "error": result.get('reason', 'Duplicate file'),
+                            "current_step": "duplicate_check",
+                            "progress_percentage": 100
+                        }
+                    )
+                else:
+                    # Normal processing result
+                    video_file = result
+                    processed_files.append(video_file)
+                    
+                    # Create filename with original name and UUID
+                    base_name = os.path.splitext(os.path.basename(file_path))[0]
+                    json_filename = f"{base_name}_{video_file.id}.json"
+                    
+                    # Save individual JSON to run directory
+                    individual_json_path = os.path.join(json_dir, json_filename)
+                    save_to_json(video_file, individual_json_path, logger_task)
+                    
+                    # Update processed file status to completed
+                    update_ingest_progress(
+                        "processing",
+                        message=f"Completed file {i+1} of {len(video_files)}",
+                        current_file=file_name,
+                        processed_count=i+1,
+                        total_count=len(video_files),
+                        processed_file={
+                            "file_name": file_name,
+                            "path": file_path,
+                            "status": "completed",
+                            "current_step": "finished",
+                            "progress_percentage": 100
+                        }
+                    )
+            except Exception as e:
+                failed_files.append(file_path)
+                logger_task.error("Error processing video file", path=file_path, error=str(e))
+                
+                # Update processed file status to failed
+                update_ingest_progress(
+                    "processing",
+                    message=f"Failed to process file {i+1} of {len(video_files)}",
+                    current_file=file_name,
+                    processed_count=i+1,
+                    total_count=len(video_files),
+                    processed_file={
+                        "file_name": file_name,
+                        "path": file_path,
+                        "status": "failed",
+                        "error": str(e),
+                        "current_step": "error",
+                        "progress_percentage": 100
+                    }
+                )
+        
+        # Save run outputs
+        output_paths = save_run_outputs(
+            processed_files,
+            run_dir,
+            summary_filename,
+            json_dir,
+            log_file,
+            logger_task
+        )
+        
+        # Compile results for the API response
+        api_results = []
+        for video_file in processed_files:
+            # Convert to dict if it's an object
+            if hasattr(video_file, 'to_dict'):
+                api_results.append(video_file.to_dict())
+            elif hasattr(video_file, '__dict__'):
+                api_results.append(video_file.__dict__)
+            else:
+                api_results.append(video_file)
+        
+        # Final progress update
+        update_ingest_progress(
+            "completed",
+            message=f"Completed processing {len(processed_files)} files, skipped {len(skipped_files)}, failed {len(failed_files)}",
+            processed_count=len(video_files),
+            total_count=len(video_files),
+            results=api_results
+        )
+        
+        logger_task.info("API ingest task completed", 
+                    files_processed=len(processed_files),
+                    skipped_files=len(skipped_files),
+                    failed_files=len(failed_files),
+                    run_directory=run_dir)
+        
+    except Exception as e:
+        error_msg = f"Ingest task failed: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        update_ingest_progress("failed", message=error_msg)
 
 if __name__ == "__main__":
     # Print startup message
@@ -912,6 +1349,6 @@ if __name__ == "__main__":
         app,
         host="0.0.0.0",
         port=8000,
-        debug=False,  # Disable debug mode to avoid issues with WebSocket
+        debug=True,  # Enable debug mode as per user request
         use_reloader=False  # Disable reloader to avoid duplicate processes
     )

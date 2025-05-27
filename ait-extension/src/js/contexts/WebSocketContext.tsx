@@ -34,6 +34,7 @@ interface WebSocketContextType {
   socket: Socket | null;
   connected: boolean;
   ingestProgress: IngestProgress | null;
+  setIngestProgress: (progress: IngestProgress) => void;
   reconnect: () => void;
   search: (params: SearchParams) => Promise<SearchResults>;
   startIngest: (params: IngestParams) => Promise<any>;
@@ -46,6 +47,7 @@ const WebSocketContext = createContext<WebSocketContextType>({
   socket: null,
   connected: false,
   ingestProgress: null,
+  setIngestProgress: () => {},
   reconnect: () => {},
   search: () => Promise.reject('WebSocketContext not initialized'),
   startIngest: () => Promise.reject('WebSocketContext not initialized'),
@@ -115,6 +117,12 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     newSocket.on('ingest_progress', (data) => {
       console.log('Received ingest progress update:', data);
+      setIngestProgress(data);
+    });
+    
+    // Add listener for new ingest_progress_update event
+    newSocket.on('ingest_progress_update', (data) => {
+      console.log('Received real-time ingest progress update:', data);
       setIngestProgress(data);
     });
     
@@ -287,6 +295,7 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     socket,
     connected,
     ingestProgress,
+    setIngestProgress,
     reconnect,
     search,
     startIngest,

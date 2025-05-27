@@ -200,14 +200,14 @@ const VideoLibrary: React.FC = () => {
           className="refresh-button"
           title="Refresh"
         >
-          🔄
+          <FiRefreshCw />
         </button>
       </div>
       
       <div className="video-grid">
         {loading && videos.length === 0 ? (
           <div className="loading-state">
-            <FiRefreshCw className="loading-icon" />
+            <div className="spinner"></div>
             <p>Loading videos...</p>
           </div>
         ) : videos.length > 0 ? (
@@ -218,7 +218,7 @@ const VideoLibrary: React.FC = () => {
           <div className="empty-state">
             <FiFilm size={48} />
             <h3>No videos found</h3>
-            <p>{currentSearchTerm ? 'Try a different search query or clear filters.' : 'Process some videos or clear filters.'}</p>
+            <p>{currentSearchTerm ? 'Try a different search query or clear filters.' : 'Ingest some videos or clear filters.'}</p>
           </div>
         )}
       </div>
