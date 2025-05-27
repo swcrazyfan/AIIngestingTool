@@ -62,7 +62,7 @@ def truncate_text(text: str, max_tokens: int = 3500) -> Tuple[str, str]:
                         break
                 rebuilt_text = test_text
         
-        # Fallback to token-based truncation with ellipsis
+    # Fallback to token-based truncation with ellipsis
         return truncated_text + "...", "token_boundary"
         
     except Exception as e:
@@ -95,6 +95,9 @@ def prepare_embedding_content(video_data) -> Tuple[str, str, Dict[str, Any]]:
     # SUMMARY EMBEDDING: Semantic narrative content
     summary_parts = []
     
+    # Initialize siglip_summary at the top level
+    siglip_summary = None
+    
     # Core content description
     if video_data.analysis and video_data.analysis.ai_analysis and video_data.analysis.ai_analysis.summary:
         summary = video_data.analysis.ai_analysis.summary
@@ -108,7 +111,6 @@ def prepare_embedding_content(video_data) -> Tuple[str, str, Dict[str, Any]]:
             summary_parts.append(summary.overall)
         
         # Condensed summary for SigLIP
-        siglip_summary = None
         if hasattr(summary, 'condensed_summary') and summary.condensed_summary:
             siglip_summary = summary.condensed_summary
         
@@ -307,53 +309,116 @@ def store_embeddings(
     summary_embedding: List[float],
     keyword_embedding: List[float],
     summary_content: str,
-    keyword_content: str,
     original_content: str,
     metadata: Dict[str, Any],
+    thumbnail_embeddings: Optional[Dict[int, List[float]]] = None,
+    thumbnail_descriptions: Optional[Dict[int, str]] = None,
+    thumbnail_reasons: Optional[Dict[int, str]] = None,
     logger=None
 ) -> bool:
-    """Store embeddings in Supabase database following pgvector patterns."""
+    """
+    Store embeddings in Supabase database.
+    
+    Args:
+        clip_id: ID of the clip the embeddings are for
+        summary_embedding: Vector embedding of the summary content
+        keyword_embedding: Vector embedding for keyword search
+        summary_content: The content that was embedded (used as primary matching content)
+        original_content: The original unprocessed content
+        metadata: Additional metadata about the embeddings
+        thumbnail_embeddings: Optional dictionary mapping thumbnail ranks to embeddings
+        thumbnail_descriptions: Optional dictionary mapping thumbnail ranks to descriptions
+        thumbnail_reasons: Optional dictionary mapping thumbnail ranks to selection reasons
+        logger: Optional logger
+        
+    Returns:
+        bool: True if embeddings were stored successfully, False otherwise
+    """
     from .auth import AuthManager
     
+    # Check authentication
     auth_manager = AuthManager()
     client = auth_manager.get_authenticated_client()
     
     if not client:
-        raise ValueError("Authentication required for storing embeddings")
+        if logger:
+            logger.error("Authentication required for storing embeddings")
+        return False
     
     try:
-        # Get user ID
-        user_response = client.auth.get_user()
-        user_id = user_response.user.id
+        # Get user_id from auth manager
+        user_id = auth_manager.get_user_id()
+        if not user_id:
+            if logger:
+                logger.error("Cannot store embeddings: No authenticated user")
+            return False
         
-        # First, delete any existing vectors for this clip to avoid duplicates during reprocessing
-        delete_result = client.table('vectors').delete().eq('clip_id', clip_id).execute()
-        if logger and hasattr(delete_result, 'data') and delete_result.data:
-            deleted_count = len(delete_result.data)
-            logger.info(f"Deleted {deleted_count} existing vector(s) for clip: {clip_id}")
+        # First, delete any existing vectors for this clip
+        if logger:
+            logger.info(f"Deleting existing vector records for clip: {clip_id}")
+            
+        client.table('vectors').delete().eq('clip_id', clip_id).execute()
         
+        # Create base vector data
         vector_data = {
             "clip_id": clip_id,
             "user_id": user_id,
-            "embedding_type": "full_clip",
-            "embedding_source": "combined",
-            "summary_vector": summary_embedding,
-            "keyword_vector": keyword_embedding,
-            "embedded_content": f"Summary: {summary_content}\nKeywords: {keyword_content}",
-            "original_content": original_content,
-            "token_count": metadata["summary_tokens"] + metadata["keyword_tokens"],
-            "original_token_count": count_tokens(original_content),
-            "truncation_method": metadata["summary_truncation"]
+            "embedding_type": "full_clip",  # Must be 'full_clip' when segment_id is NULL
+            "embedding_source": "BAAI/bge-m3",
+            "summary_embedding": summary_embedding,
+            "keyword_embedding": keyword_embedding,
+            "embedded_content": summary_content,  # Primary content for matching
+            "original_content": original_content, # Original content before processing
+            "metadata": metadata,
+            # Add thumbnails metadata as JSONB (without the actual embeddings)
+            "thumbnail_embeddings": {}
         }
+        
+        # Add thumbnail embeddings if available
+        if thumbnail_embeddings and thumbnail_descriptions:
+            # Store thumbnail embeddings in dedicated vector columns
+            # and store metadata in the JSONB structure
+            thumbnail_data = {}
+            
+            for rank, embedding in thumbnail_embeddings.items():
+                if embedding is not None:
+                    # Store embedding in the dedicated vector column
+                    if str(rank) == "1":
+                        vector_data["thumbnail_1_embedding"] = embedding
+                    elif str(rank) == "2":
+                        vector_data["thumbnail_2_embedding"] = embedding
+                    elif str(rank) == "3":
+                        vector_data["thumbnail_3_embedding"] = embedding
+                    
+                    # Store metadata in the JSONB field (without the embedding)
+                    thumbnail_info = {
+                        "rank": str(rank)  # Ensure rank is stored as string
+                    }
+                    
+                    # Add description if available
+                    if thumbnail_descriptions and rank in thumbnail_descriptions:
+                        thumbnail_info["description"] = thumbnail_descriptions[rank]
+                    
+                    # Add reason if available
+                    if thumbnail_reasons and rank in thumbnail_reasons:
+                        thumbnail_info["reason"] = thumbnail_reasons[rank]
+                    
+                    # Use rank as the key in the JSONB
+                    thumbnail_data[str(rank)] = thumbnail_info
+            
+            vector_data["thumbnail_embeddings"] = thumbnail_data
         
         result = client.table('vectors').insert(vector_data).execute()
         
         if logger:
             logger.info(f"Stored embeddings for clip: {clip_id}")
+            if thumbnail_embeddings:
+                thumbnail_count = sum(1 for rank in thumbnail_embeddings if thumbnail_embeddings[rank] is not None)
+                logger.info(f"Stored {thumbnail_count} thumbnail embeddings")
         
         return True
         
     except Exception as e:
         if logger:
             logger.error(f"Failed to store embeddings: {str(e)}")
-        raise
+        return False

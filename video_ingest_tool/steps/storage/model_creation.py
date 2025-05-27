@@ -443,5 +443,5 @@ def create_model_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     )
     
     return {
-        'output': output
+        'model': output
     } 

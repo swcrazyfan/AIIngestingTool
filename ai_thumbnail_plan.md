@@ -1,18 +1,18 @@
 # AI Thumbnail Selection and Embedding Implementation Plan
 
 ## Current Status
-**Progress:** 0/12 components implemented (0% complete)  
+**Progress:** 8/12 components implemented (66.7% complete)  
 **Testing Status:** No components tested yet
 
 ## High-level Plan
-1. ⬜ Update analysis schema to include best thumbnail recommendations
-2. ⬜ Update analysis prompt to request concise frame descriptions
-3. ⬜ Create new thumbnail selection module
-4. ⬜ Implement image processing for embedding preparation
-5. ⬜ Update database schema via Supabase migrations
-6. ⬜ Create embedding generation for thumbnails
-7. ⬜ Update storage step to save selected thumbnails
-8. ⬜ Integrate with vector database
+1. ✅ Update analysis schema to include best thumbnail recommendations
+2. ✅ Update analysis prompt to request concise frame descriptions
+3. ✅ Create new thumbnail selection module
+4. ✅ Implement image processing for embedding preparation
+5. ✅ Update database schema via Supabase migrations
+6. ✅ Create embedding generation for thumbnails
+7. ✅ Update storage step to save selected thumbnails
+8. ✅ Integrate with vector database
 9. ⬜ Update UI to display AI-selected thumbnails
 10. ⬜ Update search to include thumbnail embeddings
 
@@ -25,7 +25,7 @@
 
 ### Phase 1: Schema and Model Updates
 
-- ⬜ Update AI analysis schema in `video_processor/analysis.py`
+- ✅ Update AI analysis schema in `video_processor/analysis.py`
   - Add `recommended_thumbnails` array with exactly 3 items (ranked by quality)
   - Each thumbnail should include:
     - `timestamp`: When this frame appears
@@ -33,7 +33,7 @@
     - `reason`: Why this frame was selected
     - `rank`: Explicit ranking (1=best, 2=second, 3=third)
 
-- ⬜ Update AI prompt in `video_processor/analysis.py`
+- ✅ Update AI prompt in `video_processor/analysis.py`
   - Request the model to select exactly 3 representative frames
   - Provide clear instructions for concise descriptions using the token structure:
     - Primary Subject (1-2 tokens)
@@ -44,7 +44,7 @@
 
 ### Phase 2: Thumbnail Processing
 
-- ⬜ Create `steps/analysis/ai_thumbnail_selection.py`
+- ✅ Create `steps/analysis/ai_thumbnail_selection.py`
   - Implement function to extract timestamps from AI analysis
   - Add capability to extract the specific frames at those timestamps
   - Process each extracted frame to standard dimensions (256x256)
@@ -53,41 +53,7 @@
   - Save thumbnails in the same directory as regular thumbnails
   - Return paths and metadata for storage step
 
-### Phase 3: Database Updates
-
-- ⬜ Create Supabase migration for database schema updates
-  - Create migration script for `clips` table:
-    ```sql
-    -- Add to clips table
-    ALTER TABLE clips ADD COLUMN ai_thumbnail_1_path TEXT;
-    ALTER TABLE clips ADD COLUMN ai_thumbnail_2_path TEXT;
-    ALTER TABLE clips ADD COLUMN ai_thumbnail_3_path TEXT;
-    ALTER TABLE clips ADD COLUMN ai_thumbnail_1_timestamp TEXT;
-    ALTER TABLE clips ADD COLUMN ai_thumbnail_2_timestamp TEXT;
-    ALTER TABLE clips ADD COLUMN ai_thumbnail_3_timestamp TEXT;
-    ```
-
-  - Create migration script for `vectors` table:
-    ```sql
-    -- Add to vectors table
-    ALTER TABLE vectors ADD COLUMN thumbnail_1_embedding vector(768);
-    ALTER TABLE vectors ADD COLUMN thumbnail_2_embedding vector(768);
-    ALTER TABLE vectors ADD COLUMN thumbnail_3_embedding vector(768);
-    ALTER TABLE vectors ADD COLUMN thumbnail_1_description TEXT;
-    ALTER TABLE vectors ADD COLUMN thumbnail_2_description TEXT;
-    ALTER TABLE vectors ADD COLUMN thumbnail_3_description TEXT;
-    ALTER TABLE vectors ADD COLUMN thumbnail_1_reason TEXT;
-    ALTER TABLE vectors ADD COLUMN thumbnail_2_reason TEXT;
-    ALTER TABLE vectors ADD COLUMN thumbnail_3_reason TEXT;
-    ```
-
-- ⬜ Apply migrations using Supabase MCP
-  - Use `mcp_supabase_apply_migration` to run the migration scripts
-  - Verify schema changes in Supabase dashboard
-
-### Phase 4: Embedding Generation
-
-- ⬜ Create `video_ingest_tool/embeddings_image.py`
+- ✅ Create `video_ingest_tool/embeddings_image.py`
   - Implement function to convert image to base64
   - Implement function to resize/compress images to 256x256
   - Implement function to create combined image+text payload
@@ -98,25 +64,55 @@
     - MODEL: siglip-base-patch16-256-multilingual-onnx
     - LITELLM_KEY: From environment variable
 
-- ⬜ Update `steps/storage/embeddings.py`
+### Phase 3: Database Updates
+
+- ✅ Create Supabase migration for database schema updates
+  - Create migration script for `clips` table:
+    ```sql
+    -- Add to clips table
+    ALTER TABLE clips ADD COLUMN IF NOT EXISTS ai_thumbnail_1_path TEXT;
+    ALTER TABLE clips ADD COLUMN IF NOT EXISTS ai_thumbnail_2_path TEXT;
+    ALTER TABLE clips ADD COLUMN IF NOT EXISTS ai_thumbnail_3_path TEXT;
+    ALTER TABLE clips ADD COLUMN IF NOT EXISTS ai_thumbnail_1_timestamp TEXT;
+    ALTER TABLE clips ADD COLUMN IF NOT EXISTS ai_thumbnail_2_timestamp TEXT;
+    ALTER TABLE clips ADD COLUMN IF NOT EXISTS ai_thumbnail_3_timestamp TEXT;
+    ```
+
+  - Create migration script for `vectors` table:
+    ```sql
+    -- Add to vectors table
+    ALTER TABLE vectors ADD COLUMN IF NOT EXISTS thumbnail_1_embedding vector(768);
+    ALTER TABLE vectors ADD COLUMN IF NOT EXISTS thumbnail_2_embedding vector(768);
+    ALTER TABLE vectors ADD COLUMN IF NOT EXISTS thumbnail_3_embedding vector(768);
+    ALTER TABLE vectors ADD COLUMN IF NOT EXISTS thumbnail_1_description TEXT;
+    ALTER TABLE vectors ADD COLUMN IF NOT EXISTS thumbnail_2_description TEXT;
+    ALTER TABLE vectors ADD COLUMN IF NOT EXISTS thumbnail_3_description TEXT;
+    ALTER TABLE vectors ADD COLUMN IF NOT EXISTS thumbnail_1_reason TEXT;
+    ALTER TABLE vectors ADD COLUMN IF NOT EXISTS thumbnail_2_reason TEXT;
+    ALTER TABLE vectors ADD COLUMN IF NOT EXISTS thumbnail_3_reason TEXT;
+    ```
+
+- ✅ Apply migrations using Supabase MCP
+  - Use `mcp_supabase_apply_migration` to run the migration scripts
+  - Verify schema changes in Supabase dashboard
+
+### Phase 4: Embedding Generation
+
+- ✅ Update `steps/storage/embeddings.py`
   - Add capability to process thumbnails for embedding
   - Generate text+image combined embeddings
   - Store in vectors table alongside existing text embeddings
 
 ### Phase 5: Integration
 
-- ⬜ Update `steps/storage/thumbnail_upload.py`
+- ✅ Update `steps/storage/thumbnail_upload.py`
   - Extend upload functionality to handle AI-selected thumbnails
   - Upload AI thumbnails to the same Supabase storage path
   - Store their URLs in the database with appropriate prefixes
 
-- ⬜ Update `steps/storage/database_storage.py`
+- ✅ Update `steps/storage/database_storage.py`
   - Add code to store AI-selected thumbnail paths and timestamps
   - Link to clip record
-
-- ⬜ Update pipeline in main processor
-  - Ensure AI thumbnail selection runs after video analysis but before storage
-  - Pass thumbnail data to embedding generation step
 
 ### Phase 6: UI and Search Updates
 

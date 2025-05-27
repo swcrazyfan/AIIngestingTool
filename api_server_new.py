@@ -1335,6 +1335,185 @@ def execute_ingest_task(directory, recursive=True, limit=0, store_database=False
         logger.error(error_msg, exc_info=True)
         update_ingest_progress("failed", message=error_msg)
 
+@app.route('/api/thumbnail/<clip_id>', methods=['GET'])
+def get_thumbnail(clip_id):
+    """Proxy endpoint to serve thumbnail images with proper authentication.
+    
+    This endpoint fetches the thumbnail image from Supabase storage and serves it
+    to the client with appropriate headers. It handles authentication and CORS issues
+    that might occur when the extension tries to access storage directly.
+    
+    Args:
+        clip_id: ID of the clip to get the thumbnail for
+        
+    Returns:
+        Image file response or error message
+    """
+    if not BACKEND_AVAILABLE:
+        return jsonify({"error": "Backend not available"}), 503
+    
+    try:
+        # Check authentication
+        if not check_and_refresh_auth(log_to_console=False):
+            return jsonify({"error": "Authentication required"}), 401
+        
+        # Get authenticated client
+        auth_manager = AuthManager()
+        client = auth_manager.get_authenticated_client()
+        
+        # Get clip details
+        clip_result = client.table('clips').select('id, thumbnail_url, updated_at').eq('id', clip_id).execute()
+        
+        if not clip_result.data or not clip_result.data[0]:
+            return jsonify({"error": "Clip not found"}), 404
+        
+        clip = clip_result.data[0]
+        thumbnail_url = clip.get('thumbnail_url')
+        
+        if not thumbnail_url:
+            return jsonify({"error": "Thumbnail not found for clip"}), 404
+        
+        # Include cache header based on updated_at timestamp if available
+        last_updated = clip.get('updated_at')
+        
+        # Remove any trailing question mark from the URL
+        thumbnail_url = thumbnail_url.rstrip('?')
+        
+        # Parse URL to determine storage path
+        # URL format: https://{project}.supabase.co/storage/v1/object/public/{bucket}/{path}
+        try:
+            # Extract bucket and path from the URL
+            parts = thumbnail_url.split('/storage/v1/object/public/')
+            if len(parts) != 2:
+                return jsonify({"error": "Invalid thumbnail URL format"}), 500
+            
+            bucket_and_path = parts[1]
+            # The first segment is the bucket name
+            bucket, *path_parts = bucket_and_path.split('/', 1)
+            path = path_parts[0] if path_parts else ""
+            
+            # Use storage admin API to download the file
+            response = client.storage.from_(bucket).download(path)
+            
+            # Determine content type based on file extension
+            import mimetypes
+            content_type = mimetypes.guess_type(path)[0] or 'image/jpeg'
+            
+            # Create response with image data
+            image_response = Response(response, mimetype=content_type)
+            
+            # Add cache control headers
+            if last_updated:
+                # Format timestamp for HTTP header
+                import datetime
+                if isinstance(last_updated, str):
+                    try:
+                        # Parse ISO format string to datetime
+                        last_updated_dt = datetime.datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
+                    except ValueError:
+                        # Fallback if parsing fails
+                        last_updated_dt = datetime.datetime.now(datetime.timezone.utc)
+                elif isinstance(last_updated, datetime.datetime):
+                    last_updated_dt = last_updated
+                else:
+                    last_updated_dt = datetime.datetime.now(datetime.timezone.utc)
+                
+                # Format for HTTP header
+                last_modified_str = last_updated_dt.strftime('%a, %d %b %Y %H:%M:%S GMT')
+                image_response.headers['Last-Modified'] = last_modified_str
+                
+                # Set cache control to use validation but allow caching
+                image_response.headers['Cache-Control'] = 'private, max-age=86400'  # 24 hours
+                image_response.headers['ETag'] = f'"{clip_id}-{int(last_updated_dt.timestamp())}"'
+            
+            return image_response
+            
+        except Exception as e:
+            logger.error(f"Error fetching thumbnail from storage: {str(e)}")
+            return jsonify({"error": f"Error fetching thumbnail: {str(e)}"}), 500
+        
+    except ValueError as ve:
+        error_msg = str(ve)
+        logger.error(f"Get thumbnail ValueError for {clip_id}: {error_msg}")
+        if "Authentication required" in error_msg or "Invalid Refresh Token" in error_msg:
+            return jsonify({"error": error_msg}), 401
+        return jsonify({"error": str(ve)}), 400
+    except Exception as e:
+        logger.error(f"Failed to get thumbnail: {str(e)}")
+        return jsonify({"error": f"Failed to get thumbnail: {str(e)}"}), 500
+
+@app.route('/api/transcript/<clip_id>', methods=['GET'])
+def get_transcript(clip_id):
+    """Get transcript for a specific clip."""
+    if not BACKEND_AVAILABLE:
+        return jsonify({"error": "Backend not available"}), 500
+    
+    try:
+        # Check authentication
+        if not check_and_refresh_auth():
+            return jsonify({"error": "Authentication required"}), 401
+        
+        # Get authenticated client
+        auth_manager = AuthManager()
+        client = auth_manager.get_authenticated_client()
+        
+        # Get transcript if available
+        transcript_result = client.table('transcripts').select('*').eq('clip_id', clip_id).execute()
+        transcript = transcript_result.data[0] if transcript_result.data else None
+        
+        if not transcript:
+            return jsonify({"message": "No transcript found for this clip"}), 404
+        
+        return jsonify({
+            "transcript": transcript
+        })
+        
+    except ValueError as e:
+        error_msg = str(e)
+        logger.error(f"Get transcript ValueError for {clip_id}: {error_msg}")
+        if "Authentication required" in error_msg or "Invalid Refresh Token" in error_msg or "Failed to create authenticated client" in error_msg:
+            return jsonify({"error": error_msg}), 401
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Failed to get transcript: {str(e)}")
+        return jsonify({"error": f"Failed to get transcript: {str(e)}"}), 500
+
+@app.route('/api/analysis/<clip_id>', methods=['GET'])
+def get_analysis(clip_id):
+    """Get analysis for a specific clip."""
+    if not BACKEND_AVAILABLE:
+        return jsonify({"error": "Backend not available"}), 500
+    
+    try:
+        # Check authentication
+        if not check_and_refresh_auth():
+            return jsonify({"error": "Authentication required"}), 401
+        
+        # Get authenticated client
+        auth_manager = AuthManager()
+        client = auth_manager.get_authenticated_client()
+        
+        # Get analysis if available
+        analysis_result = client.table('analyses').select('*').eq('clip_id', clip_id).execute()
+        analysis = analysis_result.data[0] if analysis_result.data else None
+        
+        if not analysis:
+            return jsonify({"message": "No analysis found for this clip"}), 404
+        
+        return jsonify({
+            "analysis": analysis
+        })
+        
+    except ValueError as e:
+        error_msg = str(e)
+        logger.error(f"Get analysis ValueError for {clip_id}: {error_msg}")
+        if "Authentication required" in error_msg or "Invalid Refresh Token" in error_msg or "Failed to create authenticated client" in error_msg:
+            return jsonify({"error": error_msg}), 401
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Failed to get analysis: {str(e)}")
+        return jsonify({"error": f"Failed to get analysis: {str(e)}"}), 500
+
 if __name__ == "__main__":
     # Print startup message
     print("\n" + "=" * 80)

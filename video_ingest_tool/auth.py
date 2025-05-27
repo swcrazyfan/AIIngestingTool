@@ -226,6 +226,19 @@ class AuthManager:
             logger.error(f"Error checking admin status: {str(e)}")
             return False
 
+    def get_user_id(self) -> Optional[str]:
+        """Get the current user's ID from the session.
+        
+        Returns:
+            Optional[str]: The user ID if logged in, None otherwise
+        """
+        session = self.get_current_session()
+        if not session:
+            logger.warning("No active session found, cannot get user ID")
+            return None
+            
+        return session.get('user_id')
+
     def _save_session(self, session) -> None:
         """Save session to local file.
         

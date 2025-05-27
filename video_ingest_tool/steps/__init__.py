@@ -11,7 +11,7 @@ from .extraction import (
 )
 from .analysis import (
     generate_thumbnails_step, analyze_exposure_step, detect_focal_length_step,
-    ai_video_analysis_step
+    ai_video_analysis_step, ai_thumbnail_selection_step
 )
 from .processing import (
     generate_checksum_step, check_duplicate_step, consolidate_metadata_step
@@ -37,6 +37,7 @@ __all__ = [
     'analyze_exposure_step',
     'detect_focal_length_step',
     'ai_video_analysis_step',
+    'ai_thumbnail_selection_step',
     
     # Processing steps
     'generate_checksum_step',
@@ -70,6 +71,8 @@ def reorder_pipeline_steps():
         "thumbnail_generation": 2, # Depends on checksum
         "exposure_analysis": 3,    # Depends on thumbnails
         "duplicate_check": 4,      # Should run after checksum but before more intensive steps
+        "ai_video_analysis": 12,   # Should run after basic extraction steps
+        "ai_thumbnail_selection": 13, # Should run after AI video analysis
         "metadata_consolidation": 15, # Should run after all extraction steps
         "model_creation": 16,      # Should run last but before database storage
         "database_storage": 17,    # Should run after model creation

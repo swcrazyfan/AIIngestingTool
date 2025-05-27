@@ -10,7 +10,7 @@ from ...pipeline.registry import register_step
 
 @register_step(
     name="database_storage", 
-    enabled=False,  # Disabled by default
+    enabled=True,  # Enabled by default
     description="Store video metadata and analysis in Supabase database"
 )
 def database_storage_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
@@ -18,7 +18,7 @@ def database_storage_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     Store video data in Supabase database.
     
     Args:
-        data: Pipeline data containing the output model
+        data: Pipeline data containing the output model and AI thumbnail metadata
         logger: Optional logger
         
     Returns:
@@ -37,7 +37,7 @@ def database_storage_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
             'reason': 'not_authenticated'
         }
     
-    output = data.get('output')
+    output = data.get('model')
     if not output:
         if logger:
             logger.error("No output model found for database storage")
@@ -46,10 +46,16 @@ def database_storage_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
             'reason': 'no_output_model'
         }
     
+    # Get AI thumbnail metadata for storage
+    ai_thumbnail_metadata = data.get('ai_thumbnail_metadata', [])
+    
     try:
-        result = store_video_in_database(output, logger)
+        # Pass AI thumbnail metadata to the storage function
+        result = store_video_in_database(output, logger, ai_thumbnail_metadata)
         if logger:
             logger.info(f"Successfully stored video in database: {result.get('clip_id')}")
+            if ai_thumbnail_metadata:
+                logger.info(f"Included {len(ai_thumbnail_metadata)} AI thumbnails in database record")
         return result
         
     except Exception as e:
