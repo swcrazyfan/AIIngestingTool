@@ -13,8 +13,8 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
-# Import the Config class directly
-from video_ingest_tool.config import Config
+# Import from the config module
+from video_ingest_tool.config import Config, DEFAULT_COMPRESSION_CONFIG
 
 # Load environment variables from .env file
 # Look for .env file in the project root directory
@@ -22,17 +22,7 @@ project_root = Path(__file__).parent.parent
 env_path = project_root / '.env'
 load_dotenv(dotenv_path=env_path)
 
-# Default compression configuration - single source of truth
-DEFAULT_COMPRESSION_CONFIG = {
-    'max_dimension': 1280,  # Scale longest dimension to this size
-    'fps': 5,
-    'video_bitrate': '1000k',
-    'audio_bitrate': '32k',
-    'audio_channels': 1,
-    'use_hardware_accel': True,
-    'codec_priority': ['hevc_videotoolbox', 'h264_videotoolbox', 'libx265', 'libx264'],
-    'crf_value': '25',
-}
+# Default compression configuration is now imported from config.constants
 
 class VideoCompressor:
     """Handles video compression using ffmpeg with hardware acceleration when available."""

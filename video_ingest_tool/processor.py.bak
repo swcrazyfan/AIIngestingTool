@@ -20,14 +20,43 @@ from .models import (
     Entities, PersonDetail, Location, ObjectOfInterest, Activity, ContentWarning
 )
 from .utils import calculate_checksum, calculate_aspect_ratio_str
-from .extractors import extract_mediainfo, extract_ffprobe_info
-from .extractors_extended import extract_exiftool_info, extract_extended_exif_metadata, extract_audio_tracks
-from .extractors_hdr import extract_subtitle_tracks, extract_codec_parameters, extract_hdr_metadata
-from .processors import generate_thumbnails, analyze_exposure, detect_focal_length_with_ai
-from .config import FOCAL_LENGTH_RANGES, HAS_TRANSFORMERS, Config
-from .pipeline import ProcessingPipeline, ProcessingStep
+# Update imports to use the new modular structure
+from .extractors import (
+    extract_mediainfo, extract_ffprobe_info, extract_exiftool_info, 
+    extract_extended_exif_metadata, extract_audio_tracks, extract_subtitle_tracks,
+    extract_codec_parameters, extract_hdr_metadata
+)
+# Remove these imports as they're now handled by the extractors module
+# from .extractors import extract_mediainfo, extract_ffprobe_info
+# from .extractors_extended import extract_exiftool_info, extract_extended_exif_metadata, extract_audio_tracks
+# from .extractors_hdr import extract_subtitle_tracks, extract_codec_parameters, extract_hdr_metadata
 
-# Try to import VideoProcessor - it may not be available if dependencies are missing
+# Import all steps from the new location
+from .steps import (
+    # Extraction steps
+    extract_mediainfo_step, extract_ffprobe_step, extract_exiftool_step,
+    extract_extended_exif_step, extract_codec_step, extract_hdr_step,
+    extract_audio_step, extract_subtitle_step,
+    
+    # Analysis steps
+    generate_thumbnails_step, analyze_exposure_step, detect_focal_length_step,
+    
+    # Processing steps
+    generate_checksum_step, check_duplicate_step, consolidate_metadata_step,
+    
+    # Storage steps
+    create_model_step, database_storage_step, generate_embeddings_step
+)
+# Import the AI video analysis step separately
+from .steps.analysis import ai_video_analysis_step
+
+# These imports are now handled through steps module
+# from .processors import generate_thumbnails, analyze_exposure, detect_focal_length_with_ai
+from .config import FOCAL_LENGTH_RANGES, HAS_TRANSFORMERS, Config, DEFAULT_COMPRESSION_CONFIG
+from .pipeline import ProcessingPipeline
+from .pipeline.registry import register_step, get_default_pipeline
+
+# Try to import VideoProcessor from the new location
 try:
     from .video_processor import VideoProcessor
     HAS_VIDEO_PROCESSOR = True
@@ -35,20 +64,33 @@ except ImportError as e:
     HAS_VIDEO_PROCESSOR = False
     VIDEO_PROCESSOR_ERROR = str(e)
 
-# Import the centralized config
-try:
-    from .video_processor import DEFAULT_COMPRESSION_CONFIG
-except ImportError:
-    # Fallback if circular import issues
-    DEFAULT_COMPRESSION_CONFIG = {'fps': 5, 'video_bitrate': '1000k'}
-
 # Create a global pipeline instance
-pipeline = ProcessingPipeline()
-@pipeline.register_step(
-    name="checksum_generation", 
-    enabled=True,
-    description="Calculate file checksum for deduplication"
-)
+pipeline = get_default_pipeline()
+
+# ============================================================================
+# NOTICE: All step functions below have been refactored to dedicated modules
+# ============================================================================
+# These step registrations are kept for reference only. The actual implementations
+# have been moved to the following directories:
+#
+# - Extraction steps: video_ingest_tool/steps/extraction/
+# - Analysis steps: video_ingest_tool/steps/analysis/
+# - Processing steps: video_ingest_tool/steps/processing/
+# - Storage steps: video_ingest_tool/steps/storage/
+#
+# The imports at the top of this file now import all step functions from
+# their new locations. This makes the step implementations below redundant.
+# 
+# IMPORTANT: The @register_step decorators have been commented out to prevent 
+# duplicate registration of steps, since the refactored implementations are already
+# registered via the imports.
+# ============================================================================
+
+# @register_step(
+#     name="checksum_generation", 
+#     enabled=True,
+#     description="Calculate file checksum for deduplication"
+# )
 def generate_checksum(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Generate checksum for a video file.
@@ -77,11 +119,11 @@ def generate_checksum(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
         'file_name': file_name
     }
 
-@pipeline.register_step(
-    name="duplicate_check", 
-    enabled=True,
-    description="Check database for existing files with same checksum"
-)
+# @register_step(
+#     name="duplicate_check", 
+#     enabled=True,
+#     description="Check database for existing files with same checksum"
+# )
 def check_duplicate_step(data: Dict[str, Any], logger=None, force_reprocess: bool = False) -> Dict[str, Any]:
     """
     Check if a file with the same checksum already exists in the database.
@@ -172,11 +214,11 @@ def check_duplicate_step(data: Dict[str, Any], logger=None, force_reprocess: boo
             'error': str(e)
         }
 
-@pipeline.register_step(
-    name="mediainfo_extraction", 
-    enabled=True,
-    description="Extract metadata using MediaInfo"
-)
+# @register_step(
+#     name="mediainfo_extraction", 
+#     enabled=True,
+#     description="Extract metadata using MediaInfo"
+# )
 def extract_mediainfo_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Extract metadata using MediaInfo.
@@ -198,11 +240,11 @@ def extract_mediainfo_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
         'mediainfo_data': mediainfo_data
     }
 
-@pipeline.register_step(
-    name="ffprobe_extraction", 
-    enabled=True,
-    description="Extract metadata using FFprobe/PyAV"
-)
+# @register_step(
+#     name="ffprobe_extraction", 
+#     enabled=True,
+#     description="Extract metadata using FFprobe/PyAV"
+# )
 def extract_ffprobe_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Extract metadata using FFprobe/PyAV.
@@ -224,11 +266,11 @@ def extract_ffprobe_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
         'ffprobe_data': ffprobe_data
     }
 
-@pipeline.register_step(
-    name="exiftool_extraction", 
-    enabled=True,
-    description="Extract EXIF metadata"
-)
+# @register_step(
+#     name="exiftool_extraction", 
+#     enabled=True,
+#     description="Extract EXIF metadata"
+# )
 def extract_exiftool_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Extract metadata using ExifTool.
@@ -250,11 +292,11 @@ def extract_exiftool_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
         'exiftool_data': exiftool_data
     }
 
-@pipeline.register_step(
-    name="extended_exif_extraction", 
-    enabled=True,
-    description="Extract extended EXIF metadata"
-)
+# @register_step(
+#     name="extended_exif_extraction", 
+#     enabled=True,
+#     description="Extract extended EXIF metadata"
+# )
 def extract_extended_exif_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Extract extended EXIF metadata.
@@ -276,11 +318,11 @@ def extract_extended_exif_step(data: Dict[str, Any], logger=None) -> Dict[str, A
         'extended_exif_data': extended_exif_data
     }
 
-@pipeline.register_step(
-    name="codec_extraction", 
-    enabled=True,
-    description="Extract detailed codec parameters"
-)
+# @register_step(
+#     name="codec_extraction", 
+#     enabled=True,
+#     description="Extract detailed codec parameters"
+# )
 def extract_codec_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Extract codec parameters.
@@ -302,11 +344,11 @@ def extract_codec_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
         'codec_params': codec_params
     }
 
-@pipeline.register_step(
-    name="hdr_extraction", 
-    enabled=True,
-    description="Extract HDR metadata"
-)
+# @register_step(
+#     name="hdr_extraction", 
+#     enabled=True,
+#     description="Extract HDR metadata"
+# )
 def extract_hdr_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Extract HDR metadata.
@@ -328,11 +370,11 @@ def extract_hdr_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
         'hdr_data': hdr_data
     }
 
-@pipeline.register_step(
-    name="audio_extraction", 
-    enabled=True,
-    description="Extract audio track information"
-)
+# @register_step(
+#     name="audio_extraction", 
+#     enabled=True,
+#     description="Extract audio track information"
+# )
 def extract_audio_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Extract audio track information.
@@ -354,11 +396,11 @@ def extract_audio_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
         'audio_tracks': audio_tracks
     }
 
-@pipeline.register_step(
-    name="subtitle_extraction", 
-    enabled=True,
-    description="Extract subtitle track information"
-)
+# @register_step(
+#     name="subtitle_extraction", 
+#     enabled=True,
+#     description="Extract subtitle track information"
+# )
 def extract_subtitle_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Extract subtitle track information.
@@ -380,11 +422,11 @@ def extract_subtitle_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
         'subtitle_tracks': subtitle_tracks
     }
 
-@pipeline.register_step(
-    name="thumbnail_generation", 
-    enabled=True,
-    description="Generate thumbnails from video"
-)
+# @register_step(
+#     name="thumbnail_generation", 
+#     enabled=True,
+#     description="Generate thumbnails from video"
+# )
 def generate_thumbnails_step(data: Dict[str, Any], thumbnails_dir=None, logger=None) -> Dict[str, Any]:
     """
     Generate thumbnails for a video file.
@@ -416,11 +458,11 @@ def generate_thumbnails_step(data: Dict[str, Any], thumbnails_dir=None, logger=N
         'thumbnail_paths': thumbnail_paths
     }
 
-@pipeline.register_step(
-    name="exposure_analysis", 
-    enabled=True,
-    description="Analyze exposure in thumbnails"
-)
+# @register_step(
+#     name="exposure_analysis", 
+#     enabled=True,
+#     description="Analyze exposure in thumbnails"
+# )
 def analyze_exposure_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Analyze exposure in thumbnails.
@@ -447,11 +489,11 @@ def analyze_exposure_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
         'exposure_data': exposure_data
     }
 
-@pipeline.register_step(
-    name="ai_focal_length", 
-    enabled=True,
-    description="Detect focal length using AI when EXIF data is not available"
-)
+# @register_step(
+#     name="ai_focal_length", 
+#     enabled=True,
+#     description="Detect focal length using AI when EXIF data is not available"
+# )
 def detect_focal_length_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Detect focal length using AI when EXIF data is not available.
@@ -518,11 +560,11 @@ def detect_focal_length_step(data: Dict[str, Any], logger=None) -> Dict[str, Any
         'focal_length_source': None
     }
 
-@pipeline.register_step(
-    name="ai_video_analysis", 
-    enabled=False,  # Disabled by default due to API costs
-    description="Comprehensive video analysis using Gemini Flash 2.5 AI"
-)
+# @register_step(
+#     name="ai_video_analysis", 
+#     enabled=False,  # Disabled by default due to API costs
+#     description="Comprehensive video analysis using Gemini Flash 2.5 AI"
+# )
 def ai_video_analysis_step(data: Dict[str, Any], thumbnails_dir=None, logger=None, compression_fps: int = DEFAULT_COMPRESSION_CONFIG['fps'], compression_bitrate: str = DEFAULT_COMPRESSION_CONFIG['video_bitrate']) -> Dict[str, Any]:
     """
     Perform comprehensive AI video analysis using Gemini Flash 2.5.
@@ -740,11 +782,11 @@ def _create_ai_summary(analysis_json: Dict[str, Any]) -> Dict[str, Any]:
             'error': f"Failed to create summary: {str(e)}"
         }
 
-@pipeline.register_step(
-    name="metadata_consolidation", 
-    enabled=True,
-    description="Consolidate metadata from all sources"
-)
+# @register_step(
+#     name="metadata_consolidation", 
+#     enabled=True,
+#     description="Consolidate metadata from all sources"
+# )
 def consolidate_metadata_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Consolidate metadata from all sources.
@@ -830,12 +872,11 @@ def consolidate_metadata_step(data: Dict[str, Any], logger=None) -> Dict[str, An
         'master_metadata': master_metadata
     }
 
-
-@pipeline.register_step(
-    name="model_creation", 
-    enabled=True,
-    description="Create Pydantic model from processed data"
-)
+# @register_step(
+#     name="model_creation", 
+#     enabled=True,
+#     description="Create Pydantic model from processed data"
+# )
 def create_model_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Create Pydantic model from processed data.
@@ -1254,11 +1295,11 @@ def create_model_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
         'output': output
     }
 
-@pipeline.register_step(
-    name="database_storage", 
-    enabled=False,  # Disabled by default
-    description="Store video metadata and analysis in Supabase database"
-)
+# @register_step(
+#     name="database_storage", 
+#     enabled=False,  # Disabled by default
+#     description="Store video metadata and analysis in Supabase database"
+# )
 def database_storage_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Store video data in Supabase database.
@@ -1306,11 +1347,11 @@ def database_storage_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
             'error': str(e)
         }
 
-@pipeline.register_step(
-    name="generate_embeddings", 
-    enabled=False,  # Disabled by default
-    description="Generate vector embeddings for semantic search"
-)
+# @register_step(
+#     name="generate_embeddings", 
+#     enabled=False,  # Disabled by default
+#     description="Generate vector embeddings for semantic search"
+# )
 def generate_embeddings_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Generate and store vector embeddings for semantic search.
@@ -1403,6 +1444,9 @@ def process_video_file(file_path: str, thumbnails_dir: str, logger=None, config:
     """
     Process a video file using the pipeline.
     
+    This function executes the pipeline with all registered steps from the steps directory.
+    All individual step implementations have been refactored into dedicated modules.
+    
     Args:
         file_path: Path to the video file
         thumbnails_dir: Directory to save thumbnails
@@ -1429,7 +1473,7 @@ def process_video_file(file_path: str, thumbnails_dir: str, logger=None, config:
         'processed_at': datetime.datetime.now()
     }
     
-    # Execute pipeline
+    # Execute pipeline - this will use all registered steps from the steps directory
     result = pipeline.execute_pipeline(
         initial_data, 
         thumbnails_dir=thumbnails_dir,

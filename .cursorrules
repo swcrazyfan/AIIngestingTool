@@ -1,0 +1,84 @@
+{
+  "rules": [
+    {
+      "name": "refactoring-plan",
+      "description": "The video_ingest_tool is being refactored according to the plan in refactoring_plan.md. Each process should have its own file, follow naming conventions with _step suffix for pipeline steps, include proper docstrings, type annotations, and error handling. See refactoring_plan.md for the complete implementation plan with progress tracking.",
+      "pattern": "",
+      "severity": "info",
+      "message": "Follow the refactoring plan in refactoring_plan.md"
+    },
+    {
+      "name": "single_process_files",
+      "description": "Each file should handle exactly one process or concept",
+      "pattern": "(class|def).*\\n.*\\n.*(class|def)",
+      "severity": "warning",
+      "message": "Multiple processes detected in file. Consider splitting into separate files."
+    },
+    {
+      "name": "consistent_step_naming",
+      "description": "Step functions should end with _step",
+      "pattern": "@register_step[\\s\\S]*?def\\s+([^_]\\w+)\\(",
+      "exclude": "@register_step[\\s\\S]*?def\\s+(\\w+_step)\\(",
+      "severity": "warning",
+      "message": "Pipeline step functions should end with _step suffix"
+    },
+    {
+      "name": "module_docstring",
+      "description": "Every module should have a docstring",
+      "pattern": "^(?!\\s*\"\"\").*\\n(?!\\s*\"\"\").*\\n(?!\\s*\"\"\").*\\nimport",
+      "severity": "warning",
+      "message": "Module missing docstring. Add a docstring at the top of the file."
+    },
+    {
+      "name": "function_docstring",
+      "description": "Functions should have docstrings",
+      "pattern": "def\\s+\\w+\\([^)]*\\):\\s*(?!(\"\"\"|#))",
+      "severity": "warning",
+      "message": "Function missing docstring"
+    },
+    {
+      "name": "step_registration_format",
+      "description": "Step registration should include name, enabled state, and description",
+      "pattern": "@register_step\\([^)]*\\)",
+      "exclude": "@register_step\\(\\s*name\\s*=\\s*['\"][^'\"]+['\"]\\s*,\\s*enabled\\s*=\\s*(True|False)\\s*,\\s*description\\s*=\\s*['\"][^'\"]+['\"]\\s*\\)",
+      "severity": "warning",
+      "message": "Step registration should include name, enabled, and description parameters"
+    },
+    {
+      "name": "type_annotations",
+      "description": "Functions should have type annotations",
+      "pattern": "def\\s+\\w+\\(([^):]*(?<!: [\\w\\[\\],\\s]+))+\\)",
+      "exclude": "def\\s+\\w+\\(\\s*\\):",
+      "severity": "warning",
+      "message": "Function parameters should have type annotations"
+    },
+    {
+      "name": "return_type_annotation",
+      "description": "Functions should have return type annotations",
+      "pattern": "def\\s+\\w+\\([^)]*\\)(?!\\s*->)",
+      "severity": "warning",
+      "message": "Function missing return type annotation"
+    },
+    {
+      "name": "proper_error_handling",
+      "description": "Functions should include error handling",
+      "pattern": "def\\s+\\w+\\([^)]*\\):\\s*\"\"\".+?\"\"\"\\s*(?!.*?(if|try))",
+      "severity": "info",
+      "message": "Consider adding error handling to this function"
+    },
+    {
+      "name": "structured_logging",
+      "description": "Use structured logging instead of print statements",
+      "pattern": "\\bprint\\(",
+      "severity": "warning",
+      "message": "Use structured logging (logger.info/debug/error) instead of print statements"
+    },
+    {
+      "name": "no_debug_code",
+      "description": "Remove debug code before marking complete",
+      "pattern": "(#\\s*TODO|#\\s*FIXME|print\\(.*debug)",
+      "severity": "warning",
+      "message": "Debug code or TODO comments should be resolved before completion"
+    }
+  ]
+} 

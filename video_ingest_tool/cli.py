@@ -16,15 +16,12 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.progress import BarColumn, Progress
 
-from .config import setup_logging, console
+from .config import setup_logging, console, DEFAULT_COMPRESSION_CONFIG
 from .discovery import scan_directory
-from .processor import (
-    process_video_file, 
-    get_default_pipeline_config, 
-    get_available_pipeline_steps
-)
+from .pipeline.registry import get_available_pipeline_steps, get_default_pipeline
+from .steps import process_video_file
+from .config.settings import get_default_pipeline_config
 from .output import save_to_json, save_run_outputs
-from .video_processor import DEFAULT_COMPRESSION_CONFIG
 from .utils import calculate_checksum
 
 # Create Typer app
@@ -46,6 +43,7 @@ def ingest(
     compression_bitrate: str = typer.Option(DEFAULT_COMPRESSION_CONFIG['video_bitrate'], "--bitrate", help=f"Video bitrate for compression (default: {DEFAULT_COMPRESSION_CONFIG['video_bitrate']})"),
     store_database: bool = typer.Option(False, "--store-database", help="Store results in Supabase database (requires authentication)"),
     generate_embeddings: bool = typer.Option(False, "--generate-embeddings", help="Generate vector embeddings for semantic search (requires authentication)"),
+    upload_thumbnails: bool = typer.Option(False, "--upload-thumbnails", help="Upload thumbnails to Supabase storage (requires authentication)"),
     force_reprocess: bool = typer.Option(False, "--force-reprocess", "-f", help="Force reprocessing of files even if they already exist in database")
 ):
     """
@@ -111,8 +109,8 @@ def ingest(
                 logger.warning(f"Unknown step to enable: {step}")
                 console.print(f"[yellow]Warning:[/yellow] Unknown step '{step}'")
     
-    # Handle database storage and embeddings
-    if store_database or generate_embeddings:
+    # Handle database storage, embeddings, and thumbnail uploads
+    if store_database or generate_embeddings or upload_thumbnails:
         from .auth import AuthManager
         from .supabase_config import verify_connection
         
@@ -141,6 +139,13 @@ def ingest(
             pipeline_config['database_storage'] = True  # Embeddings require database
             logger.info("Enabled vector embeddings generation")
             console.print("[green]✓[/green] Vector embeddings enabled")
+        
+        # Enable thumbnail uploads if requested (also requires database storage)
+        if upload_thumbnails:
+            pipeline_config['thumbnail_upload'] = True
+            pipeline_config['database_storage'] = True  # Thumbnail uploads require database storage for clip_id
+            logger.info("Enabled thumbnail uploads")
+            console.print("[green]✓[/green] Thumbnail uploads enabled")
     
     # Save the active configuration to the run directory
     config_path = os.path.join(run_dir, "pipeline_config.json")
