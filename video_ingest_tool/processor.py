@@ -1399,7 +1399,7 @@ def generate_embeddings_step(data: Dict[str, Any], logger=None) -> Dict[str, Any
             'error': str(e)
         }
 
-def process_video_file(file_path: str, thumbnails_dir: str, logger=None, config: Dict[str, bool] = None, compression_fps: int = DEFAULT_COMPRESSION_CONFIG['fps'], compression_bitrate: str = DEFAULT_COMPRESSION_CONFIG['video_bitrate'], force_reprocess: bool = False) -> VideoIngestOutput:
+def process_video_file(file_path: str, thumbnails_dir: str, logger=None, config: Dict[str, bool] = None, compression_fps: int = DEFAULT_COMPRESSION_CONFIG['fps'], compression_bitrate: str = DEFAULT_COMPRESSION_CONFIG['video_bitrate'], force_reprocess: bool = False, step_callback=None) -> VideoIngestOutput:
     """
     Process a video file using the pipeline.
     
@@ -1411,6 +1411,7 @@ def process_video_file(file_path: str, thumbnails_dir: str, logger=None, config:
         compression_fps: Frame rate for video compression (default: 5)
         compression_bitrate: Bitrate for video compression (default: 500k)
         force_reprocess: Force reprocessing even if file exists in database
+        step_callback: Optional callback function to track pipeline step progress
         
     Returns:
         VideoIngestOutput: Processed video data object
@@ -1435,7 +1436,8 @@ def process_video_file(file_path: str, thumbnails_dir: str, logger=None, config:
         logger=logger,
         compression_fps=compression_fps,
         compression_bitrate=compression_bitrate,
-        force_reprocess=force_reprocess
+        force_reprocess=force_reprocess,
+        step_callback=step_callback
     )
     
     # Check if pipeline was stopped due to duplicate detection

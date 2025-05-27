@@ -97,11 +97,18 @@ export const authApi = {
 // Ingest API
 export const ingestApi = {
   async startIngest(directory: string, options: IngestOptions) {
-    const response = await apiClient.post('/ingest', {
-      directory,
-      ...options
-    });
-    return response.data;
+    try {
+      const response = await apiClient.post('/ingest', { directory, ...options });
+      return response.data;
+    } catch (error: any) {
+      console.error('AIServer: Error starting ingest:', error);
+      if (error.response && error.response.data) {
+        console.error('AIServer: Server error details:', error.response.data);
+        const message = error.response.data.details || error.response.data.error || 'Failed to start ingest (server error)';
+        throw new Error(message);
+      }
+      throw new Error(error.message || 'Failed to start ingest process (network or unknown error)');
+    }
   },
 
   async getProgress() {

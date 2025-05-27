@@ -82,15 +82,27 @@ export interface VideoFile {
   technical_level?: string | null;
 }
 
+export interface ProcessedFile {
+  file_name?: string;
+  path?: string;
+  status: 'completed' | 'processing' | 'waiting' | 'failed' | 'skipped';
+  progress?: number;
+  error?: string;
+  current_step?: string;
+  progress_percentage?: number;
+}
+
 export interface IngestProgress {
-  status: 'idle' | 'running' | 'scanning' | 'processing' | 'completed' | 'failed';
+  status: 'idle' | 'starting' | 'running' | 'scanning' | 'processing' | 'completed' | 'failed';
   progress: number;
   message: string;
+  current_file?: string;
   error?: string;
   processed_count?: number;
   results_count?: number;
   failed_count?: number;
   total_count?: number;
+  processed_files?: ProcessedFile[];
 }
 
 export interface AuthStatus {
