@@ -29,7 +29,9 @@ from video_ingest_tool.steps.extraction import (
 from video_ingest_tool.steps.analysis import (
     generate_thumbnails_step,
     analyze_exposure_step,
-    detect_focal_length_step
+    detect_focal_length_step,
+    ai_video_analysis_step,
+    ai_thumbnail_selection_step
 )
 from video_ingest_tool.steps.processing import (
     generate_checksum_step,
@@ -169,6 +171,36 @@ def test_analysis_steps(data: Dict[str, Any]) -> Dict[str, Any]:
             data.update(focal_length_result)
         else:
             print("Skipping focal length detection: no thumbnails available")
+            
+        # Test AI Video Analysis (may be skipped due to API costs)
+        print("\nTesting AI Video Analysis...")
+        try:
+            ai_analysis_result = ai_video_analysis_step(data, temp_dir, logger)
+            if 'full_ai_analysis_data' in ai_analysis_result and ai_analysis_result['full_ai_analysis_data']:
+                print(f"AI analysis completed successfully")
+                if 'compressed_video_path' in ai_analysis_result:
+                    print(f"Generated compressed video: {os.path.basename(ai_analysis_result.get('compressed_video_path', 'N/A'))}")
+                data.update(ai_analysis_result)
+                
+                # Test AI Thumbnail Selection (requires AI analysis results)
+                print("\nTesting AI Thumbnail Selection...")
+                try:
+                    ai_thumbnail_result = ai_thumbnail_selection_step(data, temp_dir, logger)
+                    ai_thumbnail_paths = ai_thumbnail_result.get('ai_thumbnail_paths', [])
+                    ai_thumbnail_metadata = ai_thumbnail_result.get('ai_thumbnail_metadata', [])
+                    
+                    print(f"Selected {len(ai_thumbnail_paths)} AI thumbnails")
+                    if ai_thumbnail_paths:
+                        print(f"First AI thumbnail: {os.path.basename(ai_thumbnail_paths[0])}")
+                    data.update(ai_thumbnail_result)
+                except Exception as e:
+                    print(f"AI thumbnail selection failed: {str(e)}")
+                    print("This is expected if AI analysis didn't provide thumbnail recommendations")
+            else:
+                print("AI analysis skipped or failed, this is expected in test environment")
+        except Exception as e:
+            print(f"AI video analysis failed: {str(e)}")
+            print("This is expected in test environment due to API dependencies")
     
     return data
 

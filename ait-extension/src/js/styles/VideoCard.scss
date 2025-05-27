@@ -1,22 +1,211 @@
 .video-card {
   background: #2a2a2a;
   border: 1px solid #333;
-  border-radius: 6px;
-  padding: 16px;
+  border-radius: 8px;
+  padding: 12px;
   transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   
   &:hover {
     border-color: #444;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.4);
+    transform: translateY(-2px);
+  }
+  
+  // Small size variation
+  &.video-card-small {
+    padding: 6px;
+    border-radius: 6px;
+    
+    .video-thumbnail {
+      margin-bottom: 6px;
+      border-radius: 4px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+    
+    .video-title {
+      font-size: 12px;
+      margin-bottom: 4px;
+      font-weight: 500;
+    }
+    
+    .video-meta {
+      font-size: 10px;
+      gap: 6px;
+      margin-bottom: 4px;
+      
+      span {
+        gap: 3px;
+        
+        svg {
+          width: 12px;
+          height: 12px;
+        }
+      }
+    }
+    
+    .video-summary {
+      font-size: 11px;
+      line-height: 1.3;
+      margin-bottom: 6px;
+      -webkit-line-clamp: 1;
+    }
+    
+    .video-tags {
+      margin-bottom: 6px;
+      gap: 4px;
+      
+      .tag {
+        padding: 1px 5px;
+        font-size: 9px;
+        border-radius: 3px;
+      }
+    }
+    
+    .video-actions {
+      gap: 4px;
+      
+      button {
+        font-size: 10px;
+        padding: 5px 0;
+        border-radius: 3px;
+        
+        svg {
+          width: 12px;
+          height: 12px;
+        }
+      }
+    }
+  }
+  
+  // Large size variation
+  &.video-card-large {
+    padding: 20px;
+    border-radius: 10px;
+    border-width: 2px;
+    
+    .video-thumbnail {
+      margin-bottom: 20px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+    
+    .video-title {
+      font-size: 20px;
+      margin-bottom: 16px;
+      font-weight: 700;
+    }
+    
+    .video-meta {
+      font-size: 14px;
+      margin-bottom: 14px;
+      
+      span {
+        gap: 6px;
+        
+        svg {
+          width: 16px;
+          height: 16px;
+        }
+      }
+    }
+    
+    .video-summary {
+      font-size: 15px;
+      line-height: 1.6;
+      margin-bottom: 18px;
+      -webkit-line-clamp: 3;
+    }
+    
+    .video-tags {
+      margin-bottom: 20px;
+      gap: 8px;
+      
+      .tag {
+        padding: 5px 12px;
+        font-size: 13px;
+        border-radius: 6px;
+      }
+    }
+    
+    .video-actions {
+      gap: 16px;
+      
+      button {
+        font-size: 15px;
+        padding: 12px 0;
+        font-weight: 600;
+        border-radius: 6px;
+        
+        svg {
+          width: 16px;
+          height: 16px;
+        }
+      }
+    }
+  }
+  
+  .video-thumbnail {
+    position: relative;
+    width: 100%;
+    height: 0;
+    padding-bottom: 56.25%; /* 16:9 aspect ratio */
+    margin-bottom: 12px;
+    background-color: #1a1a1a;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    
+    img {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    
+    .thumbnail-placeholder {
+      position: absolute;
+      top: 0;
+      left: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, #333, #222);
+      color: #999;
+      font-size: 36px;
+      font-weight: bold;
+    }
+    
+    .ai-badge {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: rgba(0, 120, 215, 0.85);
+      color: white;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 4px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    }
   }
   
   .video-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
     margin-bottom: 12px;
   }
   
   .video-title {
-    font-size: 14px;
-    font-weight: 500;
+    font-size: 15px;
+    font-weight: 600;
     color: #fff;
     margin-bottom: 8px;
     overflow: hidden;
@@ -26,10 +215,11 @@
   
   .video-meta {
     display: flex;
+    flex-wrap: wrap;
     gap: 12px;
     margin-bottom: 8px;
     font-size: 12px;
-    color: #999;
+    color: #bbb;
     
     span {
       display: flex;
@@ -39,9 +229,10 @@
   }
   
   .video-summary {
-    font-size: 12px;
+    font-size: 13px;
+    line-height: 1.4;
     color: #ccc;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
@@ -57,29 +248,42 @@
     .tag {
       background: #1a1a1a;
       border: 1px solid #333;
-      padding: 2px 8px;
-      border-radius: 3px;
+      padding: 3px 8px;
+      border-radius: 4px;
       font-size: 11px;
-      color: #999;
+      color: #bbb;
+      
+      &:hover {
+        background: #222;
+        border-color: #444;
+      }
+      
+      &.more-tag {
+        background: #333;
+        color: #ddd;
+        font-weight: 500;
+      }
     }
   }
   
   .video-actions {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     gap: 8px;
+    margin-top: auto;
     
     button {
-      flex: 1;
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 6px;
-      padding: 8px 12px;
+      padding: 8px 0;
       background: #333;
       border: 1px solid #444;
       border-radius: 4px;
-      color: #ccc;
+      color: #ddd;
       font-size: 12px;
+      font-weight: 500;
       cursor: pointer;
       transition: all 0.2s;
       
@@ -87,6 +291,13 @@
         background: #3a3a3a;
         color: #fff;
         border-color: #555;
+        transform: translateY(-1px);
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+      }
+      
+      &:active {
+        transform: translateY(0);
+        box-shadow: none;
       }
       
       svg {

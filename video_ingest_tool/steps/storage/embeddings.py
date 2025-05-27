@@ -5,13 +5,13 @@ This module handles the generation and storage of vector embeddings
 for video metadata to enable semantic search functionality.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from ...pipeline.registry import register_step
 
 @register_step(
     name="generate_embeddings", 
-    enabled=False,  # Disabled by default
+    enabled=True,  # Enabled by default
     description="Generate vector embeddings for semantic search"
 )
 def generate_embeddings_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
@@ -19,7 +19,7 @@ def generate_embeddings_step(data: Dict[str, Any], logger=None) -> Dict[str, Any
     Generate and store vector embeddings for semantic search.
     
     Args:
-        data: Pipeline data containing the output model and clip_id
+        data: Pipeline data containing the output model, clip_id, and ai_thumbnail_metadata
         logger: Optional logger
         
     Returns:
@@ -27,6 +27,7 @@ def generate_embeddings_step(data: Dict[str, Any], logger=None) -> Dict[str, Any
     """
     from ...auth import AuthManager
     from ...embeddings import prepare_embedding_content, generate_embeddings, store_embeddings
+    from ...embeddings_image import batch_generate_thumbnail_embeddings, generate_thumbnail_embedding
     
     # Check authentication
     auth_manager = AuthManager()
@@ -49,7 +50,7 @@ def generate_embeddings_step(data: Dict[str, Any], logger=None) -> Dict[str, Any
         }
     
     # Get output model
-    output = data.get('output')
+    output = data.get('model')
     if not output:
         if logger:
             logger.error("No output model found for embedding generation")
@@ -70,6 +71,34 @@ def generate_embeddings_step(data: Dict[str, Any], logger=None) -> Dict[str, Any
             summary_content, keyword_content, logger
         )
         
+        # Process AI thumbnail embeddings if available
+        ai_thumbnail_metadata = data.get('ai_thumbnail_metadata', [])
+        thumbnail_embeddings = {}
+        thumbnail_descriptions = {}
+        thumbnail_reasons = {}
+        
+        if ai_thumbnail_metadata:
+            if logger:
+                logger.info(f"Processing embeddings for {len(ai_thumbnail_metadata)} AI thumbnails")
+                
+            # Generate embeddings for all thumbnails
+            thumbnail_embeddings = batch_generate_thumbnail_embeddings(
+                ai_thumbnail_metadata,
+                logger=logger
+            )
+            
+            # Extract descriptions and reasons
+            for thumbnail in ai_thumbnail_metadata:
+                rank = thumbnail.get('rank')
+                description = thumbnail.get('description')
+                reason = thumbnail.get('reason')
+                
+                if rank and description:
+                    thumbnail_descriptions[rank] = description
+                
+                if rank and reason:
+                    thumbnail_reasons[rank] = reason
+        
         # Store embeddings in database
         original_content = f"Summary: {summary_content}\nKeywords: {keyword_content}"
         store_embeddings(
@@ -77,20 +106,25 @@ def generate_embeddings_step(data: Dict[str, Any], logger=None) -> Dict[str, Any
             summary_embedding=summary_embedding,
             keyword_embedding=keyword_embedding,
             summary_content=summary_content,
-            keyword_content=keyword_content,
             original_content=original_content,
             metadata=metadata,
+            thumbnail_embeddings=thumbnail_embeddings,
+            thumbnail_descriptions=thumbnail_descriptions,
+            thumbnail_reasons=thumbnail_reasons,
             logger=logger
         )
         
         if logger:
             logger.info(f"Successfully generated and stored embeddings for clip: {clip_id}")
+            if thumbnail_embeddings:
+                logger.info(f"Generated and stored embeddings for {len(thumbnail_embeddings)} AI thumbnails")
         
         return {
             'embeddings_generated': True,
             'clip_id': clip_id,
             'summary_tokens': metadata['summary_tokens'],
             'keyword_tokens': metadata['keyword_tokens'],
+            'thumbnail_embeddings_count': len(thumbnail_embeddings),
             'truncation_applied': metadata['summary_truncation'] != 'none' or metadata['keyword_truncation'] != 'none'
         }
         

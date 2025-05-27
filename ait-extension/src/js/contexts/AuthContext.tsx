@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { authApi, connectionManager } from '../api/client';
 import { AuthStatus } from '../types/api'; 
+import { clearCache } from '../components/shared/ThumbnailCache';
 
 interface AuthContextType {
   authStatus: AuthStatus | null;
@@ -64,14 +65,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const logout = async () => {
+    setLoading(true);
     try {
       await authApi.logout();
+      setAuthStatus(null);
+      // Clear the thumbnail cache when logging out
+      clearCache();
+      localStorage.removeItem('reconnectAfterAuth');
     } catch (error) {
-      console.error('Logout API call failed:', error);
+      console.error('Logout failed:', error);
+    } finally {
+      setLoading(false);
     }
-    setAuthStatus({ authenticated: false, user: undefined });
-    setRequiresReLogin(false); 
-    // Or, if you want to ensure the login modal appears: setRequiresReLogin(true);
   };
 
   useEffect(() => {

@@ -13,23 +13,25 @@ logger = structlog.get_logger(__name__)
 
 def store_video_in_database(
     video_data: VideoIngestOutput,
-    logger=None
+    logger=None,
+    ai_thumbnail_metadata=None
 ) -> Dict[str, Any]:
     """
-    Store processed video data in Supabase database.
+    Store video data in the Supabase database.
     
     Args:
-        video_data: Processed video data
-        logger: Optional logger
+        video_data: The processed video data output model
+        logger: Optional logger instance
+        ai_thumbnail_metadata: Metadata for AI-selected thumbnails
         
     Returns:
-        Dict with storage results
+        Dict with storage results including clip_id
     """
     auth_manager = AuthManager()
     client = auth_manager.get_authenticated_client()
     
     if not client:
-        raise ValueError("Authentication required for database storage")
+        raise ValueError("Not authenticated")
     
     try:
         # Get current user ID
@@ -77,8 +79,33 @@ def store_video_in_database(
             "camera_details": video_data.camera.model_dump() if video_data.camera else {},
             "audio_tracks": [track.model_dump() for track in video_data.audio_tracks] if video_data.audio_tracks else [],
             "subtitle_tracks": [track.model_dump() for track in video_data.subtitle_tracks] if video_data.subtitle_tracks else [],
-            "thumbnails": video_data.thumbnails if video_data.thumbnails else []
+            "thumbnails": video_data.thumbnails if video_data.thumbnails else [],
+            # Initialize all_thumbnail_urls as empty array if not already present
+            "all_thumbnail_urls": []
         }
+        
+        # Add AI thumbnail metadata if available
+        if ai_thumbnail_metadata:
+            # Process AI thumbnails into the all_thumbnail_urls JSONB array
+            ai_thumbnails_formatted = []
+            for thumbnail in ai_thumbnail_metadata:
+                rank = thumbnail.get('rank')
+                path = thumbnail.get('path')
+                timestamp = thumbnail.get('timestamp')
+                description = thumbnail.get('description', '')
+                reason = thumbnail.get('reason', '')
+                
+                if path and rank:
+                    # Format thumbnail data (URLs will be added by thumbnail_upload step)
+                    filename = os.path.basename(path)
+                    ai_thumbnails_formatted.append({
+                        "filename": filename,
+                        "is_ai_selected": True,
+                        "rank": rank,
+                        "timestamp": timestamp,
+                        "description": description,
+                        "reason": reason
+                    })
         
         # Extract AI analysis data if available
         if video_data.analysis and video_data.analysis.ai_analysis:
@@ -118,66 +145,15 @@ def store_video_in_database(
             if logger:
                 logger.info(f"Stored new clip in database: {clip_id}")
         
-        # Store transcript if available
-        if (video_data.analysis and video_data.analysis.ai_analysis and 
-            video_data.analysis.ai_analysis.audio_analysis and 
-            video_data.analysis.ai_analysis.audio_analysis.transcript):
-            
-            transcript = video_data.analysis.ai_analysis.audio_analysis.transcript
-            speaker_analysis = video_data.analysis.ai_analysis.audio_analysis.speaker_analysis
-            sound_events = video_data.analysis.ai_analysis.audio_analysis.sound_events
-            
-            transcript_data = {
-                "clip_id": clip_id,
-                "user_id": user_id,
-                "full_text": transcript.full_text or "",
-                "segments": [seg.model_dump() for seg in transcript.segments] if transcript.segments else [],
-                "speakers": [speaker.model_dump() for speaker in speaker_analysis.speakers] if speaker_analysis and speaker_analysis.speakers else [],
-                "non_speech_events": [event.model_dump() for event in sound_events] if sound_events else []
-            }
-            
-            if existing_clip_id:
-                # Delete existing transcript and insert new one
-                client.table('transcripts').delete().eq('clip_id', clip_id).execute()
-                client.table('transcripts').insert(transcript_data).execute()
-                if logger:
-                    logger.info(f"Updated transcript for clip: {clip_id}")
-            else:
-                client.table('transcripts').insert(transcript_data).execute()
-                if logger:
-                    logger.info(f"Stored transcript for clip: {clip_id}")
-        
-        # Store AI analysis
+        # Prepare and store AI analysis data separately if available
         if video_data.analysis and video_data.analysis.ai_analysis:
-            ai_analysis = video_data.analysis.ai_analysis
-            
             analysis_data = {
                 "clip_id": clip_id,
                 "user_id": user_id,
-                "analysis_type": "comprehensive",
+                "analysis_type": "ai",
                 "analysis_scope": "full_clip",
-                "ai_model": "gemini-flash-2.5",
-                "content_category": ai_analysis.summary.content_category if ai_analysis.summary else None,
-                "usability_rating": None,
-                "speaker_count": 0,
-                "visual_analysis": ai_analysis.visual_analysis.model_dump() if ai_analysis.visual_analysis else None,
-                "audio_analysis": ai_analysis.audio_analysis.model_dump() if ai_analysis.audio_analysis else None,
-                "content_analysis": ai_analysis.content_analysis.model_dump() if ai_analysis.content_analysis else None,
-                "analysis_summary": ai_analysis.summary.model_dump() if ai_analysis.summary else None,
-                "analysis_file_path": ai_analysis.analysis_file_path
+                "ai_analysis": video_data.analysis.ai_analysis.model_dump()
             }
-            
-            # Extract usability rating if available
-            if (ai_analysis.visual_analysis and 
-                ai_analysis.visual_analysis.technical_quality and 
-                ai_analysis.visual_analysis.technical_quality.usability_rating):
-                analysis_data["usability_rating"] = ai_analysis.visual_analysis.technical_quality.usability_rating
-            
-            # Extract speaker count if available
-            if (ai_analysis.audio_analysis and 
-                ai_analysis.audio_analysis.speaker_analysis and 
-                ai_analysis.audio_analysis.speaker_analysis.speaker_count):
-                analysis_data["speaker_count"] = ai_analysis.audio_analysis.speaker_analysis.speaker_count
             
             if existing_clip_id:
                 # Delete existing analysis and insert new one

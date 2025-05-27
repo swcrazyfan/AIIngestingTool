@@ -4,22 +4,49 @@ import { VideoFile, SearchType, SortField, SortOrder } from '../types/api';
 import VideoCard from './VideoCard';
 import SearchBar from './SearchBar';
 import AccordionItem from './AccordionItem';
-import { FiFilm, FiRefreshCw } from 'react-icons/fi';
+import { FiFilm, FiRefreshCw, FiGrid } from 'react-icons/fi';
+import { BsGrid3X3, BsGrid3X2, BsGrid1X2 } from 'react-icons/bs';
 import { useWebSocket } from '../contexts/WebSocketContext';
 import '../styles/VideoLibrary.scss';
+
+// Define card size type
+export type CardSize = 'small' | 'medium' | 'large';
 
 const VideoLibrary: React.FC = () => {
   const [videos, setVideos] = useState<VideoFile[]>([]);
   const [originalFetchedVideos, setOriginalFetchedVideos] = useState<VideoFile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [currentSearchTerm, setCurrentSearchTerm] = useState('');
   const [activeSearchType, setActiveSearchType] = useState<'hybrid' | 'semantic' | 'fulltext' | 'transcripts'>('hybrid');
   const [sortBy, setSortBy] = useState<SortField>('processed_at');
   const [sortOrder, setSortOrder] = useState<SortOrder>('descending');
   const [dateStart, setDateStart] = useState<string>('');
   const [dateEnd, setDateEnd] = useState<string>('');
+  const [cardSize, setCardSize] = useState<CardSize>('medium');
 
   const { search: wsSearch, connected } = useWebSocket();
+
+  // Save card size preference to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('preferredCardSize', cardSize);
+    } catch (error) {
+      console.error('Failed to save card size preference:', error);
+    }
+  }, [cardSize]);
+
+  // Load card size preference from localStorage
+  useEffect(() => {
+    try {
+      const savedSize = localStorage.getItem('preferredCardSize') as CardSize | null;
+      if (savedSize && ['small', 'medium', 'large'].includes(savedSize)) {
+        setCardSize(savedSize);
+      }
+    } catch (error) {
+      console.error('Failed to load card size preference:', error);
+    }
+  }, []);
 
   const applyClientSideFiltersAndSort = useCallback(() => {
     if (!originalFetchedVideos) return;
@@ -83,6 +110,7 @@ const VideoLibrary: React.FC = () => {
 
   const fetchVideoList = useCallback(async () => {
     setLoading(true);
+    setRefreshing(true);
     try {
       console.log('Fetching initial video list...');
       const options: any = { limit: 200 };
@@ -94,6 +122,7 @@ const VideoLibrary: React.FC = () => {
       setVideos([]);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
@@ -105,6 +134,7 @@ const VideoLibrary: React.FC = () => {
     setDateEnd('');
 
     setLoading(true);
+    setRefreshing(true);
     setVideos([]); // Clear displayed videos immediately to show loading state
     setOriginalFetchedVideos([]); // Clear original videos to avoid processing stale data
     setCurrentSearchTerm(query);
@@ -133,6 +163,7 @@ const VideoLibrary: React.FC = () => {
       setVideos([]);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [connected, wsSearch]);
 
@@ -152,13 +183,18 @@ const VideoLibrary: React.FC = () => {
     }
   };
 
-  const handleRefresh = () => {
+  const handleRefresh = useCallback(() => {
+    if (refreshing) return; // Prevent multiple refreshes
+    
+    // Show a toast or notification
+    console.log('Refreshing video library...');
+    
     if (currentSearchTerm) {
       performKeywordSearch(currentSearchTerm, activeSearchType);
     } else {
       fetchVideoList();
     }
-  };
+  }, [currentSearchTerm, activeSearchType, refreshing, performKeywordSearch, fetchVideoList]);
 
   return (
     <div className="video-library">
@@ -195,16 +231,46 @@ const VideoLibrary: React.FC = () => {
       
       <div className="library-header">
         <h3>{currentSearchTerm ? `Search results for "${currentSearchTerm}"` : 'Browse Videos'}</h3>
-        <button 
-          onClick={handleRefresh} 
-          className="refresh-button"
-          title="Refresh"
-        >
-          <FiRefreshCw />
-        </button>
+        <div className="library-controls">
+          <div className="card-size-selector">
+            <button 
+              className={`size-button ${cardSize === 'small' ? 'active' : ''}`}
+              onClick={() => setCardSize('small')}
+              title="Small cards"
+              data-size="sm"
+            >
+              <BsGrid3X3 />
+            </button>
+            <button 
+              className={`size-button ${cardSize === 'medium' ? 'active' : ''}`}
+              onClick={() => setCardSize('medium')}
+              title="Medium cards"
+              data-size="md"
+            >
+              <BsGrid3X2 />
+            </button>
+            <button 
+              className={`size-button ${cardSize === 'large' ? 'active' : ''}`}
+              onClick={() => setCardSize('large')}
+              title="Large cards"
+              data-size="lg"
+            >
+              <BsGrid1X2 />
+            </button>
+          </div>
+          <button 
+            onClick={handleRefresh} 
+            className={`refresh-button ${refreshing ? 'refreshing' : ''}`}
+            title="Refresh video library"
+            disabled={refreshing}
+          >
+            <FiRefreshCw className="refresh-icon" />
+            {refreshing && <span className="refresh-status">Refreshing...</span>}
+          </button>
+        </div>
       </div>
       
-      <div className="video-grid">
+      <div className={`video-grid video-grid-${cardSize}`}>
         {loading && videos.length === 0 ? (
           <div className="loading-state">
             <div className="spinner"></div>
@@ -212,7 +278,12 @@ const VideoLibrary: React.FC = () => {
           </div>
         ) : videos.length > 0 ? (
           videos.map((video) => (
-            <VideoCard key={video.id} video={video} onRefresh={handleRefresh} />
+            <VideoCard 
+              key={video.id} 
+              video={video} 
+              onRefresh={handleRefresh}
+              size={cardSize}
+            />
           ))
         ) : (
           <div className="empty-state">

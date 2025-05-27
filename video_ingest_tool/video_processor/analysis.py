@@ -193,6 +193,32 @@ class VideoAnalyzer:
                                         },
                                         "required": ["timestamp", "reason", "visual_quality"]
                                     }
+                                },
+                                "recommended_thumbnails": {
+                                    "type": "ARRAY",
+                                    "description": "Exactly 3 frames ranked by how well they represent the entire clip",
+                                    "minItems": 3,
+                                    "maxItems": 3,
+                                    "items": {
+                                        "type": "OBJECT",
+                                        "properties": {
+                                            "timestamp": {"type": "STRING"},
+                                            "description": {
+                                                "type": "STRING",
+                                                "description": "Concise 10-20 token description using format: Subject Action/Type Key-Details Context"
+                                            },
+                                            "reason": {
+                                                "type": "STRING",
+                                                "description": "Why this frame represents the video well"
+                                            },
+                                            "rank": {
+                                                "type": "STRING",
+                                                "enum": ["1", "2", "3"],
+                                                "description": "Rank with 1 being best representative frame"
+                                            }
+                                        },
+                                        "required": ["timestamp", "description", "reason", "rank"]
+                                    }
                                 }
                             }
                         }
@@ -393,11 +419,23 @@ class VideoAnalyzer:
            - Also include a condensed version (64 tokens max) that captures essential visual elements
         
         2. Visual analysis including shot types, technical quality, text elements
+           - Select exactly 3 representative thumbnail frames ranked by quality (1=best)
+           - For each thumbnail, provide:
+              a) A concise description (10-20 tokens) using format: Subject Action/Type Key-Details Context
+              b) A reason why this frame best represents the video
+              c) A clear ranking (1, 2, or 3) with 1 being the most representative frame
+        
         3. Audio analysis including transcript, speaker identification, sound events
         4. Content analysis identifying people, locations, objects, and activities
         
         For technical quality assessment, evaluate focus quality, stability, artifacts, and overall usability.
         For audio quality, assess clarity, background noise, and dialogue intelligibility.
+        
+        For thumbnail selection, prioritize:
+         - Frames that represent the video's main subject and content
+         - Clear, well-composed, and in-focus frames
+         - Frames that would work well as a video thumbnail
+         - Diversity in your three choices to represent different aspects of the video
         
         MOST IMPORTANT: Your descriptions must be accurate and precise. Focus on exactly what is seen and heard,
         with specific details about visual elements and audio content. This is critical for accurate indexing
