@@ -107,6 +107,11 @@ def prepare_embedding_content(video_data) -> Tuple[str, str, Dict[str, Any]]:
         if summary.overall:
             summary_parts.append(summary.overall)
         
+        # Condensed summary for SigLIP
+        siglip_summary = None
+        if hasattr(summary, 'condensed_summary') and summary.condensed_summary:
+            siglip_summary = summary.condensed_summary
+        
         # Key activities in natural language
         if summary.key_activities:
             activities_text = ", ".join(summary.key_activities)
@@ -245,11 +250,13 @@ def prepare_embedding_content(video_data) -> Tuple[str, str, Dict[str, Any]]:
     summary_content, summary_truncation = truncate_text(summary_content, 3500)
     keyword_content, keyword_truncation = truncate_text(keyword_content, 3500)
     
+    # Add SigLIP condensed summary to metadata
     metadata = {
         "summary_tokens": count_tokens(summary_content),
         "keyword_tokens": count_tokens(keyword_content),
         "summary_truncation": summary_truncation,
         "keyword_truncation": keyword_truncation,
+        "siglip_summary": siglip_summary,
         "original_transcript_length": len(video_data.analysis.ai_analysis.audio_analysis.transcript.full_text) if (
             video_data.analysis and video_data.analysis.ai_analysis and 
             video_data.analysis.ai_analysis.audio_analysis and 
@@ -318,6 +325,12 @@ def store_embeddings(
         # Get user ID
         user_response = client.auth.get_user()
         user_id = user_response.user.id
+        
+        # First, delete any existing vectors for this clip to avoid duplicates during reprocessing
+        delete_result = client.table('vectors').delete().eq('clip_id', clip_id).execute()
+        if logger and hasattr(delete_result, 'data') and delete_result.data:
+            deleted_count = len(delete_result.data)
+            logger.info(f"Deleted {deleted_count} existing vector(s) for clip: {clip_id}")
         
         vector_data = {
             "clip_id": clip_id,

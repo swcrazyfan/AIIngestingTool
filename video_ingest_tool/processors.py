@@ -52,7 +52,14 @@ def generate_thumbnails(file_path: str, output_dir: str, count: int = 5, logger=
             stream = container.streams.video[0]
             
             for i, position in enumerate(positions):
-                output_path = os.path.join(output_dir, f"{os.path.basename(file_path)}_{i}.jpg")
+                # Format the position as seconds_milliseconds
+                position_seconds = int(position)
+                position_milliseconds = int((position - position_seconds) * 1000)
+                timestamp_str = f"{position_seconds}s{position_milliseconds:03d}ms"
+                
+                # Include the timestamp in the filename
+                base_filename = os.path.basename(file_path)
+                output_path = os.path.join(output_dir, f"{base_filename}_{timestamp_str}_{i}.jpg")
                 
                 container.seek(int(position * 1000000), stream=stream)
                 

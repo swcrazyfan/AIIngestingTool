@@ -1,17 +1,15 @@
 """
-Metadata extractors for the video ingest tool.
+Media information extractors for the video ingest tool.
 
-Contains functions for extracting metadata from video files using various tools.
+Contains functions for extracting media metadata using MediaInfo and FFprobe.
 """
 
 import os
 import av
 import pymediainfo
-import exiftool
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict
 
-from .config import HAS_TRANSFORMERS, FOCAL_LENGTH_RANGES
-from .utils import parse_datetime_string, map_exposure_mode, map_white_balance, categorize_focal_length
+from ..utils import parse_datetime_string
 
 def extract_mediainfo(file_path: str, logger=None) -> Dict[str, Any]:
     """
@@ -177,4 +175,4 @@ def extract_ffprobe_info(file_path: str, logger=None) -> Dict[str, Any]:
     except Exception as e:
         if logger:
             logger.error("PyAV extraction failed", path=file_path, error=str(e))
-        return {}
+        return {} 
