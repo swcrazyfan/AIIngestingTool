@@ -67,23 +67,23 @@ const parseCameraDetails = (clipData: any) => {
 
 const fetchClipDetails = async (clipId: string | number): Promise<ClipDetailsResponse> => {
   try {
-    // Fetch the clip info from the videos endpoint
-    const clipResponse = await fetch(`http://localhost:8000/api/videos?clipId=${clipId}`);
+    // Fetch the clip info from the clips endpoint
+    const clipResponse = await fetch(`http://localhost:8000/api/clips/${clipId}`);
     if (!clipResponse.ok) {
       const errorData = await clipResponse.json().catch(() => ({ message: 'Failed to fetch clip data' }));
       throw new Error(errorData.message || 'Failed to fetch clip data');
     }
     const clipData = await clipResponse.json();
     
-    if (!clipData.results || clipData.results.length === 0) {
+    if (!clipData.clip) {
       throw new Error('Clip not found');
     }
     
     // Log the raw API response for debugging
-    console.log("Raw API Response for clip:", JSON.stringify(clipData.results[0], null, 2));
+    console.log("Raw API Response for clip:", JSON.stringify(clipData.clip, null, 2));
     
     // Get the clip object and ensure all properties are preserved
-    const rawClip = clipData.results[0];
+    const rawClip = clipData.clip;
     
     // Create a structured clip object preserving nested properties
     const clip: VideoFile = {
@@ -96,12 +96,12 @@ const fetchClipDetails = async (clipId: string | number): Promise<ClipDetailsRes
     };
     
     // Extract transcript and analysis for component structure
-    const transcript = clip.full_transcript ? {
+    const transcript = clipData.transcript || (clip.full_transcript ? {
       clip_id: String(clip.id),
       full_text: clip.full_transcript
-    } : null;
+    } : null);
     
-    const analysis = {
+    const analysis = clipData.analysis || {
       clip_id: String(clip.id),
       summary: clip.content_summary || undefined,
       tags: clip.content_tags || undefined
@@ -566,8 +566,16 @@ const VideoDetailsModal: React.FC<VideoDetailsCardProps> = ({
                     <div className="metadata-row-label">Focal Length</div>
                     <div className="metadata-row-value">
                       {displayClip.camera_details && displayClip.camera_details.focal_length && displayClip.camera_details.focal_length.value_mm
-                        ? `${displayClip.camera_details.focal_length.value_mm}mm ${displayClip.camera_details.focal_length.category ? `(${displayClip.camera_details.focal_length.category})` : ''}`
+                        ? `${displayClip.camera_details.focal_length.value_mm}mm`
                         : (displayClip.focal_length ? `${displayClip.focal_length}mm` : 'N/A')}
+                    </div>
+                  </div>
+                  <div className="metadata-row">
+                    <div className="metadata-row-label">Focal Length Category</div>
+                    <div className="metadata-row-value">
+                      {displayClip.camera_details && displayClip.camera_details.focal_length && displayClip.camera_details.focal_length.category
+                        ? displayClip.camera_details.focal_length.category
+                        : 'N/A'}
                     </div>
                   </div>
                   <div className="metadata-row">

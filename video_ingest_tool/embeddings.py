@@ -83,7 +83,7 @@ def truncate_text(text: str, max_tokens: int = 3500) -> Tuple[str, str]:
 def prepare_embedding_content(video_data) -> Tuple[str, str, Dict[str, Any]]:
     """
     Prepare semantic content for embedding generation optimized for hybrid search.
-    Technical specs are handled by full-text search.
+    Technical specs are handled by full-text search, but now also included in keyword embeddings.
     
     Args:
         video_data: VideoIngestOutput model
@@ -174,7 +174,7 @@ def prepare_embedding_content(video_data) -> Tuple[str, str, Dict[str, Any]]:
     
     summary_content = ". ".join(summary_parts)
     
-    # KEYWORD EMBEDDING: Concept tags and semantic keywords
+    # KEYWORD EMBEDDING: Concept tags, semantic keywords, and ALL technical metadata
     keyword_concepts = []
     
     # Core semantic concepts from transcript
@@ -236,6 +236,122 @@ def prepare_embedding_content(video_data) -> Tuple[str, str, Dict[str, Any]]:
         if video_data.analysis.ai_analysis.summary.content_category:
             category_concepts.append(video_data.analysis.ai_analysis.summary.content_category.lower())
     
+    # --- Camera and EXIF ---
+    if hasattr(video_data, 'camera') and video_data.camera:
+        if video_data.camera.make:
+            keyword_concepts.append(video_data.camera.make)
+        if video_data.camera.model:
+            keyword_concepts.append(video_data.camera.model)
+        if video_data.camera.lens_model:
+            keyword_concepts.append(video_data.camera.lens_model)
+        if video_data.camera.focal_length:
+            if video_data.camera.focal_length.value_mm:
+                keyword_concepts.append(f"focal length {video_data.camera.focal_length.value_mm}mm")
+            if video_data.camera.focal_length.category:
+                category = video_data.camera.focal_length.category.lower()
+                keyword_concepts.append(category)
+                keyword_concepts.append(f"{category} shot")
+        if video_data.camera.settings:
+            if video_data.camera.settings.iso:
+                keyword_concepts.append(f"ISO {video_data.camera.settings.iso}")
+            if video_data.camera.settings.shutter_speed:
+                keyword_concepts.append(f"shutter speed {video_data.camera.settings.shutter_speed}")
+            if video_data.camera.settings.f_stop:
+                keyword_concepts.append(f"f/{video_data.camera.settings.f_stop}")
+            if video_data.camera.settings.exposure_mode:
+                keyword_concepts.append(f"{video_data.camera.settings.exposure_mode} exposure")
+            if video_data.camera.settings.white_balance:
+                keyword_concepts.append(f"{video_data.camera.settings.white_balance} white balance")
+        if video_data.camera.location:
+            if video_data.camera.location.location_name:
+                keyword_concepts.append(video_data.camera.location.location_name)
+            if video_data.camera.location.gps_latitude and video_data.camera.location.gps_longitude:
+                keyword_concepts.append(f"gps {video_data.camera.location.gps_latitude},{video_data.camera.location.gps_longitude}")
+
+    # --- Video Codec/Container ---
+    if hasattr(video_data, 'video') and video_data.video:
+        if video_data.video.codec:
+            if video_data.video.codec.name:
+                keyword_concepts.append(video_data.video.codec.name)
+            if video_data.video.codec.profile:
+                keyword_concepts.append(video_data.video.codec.profile)
+            if video_data.video.codec.level:
+                keyword_concepts.append(f"level {video_data.video.codec.level}")
+            if video_data.video.codec.bitrate_kbps:
+                keyword_concepts.append(f"{video_data.video.codec.bitrate_kbps} kbps")
+            if video_data.video.codec.bit_depth:
+                keyword_concepts.append(f"{video_data.video.codec.bit_depth}-bit")
+            if video_data.video.codec.chroma_subsampling:
+                keyword_concepts.append(f"chroma {video_data.video.codec.chroma_subsampling}")
+            if video_data.video.codec.pixel_format:
+                keyword_concepts.append(video_data.video.codec.pixel_format)
+            if video_data.video.codec.bitrate_mode:
+                keyword_concepts.append(video_data.video.codec.bitrate_mode)
+            if video_data.video.codec.cabac is not None:
+                keyword_concepts.append(f"cabac {video_data.video.codec.cabac}")
+            if video_data.video.codec.ref_frames:
+                keyword_concepts.append(f"{video_data.video.codec.ref_frames} ref frames")
+            if video_data.video.codec.gop_size:
+                keyword_concepts.append(f"gop size {video_data.video.codec.gop_size}")
+            if video_data.video.codec.scan_type:
+                keyword_concepts.append(video_data.video.codec.scan_type)
+            if video_data.video.codec.field_order:
+                keyword_concepts.append(video_data.video.codec.field_order)
+        if video_data.video.container:
+            keyword_concepts.append(video_data.video.container)
+        if video_data.video.resolution:
+            if video_data.video.resolution.width and video_data.video.resolution.height:
+                keyword_concepts.append(f"{video_data.video.resolution.width}x{video_data.video.resolution.height}")
+            if hasattr(video_data.video.resolution, 'aspect_ratio') and video_data.video.resolution.aspect_ratio:
+                keyword_concepts.append(f"aspect ratio {video_data.video.resolution.aspect_ratio}")
+        if video_data.video.frame_rate:
+            keyword_concepts.append(f"{video_data.video.frame_rate} fps")
+        # --- HDR/Color ---
+        if video_data.video.color:
+            if video_data.video.color.color_space:
+                keyword_concepts.append(video_data.video.color.color_space)
+            if video_data.video.color.color_primaries:
+                keyword_concepts.append(video_data.video.color.color_primaries)
+            if video_data.video.color.transfer_characteristics:
+                keyword_concepts.append(video_data.video.color.transfer_characteristics)
+            if video_data.video.color.matrix_coefficients:
+                keyword_concepts.append(video_data.video.color.matrix_coefficients)
+            if video_data.video.color.color_range:
+                keyword_concepts.append(video_data.video.color.color_range)
+            if video_data.video.color.hdr:
+                if video_data.video.color.hdr.format:
+                    keyword_concepts.append(f"HDR {video_data.video.color.hdr.format}")
+                if video_data.video.color.hdr.master_display:
+                    keyword_concepts.append(f"master display {video_data.video.color.hdr.master_display}")
+                if video_data.video.color.hdr.max_cll:
+                    keyword_concepts.append(f"max CLL {video_data.video.color.hdr.max_cll}")
+                if video_data.video.color.hdr.max_fall:
+                    keyword_concepts.append(f"max FALL {video_data.video.color.hdr.max_fall}")
+        # --- Exposure ---
+        if video_data.video.exposure:
+            if video_data.video.exposure.warning:
+                keyword_concepts.append(f"exposure warning: {video_data.video.exposure.warning}")
+            if video_data.video.exposure.stops:
+                keyword_concepts.append(f"{video_data.video.exposure.stops} stops")
+            if video_data.video.exposure.overexposed_percentage is not None:
+                keyword_concepts.append(f"overexposed {video_data.video.exposure.overexposed_percentage}%")
+            if video_data.video.exposure.underexposed_percentage is not None:
+                keyword_concepts.append(f"underexposed {video_data.video.exposure.underexposed_percentage}%")
+
+    # --- Audio/Subtitle Tracks ---
+    if hasattr(video_data, 'audio_tracks') and video_data.audio_tracks:
+        for track in video_data.audio_tracks:
+            if hasattr(track, 'language') and track.language:
+                keyword_concepts.append(f"audio language {track.language}")
+            if hasattr(track, 'codec') and track.codec:
+                keyword_concepts.append(f"audio codec {track.codec}")
+    if hasattr(video_data, 'subtitle_tracks') and video_data.subtitle_tracks:
+        for track in video_data.subtitle_tracks:
+            if hasattr(track, 'language') and track.language:
+                keyword_concepts.append(f"subtitle language {track.language}")
+            if hasattr(track, 'codec') and track.codec:
+                keyword_concepts.append(f"subtitle codec {track.codec}")
+
     # Combine all concept lists
     all_concepts = []
     if visual_concepts:
@@ -246,7 +362,7 @@ def prepare_embedding_content(video_data) -> Tuple[str, str, Dict[str, Any]]:
         all_concepts.append(" ".join(set(category_concepts)))
     
     keyword_concepts.extend(all_concepts)
-    keyword_content = " ".join(keyword_concepts)
+    keyword_content = " ".join([str(k) for k in keyword_concepts if k])
     
     # Truncate both contents
     summary_content, summary_truncation = truncate_text(summary_content, 3500)

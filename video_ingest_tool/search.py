@@ -11,6 +11,7 @@ import structlog
 
 from .auth import AuthManager
 from .embeddings import generate_embeddings
+from .search_config import get_search_params
 
 logger = structlog.get_logger(__name__)
 
@@ -78,15 +79,24 @@ class VideoSearcher:
         Returns:
             List of matching video clips with metadata
         """
+        # Get search parameters from centralized config, with optional overrides
+        search_params = get_search_params(weights)
+        
         client = self._get_authenticated_client()
         user_id = self._get_current_user_id()
         
+        # Enforce max match count
+        max_count = search_params.get('max_match_count', 100)
+        if match_count > max_count:
+            logger.warning(f"Requested match count {match_count} exceeds maximum {max_count}, limiting results")
+            match_count = max_count
+        
         if search_type == "semantic":
-            return self._semantic_search(client, user_id, query, match_count, weights)
+            return self._semantic_search(client, user_id, query, match_count, search_params)
         elif search_type == "fulltext":
             return self._fulltext_search(client, user_id, query, match_count)
         elif search_type == "hybrid":
-            return self._hybrid_search(client, user_id, query, match_count, weights)
+            return self._hybrid_search(client, user_id, query, match_count, search_params)
         elif search_type == "transcripts":
             return self._transcript_search(client, user_id, query, match_count)
         else:
@@ -96,7 +106,7 @@ class VideoSearcher:
         self,
         clip_id: str,
         match_count: int = 5,
-        similarity_threshold: float = 0.5
+        similarity_threshold: Optional[float] = None
     ) -> List[Dict[str, Any]]:
         """
         Find clips similar to a given clip.
@@ -104,11 +114,19 @@ class VideoSearcher:
         Args:
             clip_id: ID of the source clip
             match_count: Number of similar clips to return
-            similarity_threshold: Minimum similarity score
+            similarity_threshold: Minimum similarity score (optional)
             
         Returns:
             List of similar clips
         """
+        # Get parameters from centralized config
+        search_params = get_search_params()
+        
+        # Use provided threshold or default from config
+        threshold = similarity_threshold
+        if threshold is None:
+            threshold = search_params.get('similar_threshold', 0.65)
+        
         client = self._get_authenticated_client()
         user_id = self._get_current_user_id()
         
@@ -117,7 +135,7 @@ class VideoSearcher:
                 'source_clip_id': clip_id,
                 'user_id_filter': user_id,
                 'match_count': match_count,
-                'similarity_threshold': similarity_threshold
+                'similarity_threshold': threshold
             }).execute()
             
             return result.data if result.data else []
@@ -184,32 +202,34 @@ class VideoSearcher:
         user_id: str,
         query: str,
         match_count: int,
-        weights: Optional[Dict[str, float]] = None
+        search_params: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
         """Perform semantic search using vector embeddings."""
-        current_weights = weights or {}
         summary_content, keyword_content = prepare_search_embeddings(query)
         
         # Call generate_embeddings once with both content types and unpack the tuple
         query_summary_embedding, query_keyword_embedding = generate_embeddings(summary_content, keyword_content)
         
-        search_params = {
-            'p_summary_weight': current_weights.get('summary_weight', 1.0),
-            'p_keyword_weight': current_weights.get('keyword_weight', 0.8),
-            'p_similarity_threshold': current_weights.get('similarity_threshold', 0.1) # Matched SQL default
-        }
-        
+        # Get parameters from the search_params dictionary
         rpc_params = {
             'p_query_summary_embedding': query_summary_embedding,
             'p_query_keyword_embedding': query_keyword_embedding,
             'p_user_id_filter': user_id,
             'p_match_count': match_count,
-            **search_params
+            'p_summary_weight': search_params.get('summary_weight', 1.0),
+            'p_keyword_weight': search_params.get('keyword_weight', 0.8),
+            'p_similarity_threshold': search_params.get('similarity_threshold', 0.4)
         }
 
         try:
-            logger.info("Performing semantic search", query=query, params=rpc_params)
-            result = client.rpc('semantic_search_clips_bp', rpc_params).execute()
+            # Modified to avoid logging full embeddings
+            logger.info("Performing semantic search", 
+                        limit=match_count, 
+                        query=query, 
+                        search_type="semantic",
+                        weights={k: v for k, v in search_params.items() if k in ['summary_weight', 'keyword_weight', 'similarity_threshold']})
+            
+            result = client.rpc('semantic_search_clips', rpc_params).execute()
             
             return result.data if result.data else []
             
@@ -227,9 +247,9 @@ class VideoSearcher:
         """Perform full-text search."""
         try:
             result = client.rpc('fulltext_search_clips', {
-                'query_text': query,
-                'user_id_filter': user_id,
-                'match_count': match_count
+                'p_query_text': query,
+                'p_user_id_filter': user_id,
+                'p_match_count': match_count
             }).execute()
             
             return result.data if result.data else []
@@ -244,10 +264,9 @@ class VideoSearcher:
         user_id: str,
         query: str,
         match_count: int,
-        weights: Optional[Dict[str, float]] = None
+        search_params: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
         """Perform hybrid search combining full-text and semantic search."""
-        current_weights = weights or {}
         summary_content, keyword_content = prepare_search_embeddings(query)
 
         query_summary_embedding, query_keyword_embedding = generate_embeddings(summary_content, keyword_content)
@@ -259,17 +278,25 @@ class VideoSearcher:
             'p_query_keyword_embedding': query_keyword_embedding,
             'p_user_id_filter': user_id,
             'p_match_count': match_count,
-            'p_fulltext_weight': current_weights.get('fulltext_weight', 1.0),
-            'p_summary_weight': current_weights.get('summary_weight', 1.0),
-            'p_keyword_weight': current_weights.get('keyword_weight', 0.8),
-            'p_rrf_k': int(current_weights.get('rrf_k', 50)), # Defaults to 50 as 'rrf_k' is not in current_weights from CLI
-            'p_summary_threshold': current_weights.get('similarity_threshold', 0.1), # Use existing similarity_threshold for p_summary_threshold
-            'p_keyword_threshold': current_weights.get('similarity_threshold', 0.1)  # Use existing similarity_threshold for p_keyword_threshold
+            'p_fulltext_weight': search_params.get('fulltext_weight', 2.5),
+            'p_summary_weight': search_params.get('summary_weight', 1.0),
+            'p_keyword_weight': search_params.get('keyword_weight', 0.8),
+            'p_rrf_k': int(search_params.get('rrf_k', 50)),
+            'p_summary_threshold': search_params.get('similarity_threshold', 0.4),
+            'p_keyword_threshold': search_params.get('similarity_threshold', 0.4)
         }
 
         try:
-            logger.info("Performing hybrid search", query=query, params=rpc_params)
-            result = client.rpc('hybrid_search_clips_bp', rpc_params).execute()
+            # Modified to avoid logging full embeddings and log the parameters being used
+            logger.info("Performing hybrid search", 
+                        limit=match_count, 
+                        query=query, 
+                        search_type="hybrid",
+                        weights={k: v for k, v in search_params.items() 
+                                 if k in ['fulltext_weight', 'summary_weight', 'keyword_weight', 
+                                         'rrf_k', 'similarity_threshold']})
+            
+            result = client.rpc('hybrid_search_clips', rpc_params).execute()
 
             return result.data if result.data else []
             

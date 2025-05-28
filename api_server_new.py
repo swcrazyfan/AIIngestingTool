@@ -37,6 +37,7 @@ from video_ingest_tool.config import setup_logging
 from video_ingest_tool.output import save_to_json, save_run_outputs
 from video_ingest_tool.utils import calculate_checksum
 from video_ingest_tool.video_processor import DEFAULT_COMPRESSION_CONFIG
+from video_ingest_tool.search_config import get_search_params
 
 # Setup logging
 logger = structlog.get_logger(__name__)
@@ -132,6 +133,9 @@ def perform_search(query='', search_type='hybrid', limit=20) -> Tuple[bool, Dict
         logger.info("Performing search", query=query, search_type=search_type, limit=limit)
         searcher = VideoSearcher()
         
+        # Get search parameters from centralized configuration
+        search_params = get_search_params()
+        
         # Removed special handling for 'recent' search_type
         # All search_types are now passed directly to VideoSearcher.search
         if not query and search_type != 'similar': # 'similar' search type uses clip_id not query
@@ -141,7 +145,12 @@ def perform_search(query='', search_type='hybrid', limit=20) -> Tuple[bool, Dict
             logger.warning("Search query is empty, returning empty results for keyword search.")
             return True, {"results": [], "total": 0, "query": query, "search_type": search_type}, 200
 
-        results = searcher.search(query=query, search_type=search_type, match_count=limit)
+        results = searcher.search(
+            query=query, 
+            search_type=search_type, 
+            match_count=limit,
+            weights=search_params
+        )
         formatted_results = format_search_results(results, search_type)
         
         return True, {"results": formatted_results, "total": len(formatted_results), "query": query, "search_type": search_type}, 200
@@ -588,10 +597,8 @@ def get_clip_details(clip_id):
         auth_manager = AuthManager()
         client = auth_manager.get_authenticated_client()
         
-        # Get clip details
-        clip_result = client.rpc('get_clip_details', {
-            'clip_id_param': clip_id
-        }).execute()
+        # Get clip details directly from the clips table
+        clip_result = client.table('clips').select('*').eq('id', clip_id).execute()
         
         if not clip_result.data:
             return jsonify({"error": "Clip not found"}), 404
@@ -602,9 +609,26 @@ def get_clip_details(clip_id):
         transcript_result = client.table('transcripts').select('*').eq('clip_id', clip_id).execute()
         transcript = transcript_result.data[0] if transcript_result.data else None
         
-        # Get analysis if available
-        analysis_result = client.table('analyses').select('*').eq('clip_id', clip_id).execute()
+        # Get analysis if available - use 'analysis' (singular) instead of 'analyses' (plural)
+        analysis_result = client.table('analysis').select('*').eq('clip_id', clip_id).execute()
         analysis = analysis_result.data[0] if analysis_result.data else None
+        
+        # Ensure all_thumbnail_urls is properly formatted
+        # If all_thumbnail_urls exists and is already a list, use it
+        # If it's a JSON string, parse it
+        # If it doesn't exist, create an empty list
+        if 'all_thumbnail_urls' in clip and clip['all_thumbnail_urls']:
+            if isinstance(clip['all_thumbnail_urls'], list):
+                # Already in the right format
+                pass
+            elif isinstance(clip['all_thumbnail_urls'], str):
+                # Try to parse JSON string
+                try:
+                    clip['all_thumbnail_urls'] = json.loads(clip['all_thumbnail_urls'])
+                except:
+                    clip['all_thumbnail_urls'] = []
+        else:
+            clip['all_thumbnail_urls'] = []
         
         return jsonify({
             "clip": clip,
@@ -706,6 +730,7 @@ def handle_search_request(data):
         limit = data.get('limit', 20)
 
         # perform_search now handles auth and backend checks internally
+        # and will use the centralized search parameters from search_config.py
         success, results_or_error, _ = perform_search(query, search_type, limit)
         
         response_data = {"requestId": request_id}
