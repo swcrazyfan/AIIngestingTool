@@ -5,7 +5,7 @@ Provides configuration handling and management.
 """
 
 from typing import Dict, Any, Optional
-from ..pipeline.registry import get_default_pipeline
+from ..flows.registry import get_default_pipeline
 
 class Config:
     """

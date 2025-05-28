@@ -4,38 +4,47 @@
 **Progress:** 25/10 components implemented (250% complete for initial steps)  
 **Testing Status:** Up to date for Phase 1 and all steps of Phase 2. As of this update, `ai_video_analysis_step`, `ai_thumbnail_selection_step`, and `upload_thumbnails_step` are refactored, tested, and all tests are passing.
 
+> **Status Legend**:  
+> ⬜ = Waiting / Not Started  
+> 🔄 = In Progress  
+> ✅ = Completed
+
+---
+
+**Note:** Many tasks and sub-tasks in this plan can be worked on in parallel. The checklist is for tracking progress, not enforcing strict sequential order. Parallel work is encouraged where possible for efficiency and faster migration.
+
 ---
 
 ## Pipeline Steps to Refactor and Test as Prefect Tasks
 
 ### Extraction Steps
-- [x] extract_mediainfo_step
-- [x] extract_ffprobe_step
-- [x] extract_exiftool_step
-- [x] extract_extended_exif_step
-- [x] extract_codec_step
-- [x] extract_hdr_step
-- [x] extract_audio_step
-- [x] extract_subtitle_step
+- ✅ extract_mediainfo_step
+- ✅ extract_ffprobe_step
+- ✅ extract_exiftool_step
+- ✅ extract_extended_exif_step
+- ✅ extract_codec_step
+- ✅ extract_hdr_step
+- ✅ extract_audio_step
+- ✅ extract_subtitle_step
 
 ### Analysis Steps
-- [x] generate_thumbnails_step
-- [x] analyze_exposure_step
-- [x] detect_focal_length_step
-- [x] ai_video_analysis_step
-- [x] ai_thumbnail_selection_step
+- ✅ generate_thumbnails_step
+- ✅ analyze_exposure_step
+- ✅ detect_focal_length_step
+- ✅ ai_video_analysis_step
+- ✅ ai_thumbnail_selection_step
 
 ### Processing Steps
-- [x] generate_checksum_step
-- [x] check_duplicate_step
-- [x] video_compression_step
-- [x] consolidate_metadata_step
+- ✅ generate_checksum_step
+- ✅ check_duplicate_step
+- ✅ video_compression_step
+- ✅ consolidate_metadata_step
 
 ### Storage Steps
-- [x] create_model_step
-- [x] database_storage_step
-- [x] generate_embeddings_step
-- [x] upload_thumbnails_step
+- ✅ create_model_step
+- ✅ database_storage_step
+- ✅ generate_embeddings_step
+- ✅ upload_thumbnails_step
 
 ---
 
@@ -65,103 +74,122 @@
 ### Phase 1: Prefect Setup
 
 - ✅ **Install Prefect**
-  - Add `prefect` to `requirements.txt`
-  - Run `pip install prefect`
+  - ✅ Add `prefect` to `requirements.txt`
+  - ✅ Run `pip install prefect`
 - ✅ **Basic Prefect Hello World**
-  - Create a simple `@flow` and `@task` to verify installation
+  - ✅ Create a simple `@flow` and `@task` to verify installation
 - ✅ **Write and Run Test for Hello World**
-  - Add a test to ensure Prefect is installed and basic flow runs
+  - ✅ Add a test to ensure Prefect is installed and basic flow runs
+
+### Phase 1.5 Structural Refactor 
+
+- ✅ Rename `pipeline/` to `flows/` and update all references
+- ✅ Rename `steps/` to `tasks/` and update all references
+- ✅ Update docstrings and documentation to use new terminology
+- ✅ Archive `debug_pipeline.py` and `test_pipeline.py` as `.bak` files
+- ✅ Remove or archive the old imperative pipeline, registry, and step registration system
+
+**Changelog:**
+- Project structure now follows Prefect idioms: `flows/` for orchestration, `tasks/` for atomic steps.
+- All code, imports, and docstrings updated to match new structure.
+- Obsolete debug and registry-based pipeline scripts archived as `.bak`.
+- All legacy pipeline/registry code has been archived or removed. Prefect flows are now the only orchestration mechanism.
 
 ### Phase 2: Refactor Steps as Tasks
 
-- [x] **generate_checksum_step** (done)
-- [x] **extract_mediainfo_step** (done)
-- [x] **extract_ffprobe_step** (done)
-- [x] **extract_exiftool_step** (done)
-- [x] **extract_extended_exif_step** (done)
-- [x] **extract_codec_step** (done)
-- [x] **extract_hdr_step** (done)
-- [x] **extract_audio_step** (done)
-- [x] **extract_subtitle_step** (done)
-- [x] **generate_thumbnails_step** (done)
-- [x] **analyze_exposure_step** (done)
-- [x] **detect_focal_length_step** (done)
-- [x] **ai_video_analysis_step** (done)
-- [x] **ai_thumbnail_selection_step** (done)
-- [x] **check_duplicate_step** (done)
-- [x] **video_compression_step** (done)
-- [x] **consolidate_metadata_step** (done)
-- [x] **create_model_step** (done)
-- [x] **database_storage_step** (done)
-- [x] **generate_embeddings_step** (done)
-- [x] **upload_thumbnails_step** (done)
+- ✅ **generate_checksum_step** (done)
+- ✅ **extract_mediainfo_step** (done)
+- ✅ **extract_ffprobe_step** (done)
+- ✅ **extract_exiftool_step** (done)
+- ✅ **extract_extended_exif_step** (done)
+- ✅ **extract_codec_step** (done)
+- ✅ **extract_hdr_step** (done)
+- ✅ **extract_audio_step** (done)
+- ✅ **extract_subtitle_step** (done)
+- ✅ **generate_thumbnails_step** (done)
+- ✅ **analyze_exposure_step** (done)
+- ✅ **detect_focal_length_step** (done)
+- ✅ **ai_video_analysis_step** (done)
+- ✅ **ai_thumbnail_selection_step** (done)
+- ✅ **check_duplicate_step** (done)
+- ✅ **video_compression_step** (done)
+- ✅ **consolidate_metadata_step** (done)
+- ✅ **create_model_step** (done)
+- ✅ **database_storage_step** (done)
+- ✅ **generate_embeddings_step** (done)
+- ✅ **upload_thumbnails_step** (done)
 
 (Each step: add @task, ensure statelessness, write and run a unit test)
 
 ### Phase 3: Refactor Pipeline as Flow
 
 - ⬜ **Create Per-File Flow**
-  - Refactor `process_video_file` to a `@flow` function
-  - Replace direct function calls with Prefect task calls
-  - Pass outputs between tasks as arguments (Prefect tracks dependencies)
-  - **Implement step enable/disable logic using flow parameters and conditional branching** (e.g., `if run_ai: ...`)
-  - **Support multiple flow variants or dynamic step selection** (e.g., via parameters or config)
-  - **Use `wait_for` to express explicit dependencies between steps that do not pass data**
-  - Reference: [Prefect Conditional Branching](https://docs.prefect.io/latest/concepts/flows/#conditional-logic), [Dynamic Flows](https://docs.prefect.io/latest/concepts/flows/#dynamic-flows)
+  - ⬜ Refactor `process_video_file` to a `@flow` function
+  - ⬜ Replace direct function calls with Prefect task calls
+  - ⬜ Pass outputs between tasks as arguments (Prefect tracks dependencies)
+  - ⬜ Implement step enable/disable logic using flow parameters and conditional branching (e.g., `if run_ai: ...`)
+  - ⬜ Support multiple flow variants or dynamic step selection (e.g., via parameters or config)
+  - ⬜ Use `wait_for` to express explicit dependencies between steps that do not pass data
+  - ⬜ Reference: [Prefect Conditional Branching](https://docs.prefect.io/latest/concepts/flows/#conditional-logic), [Dynamic Flows](https://docs.prefect.io/latest/concepts/flows/#dynamic-flows)
 - ⬜ **Handle Step Dependencies**
-  - Ensure dependent steps (e.g., AI thumbnail selection needs AI analysis) are called in correct order
+  - ⬜ Ensure dependent steps (e.g., AI thumbnail selection needs AI analysis) are called in correct order
 - ⬜ **Write and Run Tests for Per-File Flow**
-  - Write integration tests for the per-file flow
+  - ⬜ Write integration tests for the per-file flow
+- ⬜ **Refactor or remove old pipeline orchestration and registry code**
+  - ⬜ Remove or archive the old imperative pipeline, registry, and step registration system
+  - ⬜ Ensure all orchestration is handled by Prefect flows
+  - ⬜ Rename legacy pipeline/registry/CLI files to `.bak` or archive them once Prefect migration is complete
+  - ⬜ Update documentation to reference only the Prefect-based pipeline
 
 ### Phase 4: Add Parallelism and Concurrency Controls
 
 - ⬜ **Implement Per-File Parallelism**
-  - Use `process_video_file.map(file_list)` to process multiple files concurrently
-  - Set concurrency limits as needed
+  - ⬜ Use `process_video_file.map(file_list)` to process multiple files concurrently
+  - ⬜ Set concurrency limits as needed
 - ⬜ **Step-Level Concurrency and Resource Limits**
-  - **Implement concurrency/resource limits for heavy steps (e.g., compression) using Prefect's concurrency features:**
-    - Use `.map()` for per-step parallelism
-    - Use `ThreadPoolTaskRunner`, `DaskTaskRunner`, or `RayTaskRunner` as appropriate
-    - Use Prefect's concurrency context managers (`concurrency`, `rate_limit`) or CLI (`prefect concurrency-limit create ...`) for global/per-task concurrency limits
-    - Tag tasks and set concurrency limits via CLI or Prefect Cloud if needed
-  - **Make concurrency settings configurable via flow parameters or CLI options**
-  - Reference: [Prefect Concurrency & Mapping](https://docs.prefect.io/latest/concepts/mapping/), [Task Runners](https://docs.prefect.io/latest/concepts/task-runners/), [Concurrency Limits](https://docs.prefect.io/latest/concepts/concurrency/)
+  - ⬜ Implement concurrency/resource limits for heavy steps (e.g., compression) using Prefect's concurrency features:
+    - ⬜ Use `.map()` for per-step parallelism
+    - ⬜ Use `ThreadPoolTaskRunner`, `DaskTaskRunner`, or `RayTaskRunner` as appropriate
+    - ⬜ Use Prefect's concurrency context managers (`concurrency`, `rate_limit`) or CLI (`prefect concurrency-limit create ...`) for global/per-task concurrency limits
+    - ⬜ Tag tasks and set concurrency limits via CLI or Prefect Cloud if needed
+  - ⬜ Make concurrency settings configurable via flow parameters or CLI options
+  - ⬜ Reference: [Prefect Concurrency & Mapping](https://docs.prefect.io/latest/concepts/mapping/), [Task Runners](https://docs.prefect.io/latest/concepts/task-runners/), [Concurrency Limits](https://docs.prefect.io/latest/concepts/concurrency/)
 - ⬜ **Write and Run Tests for Parallelism**
-  - Test that multiple files are processed in parallel and results are correct
+  - ⬜ Test that multiple files are processed in parallel and results are correct
 
 ### Phase 5: CLI Integration
 
 - ⬜ **Update CLI to Use Prefect Flow**
-  - Replace calls to old pipeline with Prefect flow
-  - Add CLI options for concurrency (e.g., `--concurrency`, `--ai-workers`)
-  - Ensure CLI progress reporting works with Prefect
+  - ⬜ Replace calls to old pipeline with Prefect flow
+  - ⬜ Add CLI options for concurrency (e.g., `--concurrency`, `--ai-workers`)
+  - ⬜ Ensure CLI progress reporting works with Prefect
 - ⬜ **Write and Run CLI Tests**
-  - Test CLI integration and concurrency options
+  - ⬜ Test CLI integration and concurrency options
 
 ### Phase 6: Configuration & Error Handling
 
 - ⬜ **Add Configurable Concurrency**
-  - Allow user to set number of parallel files and per-step concurrency via CLI or config
+  - ⬜ Allow user to set number of parallel files and per-step concurrency via CLI or config
 - ⬜ **Improve Error Handling**
-  - Use Prefect's retry and failure hooks for robust error management
+  - ⬜ Use Prefect's retry and failure hooks for robust error management
 - ⬜ **Write and Run Error Handling Tests**
-  - Simulate failures and verify Prefect's error handling and retries
+  - ⬜ Simulate failures and verify Prefect's error handling and retries
 
 ### Phase 7: Testing & Validation
 
 - ⬜ **Unit and Integration Testing**
-  - Test pipeline on a small batch of files after each phase
-  - Validate concurrency, step dependencies, and output correctness
+  - ⬜ Test pipeline on a small batch of files after each phase
+  - ⬜ Validate concurrency, step dependencies, and output correctness
 - ⬜ **Performance Tuning**
-  - Adjust concurrency settings for optimal throughput
+  - ⬜ Adjust concurrency settings for optimal throughput
 
 ### Phase 8: Documentation
 
 - ⬜ **Update Documentation**
-  - Add usage instructions for new CLI and Prefect-based pipeline
-  - Document concurrency options and troubleshooting
+  - ⬜ Add usage instructions for new CLI and Prefect-based pipeline
+  - ⬜ Document concurrency options and troubleshooting
 - ⬜ **Document Test Coverage**
-  - Summarize which tests cover which phases and components
+  - ⬜ Summarize which tests cover which phases and components
 
 ---
 
