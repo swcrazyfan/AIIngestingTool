@@ -3,13 +3,175 @@ Database storage pipeline step for Supabase integration.
 """
 
 import os
-from typing import Dict, Any, Optional
+import json
+from typing import Dict, Any, Optional, List, Union
 import structlog
 
 from .auth import AuthManager
 from .models import VideoIngestOutput
 
 logger = structlog.get_logger(__name__)
+
+def generate_searchable_content(video_data: VideoIngestOutput) -> str:
+    """
+    Generate a comprehensive searchable content string from all video metadata.
+    Extracts and flattens nested data from JSONB structures for full-text search.
+    
+    Args:
+        video_data: The processed video data output model
+        
+    Returns:
+        String containing all searchable content
+    """
+    content_parts = []
+    
+    # Basic file information
+    content_parts.append(f"{video_data.file_info.file_name}")
+    
+    # Video details
+    if video_data.video:
+        if video_data.video.resolution:
+            content_parts.append(f"{video_data.video.resolution.width}x{video_data.video.resolution.height}")
+            content_parts.append(f"{video_data.video.resolution.resolution_name}")
+        
+        if video_data.video.frame_rate:
+            content_parts.append(f"{video_data.video.frame_rate}fps")
+        
+        if video_data.video.codec:
+            content_parts.append(f"{video_data.video.codec.name} {video_data.video.codec.long_name}")
+        
+        if video_data.video.color:
+            content_parts.append(f"{video_data.video.color.color_primaries}")
+            content_parts.append(f"{video_data.video.color.color_space}")
+        
+        if video_data.video.exposure:
+            content_parts.append(f"{video_data.video.exposure.overall_exposure}")
+    
+    # Camera details - Extract all camera settings as individual terms
+    if video_data.camera:
+        # Camera make and model
+        if video_data.camera.make:
+            content_parts.append(f"{video_data.camera.make}")
+        if video_data.camera.model:
+            content_parts.append(f"{video_data.camera.model}")
+        if video_data.camera.lens_model:
+            content_parts.append(f"{video_data.camera.lens_model}")
+        
+        # Focal length details - separate value and category
+        if video_data.camera.focal_length:
+            if video_data.camera.focal_length.value_mm:
+                content_parts.append(f"focal length {video_data.camera.focal_length.value_mm}mm")
+            if video_data.camera.focal_length.category:
+                content_parts.append(f"{video_data.camera.focal_length.category} focal length")
+                content_parts.append(f"{video_data.camera.focal_length.category} shot")
+        
+        # Camera settings
+        if video_data.camera.settings:
+            if video_data.camera.settings.iso:
+                content_parts.append(f"ISO {video_data.camera.settings.iso}")
+            if video_data.camera.settings.shutter_speed:
+                content_parts.append(f"shutter speed {video_data.camera.settings.shutter_speed}")
+            if video_data.camera.settings.f_stop:
+                content_parts.append(f"f-stop {video_data.camera.settings.f_stop}")
+            if video_data.camera.settings.exposure_mode:
+                content_parts.append(f"{video_data.camera.settings.exposure_mode} exposure")
+            if video_data.camera.settings.white_balance:
+                content_parts.append(f"{video_data.camera.settings.white_balance} white balance")
+        
+        # Location data
+        if video_data.camera.location:
+            if video_data.camera.location.location_name:
+                content_parts.append(f"{video_data.camera.location.location_name}")
+            if video_data.camera.location.gps_latitude and video_data.camera.location.gps_longitude:
+                content_parts.append(f"gps {video_data.camera.location.gps_latitude},{video_data.camera.location.gps_longitude}")
+    
+    # Analysis and content data
+    if video_data.analysis:
+        if video_data.analysis.content_summary:
+            content_parts.append(video_data.analysis.content_summary)
+        
+        if video_data.analysis.content_tags:
+            for tag in video_data.analysis.content_tags:
+                content_parts.append(tag)
+        
+        # AI analysis
+        if video_data.analysis.ai_analysis:
+            # Summary
+            if video_data.analysis.ai_analysis.summary:
+                summary = video_data.analysis.ai_analysis.summary
+                if summary.content_category:
+                    content_parts.append(summary.content_category)
+                if summary.overall:
+                    content_parts.append(summary.overall)
+                if summary.key_activities:
+                    for activity in summary.key_activities:
+                        content_parts.append(activity)
+            
+            # Visual analysis
+            if video_data.analysis.ai_analysis.visual_analysis:
+                visual = video_data.analysis.ai_analysis.visual_analysis
+                
+                # Shot types
+                if visual.shot_types:
+                    for shot in visual.shot_types:
+                        content_parts.append(f"{shot.shot_type} shot")
+                        if shot.description:
+                            content_parts.append(shot.description)
+                
+                # Technical quality
+                if visual.technical_quality:
+                    tq = visual.technical_quality
+                    if tq.overall_focus_quality:
+                        content_parts.append(f"{tq.overall_focus_quality} focus")
+                    if tq.stability_assessment:
+                        content_parts.append(f"{tq.stability_assessment} stability")
+                    if tq.usability_rating:
+                        content_parts.append(f"{tq.usability_rating} usability")
+                    if tq.detected_artifacts:
+                        for artifact in tq.detected_artifacts:
+                            content_parts.append(f"{artifact} artifact")
+            
+            # Content analysis
+            if video_data.analysis.ai_analysis.content_analysis:
+                content = video_data.analysis.ai_analysis.content_analysis
+                
+                # Entities
+                if content.entities:
+                    entities = content.entities
+                    if entities.people_details:
+                        for person in entities.people_details:
+                            if person.description:
+                                content_parts.append(person.description)
+                            if person.role:
+                                content_parts.append(person.role)
+                    
+                    if entities.locations:
+                        for location in entities.locations:
+                            if location.name:
+                                content_parts.append(location.name)
+                            if location.type:
+                                content_parts.append(f"{location.type} location")
+                            if location.description:
+                                content_parts.append(location.description)
+                    
+                    if entities.objects_of_interest:
+                        for obj in entities.objects_of_interest:
+                            if obj.object:
+                                content_parts.append(obj.object)
+                            if obj.significance:
+                                content_parts.append(f"{obj.significance} {obj.object}")
+                
+                # Activities
+                if content.activity_summary:
+                    for activity in content.activity_summary:
+                        if activity.activity:
+                            content_parts.append(activity.activity)
+                            if activity.importance:
+                                content_parts.append(f"{activity.importance} {activity.activity}")
+    
+    # Join all parts, filter out empty strings and None values
+    searchable_content = " ".join([part for part in content_parts if part])
+    return searchable_content
 
 def store_video_in_database(
     video_data: VideoIngestOutput,
@@ -40,6 +202,11 @@ def store_video_in_database(
             raise ValueError("Unable to get authenticated user ID")
         user_id = user_response.user.id
         
+        # Generate comprehensive searchable content
+        searchable_content = generate_searchable_content(video_data)
+        if logger and searchable_content:
+            logger.info(f"Generated searchable content ({len(searchable_content)} chars)")
+        
         # Prepare clip data
         clip_data = {
             "user_id": user_id,
@@ -65,6 +232,9 @@ def store_video_in_database(
             "content_category": None,
             "content_summary": video_data.analysis.content_summary if video_data.analysis else None,
             "content_tags": video_data.analysis.content_tags if video_data.analysis else [],
+            
+            # Comprehensive searchable content for full-text search
+            "searchable_content": searchable_content,
             
             # Transcript data
             "full_transcript": None,

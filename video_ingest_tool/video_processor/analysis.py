@@ -410,40 +410,66 @@ class VideoAnalyzer:
             str: Prompt for the Gemini model
         """
         return """
-        Please analyze this video comprehensively and provide detailed information in all of the following areas:
-        
-        1. Overall summary and content categorization
-           - Provide a HIGHLY ACCURATE and detailed description of exactly what's in the video
-           - Focus on precision: describe specific subjects, actions, settings, colors, movements
-           - Be factual about what is visible and audible, with exact details about what appears in frame
-           - Also include a condensed version (64 tokens max) that captures essential visual elements
-        
-        2. Visual analysis including shot types, technical quality, text elements
-           - Select exactly 3 representative thumbnail frames ranked by quality (1=best)
-           - For each thumbnail, provide:
-              a) A concise description (10-20 tokens) using format: Subject Action/Type Key-Details Context
-              b) A reason why this frame best represents the video
-              c) A clear ranking (1, 2, or 3) with 1 being the most representative frame
-        
-        3. Audio analysis including transcript, speaker identification, sound events
-        4. Content analysis identifying people, locations, objects, and activities
-        
-        For technical quality assessment, evaluate focus quality, stability, artifacts, and overall usability.
-        For audio quality, assess clarity, background noise, and dialogue intelligibility.
-        
-        For thumbnail selection, prioritize:
-         - Frames that represent the video's main subject and content
-         - Clear, well-composed, and in-focus frames
-         - Frames that would work well as a video thumbnail
-         - Diversity in your three choices to represent different aspects of the video
-        
-        MOST IMPORTANT: Your descriptions must be accurate and precise. Focus on exactly what is seen and heard,
-        with specific details about visual elements and audio content. This is critical for accurate indexing
-        and searchability of the video content.
-        
-        Please be thorough but concise in your descriptions. Organize the analysis according to the provided schema.
-        Focus on information that would be valuable for video editors to quickly understand and organize footage.
-        """
+You a professional filmaker and producer. Your job is to analyze this video so that you can accurately describe it to others and so it can  e categorized to to find later. Please analyze this video comprehensively and provide detailed information in all of the following areas:
+
+1. For the 'summary' object in the schema, provide the following details:
+   - **For the 'overall' field:** Construct a detailed and accurate narrative description, **approximately 100-256 tokens long,** of what is seen and heard throughout the video. This description must:
+     - Detail specific visual elements, subjects, key actions in sequence, settings, and dominant colors.
+     - Describe precisely what happens with factual accuracy.
+     - **Crucially, from the video's discernible speech or transcript, integrate 1-2 impactful and concise key phrases, short sentences, or direct quotes that capture critical information or the essence of a key moment. These should be naturally woven into this overall description.**
+   - **For the 'key_activities' field (array of strings):** List the main activities or actions occurring in the video. Each item in the array should be a string describing a distinct activity with specific visual details.
+   - **For the 'content_category' field (string):** Identify and state the primary category of the content (e.g., Interview, Tutorial, Event, Nature, Product Demo, etc.).
+   - **For the 'condensed_summary' field (string):** Generate an ultra-concise version, **strictly limited to a maximum of 64 tokens,** of the overall video description. This summary must include only the most essential and directly observable visual elements, subjects, and the immediate setting. This is critical for SigLIP embeddings and must be purely descriptive of visuals.
+
+2. For the 'visual_analysis' object in the schema, provide the following details:
+   - **For the 'shot_types' field (array of objects):** Identify distinct camera shots. For each shot, provide an object with the following properties:
+     - 'timestamp' (string): Start time of the shot. **Use the format "5s600ms" (e.g., 5 seconds and 600 milliseconds) for all timestamps.**
+     - 'duration_seconds' (number): Duration of the shot.
+     - 'shot_type' (string): Classify from the predefined enum (e.g., "Drone Shot", "Interview Setup", "Close-Up").
+     - 'description' (string): A brief description of the shot's content or composition.
+     - 'confidence' (number, optional): If your model can provide it, include a confidence score (0-1) for the shot type classification.
+   - **For the 'technical_quality' object:**
+     - **For 'overall_focus_quality' (string):** Assess and select from the enum ["Excellent", "Good", "Fair", "Poor", "Very Poor"].
+     - **For 'stability_assessment' (string):** Assess and select from the enum ["Very Stable", "Stable", "Moderately Shaky", "Very Shaky", "Unusable"].
+     - **For 'detected_artifacts' (array of objects):** If any visual artifacts are detected, provide an array where each object details an artifact with 'type' (from enum), 'severity' (from enum), and 'description' (string).
+     - **For 'usability_rating' (string):** Assess and select from the enum ["Excellent", "Good", "Acceptable", "Poor", "Unusable"].
+   - **For the 'text_and_graphics' object:**
+     - **For 'detected_text' (array of objects):** If any text is visible, provide an array where each object details detected text, including 'timestamp', 'text_content' (string), 'text_type' (from enum), and 'readability' (from enum). **Use the format "5s600ms" for all timestamps.**
+     - **For 'detected_logos_icons' (array of objects):** If any logos or icons are visible, provide an array where each object details them, including 'timestamp', 'description' (string, generic without brand ID, e.g., 'Red circular icon'), 'element_type' (from enum), and 'size' (from enum). **Use the format "5s600ms" for all timestamps.**
+   - **For the 'keyframe_analysis.recommended_keyframes' field (array of objects):** Beyond the three main thumbnails, if there are other notable keyframes, list them here. Each object should include 'timestamp', 'reason' (string, why this frame is recommended), and 'visual_quality' (from enum). **Use the format "5s600ms" for all timestamps.**
+   - **For the 'keyframe_analysis.recommended_thumbnails' field (array of exactly 3 objects):** Select and provide details for exactly three (3) thumbnail frames, ranked by how well they represent the entire clip. These frames should be visually distinct, clear, well-composed, in-focus, and suitable as video thumbnails. For each of the 3 thumbnail objects, you must provide:
+      a) 'timestamp' (string): The timestamp of the selected frame. **Use the format "5s600ms" (e.g., 5 seconds and 600 milliseconds).**
+      b) 'description' (string): **A concise, literal description of exactly what is visible in this specific frame, 10-20 tokens long, using the format: Subject Action/Type Key-Details Context. Focus only on the visual content of this single frame.**
+      c) 'reason' (string): A brief explanation of why this frame represents the video well and is suitable as a thumbnail.
+      d) 'rank' (string): The rank ("1", "2", or "3"), with "1" being the most representative frame.
+   - Prioritize: Frames that represent the video's main subject and content, are clear, well-composed, in-focus, and diverse in representing different aspects of the video.
+
+3. For the 'audio_analysis' object in the schema, provide the following details:
+   - **For the 'transcript' object:**
+     - **For 'full_text' (string):** Provide the complete transcribed text of all speech in the video.
+     - **For 'segments' (array of objects):** If segmentation is possible, provide an array where each object details a transcript segment, including 'timestamp', 'speaker' (string, if identifiable, e.g., "Speaker 1"), 'text' (string content of the segment), and 'confidence' (number, 0-1 for transcription accuracy of the segment). **Use the format "5s600ms" for all timestamps.**
+   - **For the 'speaker_analysis' object:**
+     - **For 'speaker_count' (integer):** Provide the total number of distinct speakers identified.
+     - **For 'speakers' (array of objects):** If speaker identification is performed, provide an array where each object details a speaker, including 'speaker_id' (string), 'speaking_time_seconds' (number), and 'attributes' (array of strings, e.g., perceived gender, accent if discernible and relevant).
+   - **For the 'sound_events' field (array of objects):** Identify significant non-speech sound events. Each object should include 'timestamp', 'event_type' (string, e.g., "music", "applause", "door slam"), 'description' (string), and 'duration_seconds' (number). **Use the format "5s600ms" for all timestamps.**
+   - **For the 'audio_quality' object:**
+     - **For 'clarity' (string):** Assess overall audio clarity and select from the enum.
+     - **For 'background_noise_level' (string):** Assess background noise and select from the enum.
+     - **For 'dialogue_intelligibility' (string):** Assess how well dialogue can be understood and select from the enum (or "No Dialogue").
+
+4. For the 'content_analysis' object in the schema, provide the following details:
+   - **For the 'entities' object:**
+     - **For 'people_count' (integer):** State the total number of distinct people visually identified.
+     - **For 'people_details' (array of objects):** For each distinct person identified, provide an object with 'description' (string, e.g., "person with red hat"), 'role' (string, e.g., "interviewer," "main subject"), and 'appearances' (array of objects with 'timestamp' and 'duration_seconds' for each appearance). **Use the format "5s600ms" for all timestamps.**
+     - **For 'locations' (array of objects):** Identify distinct locations. Each object should include 'name' (string, e.g., "Central Park," "Office Meeting Room"), 'type' (from enum), and 'description' (string).
+     - **For 'objects_of_interest' (array of objects):** Identify key objects. Each object should include 'object' (string, e.g., "laptop," "red book"), 'significance' (from enum), and 'timestamps' (array of strings indicating when the object is visible). **Use the format "5s600ms" for all timestamps.**
+   - **For the 'activity_summary' field (array of objects):** Summarize key activities segment by segment. Each object should include 'timestamp', 'activity' (string description), 'duration' (string, e.g., "5 seconds"), and 'importance' (from enum). **Use the format "5s600ms" for all timestamps.**
+   - **For the 'content_warnings' field (array of objects):** If any sensitive content is present, provide an array where each object details a warning, including 'type' (from enum like "Violence", "Strong Language"), 'description' (string, specific details), and 'timestamp'. If no warnings, this can be an empty array or omitted if allowed by schema. **Use the format "5s600ms" for all timestamps.**
+
+MOST IMPORTANT: Your descriptions must be accurate and precise. Focus on exactly what is seen and heard, with specific details about visual elements and audio content. This is critical for accurate indexing and searchability of the video content.
+
+Please be thorough but concise in your descriptions. Organize the analysis according to the provided schema. Focus on information that would be valuable for video editors to quickly understand and organize footage.
+"""
         
     def analyze_video(self, video_path: str) -> Dict[str, Any]:
         """

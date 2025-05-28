@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { searchApi, videosApi } from '../api/client';
 import { VideoFile, SearchType, SortField, SortOrder } from '../types/api';
 import VideoCard from './VideoCard';
@@ -24,6 +24,12 @@ const VideoLibrary: React.FC = () => {
   const [dateStart, setDateStart] = useState<string>('');
   const [dateEnd, setDateEnd] = useState<string>('');
   const [cardSize, setCardSize] = useState<CardSize>('medium');
+  
+  // Create refs for the filter elements
+  const sortByRef = useRef<HTMLSelectElement>(null);
+  const sortOrderRef = useRef<HTMLSelectElement>(null);
+  const dateStartRef = useRef<HTMLInputElement>(null);
+  const dateEndRef = useRef<HTMLInputElement>(null);
 
   const { search: wsSearch, connected } = useWebSocket();
 
@@ -126,12 +132,24 @@ const VideoLibrary: React.FC = () => {
     }
   }, []);
 
-  const performKeywordSearch = useCallback(async (query: string, type: 'hybrid' | 'semantic' | 'fulltext' | 'transcripts') => {
-    // Reset filter and sort states
+  // Helper function to reset all filter inputs
+  const resetFilterInputs = useCallback(() => {
+    // Reset state values
     setSortBy('processed_at');
     setSortOrder('descending');
     setDateStart('');
     setDateEnd('');
+    
+    // Reset the actual HTML elements
+    if (sortByRef.current) sortByRef.current.value = 'processed_at';
+    if (sortOrderRef.current) sortOrderRef.current.value = 'descending';
+    if (dateStartRef.current) dateStartRef.current.value = '';
+    if (dateEndRef.current) dateEndRef.current.value = '';
+  }, []);
+
+  const performKeywordSearch = useCallback(async (query: string, type: 'hybrid' | 'semantic' | 'fulltext' | 'transcripts') => {
+    // Reset all filter inputs
+    resetFilterInputs();
 
     setLoading(true);
     setRefreshing(true);
@@ -165,7 +183,7 @@ const VideoLibrary: React.FC = () => {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [connected, wsSearch]);
+  }, [connected, wsSearch, resetFilterInputs]);
 
   useEffect(() => {
     fetchVideoList();
@@ -180,6 +198,7 @@ const VideoLibrary: React.FC = () => {
       performKeywordSearch(query, type);
     } else {
       fetchVideoList();
+      resetFilterInputs(); // Also reset filters when clearing search
     }
   };
 
@@ -204,7 +223,12 @@ const VideoLibrary: React.FC = () => {
         <div className="filter-controls">
           <div className="filter-group">
             <label htmlFor="sort-by">Sort By:</label>
-            <select id="sort-by" value={sortBy} onChange={(e) => setSortBy(e.target.value as SortField)}>
+            <select 
+              id="sort-by" 
+              value={sortBy} 
+              onChange={(e) => setSortBy(e.target.value as SortField)}
+              ref={sortByRef}
+            >
               <option value="processed_at">Processed Date</option>
               <option value="file_name">File Name</option>
               <option value="duration_seconds">Duration</option>
@@ -213,18 +237,35 @@ const VideoLibrary: React.FC = () => {
           </div>
           <div className="filter-group">
             <label htmlFor="sort-order">Order:</label>
-            <select id="sort-order" value={sortOrder} onChange={(e) => setSortOrder(e.target.value as SortOrder)}>
+            <select 
+              id="sort-order" 
+              value={sortOrder} 
+              onChange={(e) => setSortOrder(e.target.value as SortOrder)}
+              ref={sortOrderRef}
+            >
               <option value="descending">Descending</option>
               <option value="ascending">Ascending</option>
             </select>
           </div>
           <div className="filter-group">
             <label htmlFor="date-start">Date Start:</label>
-            <input type="date" id="date-start" value={dateStart} onChange={(e) => setDateStart(e.target.value)} />
+            <input 
+              type="date" 
+              id="date-start" 
+              value={dateStart} 
+              onChange={(e) => setDateStart(e.target.value)}
+              ref={dateStartRef} 
+            />
           </div>
           <div className="filter-group">
             <label htmlFor="date-end">Date End:</label>
-            <input type="date" id="date-end" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} />
+            <input 
+              type="date" 
+              id="date-end" 
+              value={dateEnd} 
+              onChange={(e) => setDateEnd(e.target.value)}
+              ref={dateEndRef}
+            />
           </div>
         </div>
       </AccordionItem>
