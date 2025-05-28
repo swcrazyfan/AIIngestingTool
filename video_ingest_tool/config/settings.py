@@ -88,5 +88,7 @@ def get_default_pipeline_config() -> Dict[str, bool]:
     config = {}
     for step in pipeline.steps:
         config[step.name] = step.enabled
-    
+    # If AI analysis is enabled, also enable video_compression
+    if config.get('ai_video_analysis'):
+        config['video_compression'] = True
     return config 

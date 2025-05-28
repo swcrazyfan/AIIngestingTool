@@ -14,7 +14,7 @@ from .analysis import (
     ai_video_analysis_step, ai_thumbnail_selection_step
 )
 from .processing import (
-    generate_checksum_step, check_duplicate_step, consolidate_metadata_step
+    generate_checksum_step, check_duplicate_step, video_compression_step, consolidate_metadata_step
 )
 from .storage import (
     create_model_step, database_storage_step, generate_embeddings_step,
@@ -42,6 +42,7 @@ __all__ = [
     # Processing steps
     'generate_checksum_step',
     'check_duplicate_step',
+    'video_compression_step',
     'consolidate_metadata_step',
     
     # Storage steps
@@ -69,15 +70,16 @@ def reorder_pipeline_steps():
     step_order = {
         "checksum_generation": 1,  # Must run first
         "duplicate_check": 2,      # Now runs immediately after checksum
-        "thumbnail_generation": 3, # Depends on checksum
-        "exposure_analysis": 4,    # Depends on thumbnails
-        "ai_video_analysis": 12,   # Should run after basic extraction steps
-        "ai_thumbnail_selection": 13, # Should run after AI video analysis
-        "metadata_consolidation": 15, # Should run after all extraction steps
-        "model_creation": 16,      # Should run last but before database storage
-        "database_storage": 17,    # Should run after model creation
-        "generate_embeddings": 18,  # Should run after database storage
-        "thumbnail_upload": 19     # Should run after database storage to get clip_id
+        "video_compression": 3,    # Compress before thumbnails/AI
+        "thumbnail_generation": 4, # Depends on checksum
+        "exposure_analysis": 5,    # Depends on thumbnails
+        "ai_video_analysis": 13,   # Should run after basic extraction steps
+        "ai_thumbnail_selection": 14, # Should run after AI video analysis
+        "metadata_consolidation": 16, # Should run after all extraction steps
+        "model_creation": 17,      # Should run last but before database storage
+        "database_storage": 18,    # Should run after model creation
+        "generate_embeddings": 19,  # Should run after database storage
+        "thumbnail_upload": 20     # Should run after database storage to get clip_id
     }
     
     # Sort the steps based on the predefined order

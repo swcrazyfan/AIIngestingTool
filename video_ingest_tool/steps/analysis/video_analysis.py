@@ -132,6 +132,7 @@ def ai_video_analysis_step(
         }
     
     file_path = data.get('file_path')
+    compressed_path = data.get('compressed_video_path')
     
     if not file_path:
         if logger:
@@ -156,13 +157,25 @@ def ai_video_analysis_step(
         video_processor = VideoProcessor(config, compression_config=compression_config)
         
         # Determine output directory for compressed files
-        # Use the parent directory of thumbnails_dir as the run directory
         run_dir = None
         if thumbnails_dir:
             run_dir = os.path.dirname(thumbnails_dir)  # thumbnails_dir is run_dir/thumbnails
         
-        # Process the video (this will compress and analyze)
-        result = video_processor.process(file_path, run_dir)
+        # Use pre-compressed video if available, otherwise compress now
+        if compressed_path and os.path.exists(compressed_path):
+            if logger:
+                logger.info(f"Using pre-compressed video: {compressed_path}")
+            video_to_analyze = compressed_path
+        else:
+            if logger:
+                logger.info("No pre-compressed video found, compressing now...")
+            # Compress the video now
+            compressor = VideoCompressor(compression_config)
+            compressed_path = compressor.compress(file_path, run_dir)
+            video_to_analyze = compressed_path
+        
+        # Process the video (this will analyze the compressed video)
+        result = video_processor.process(video_to_analyze, run_dir)
         
         if not result.get('success'):
             if logger:
