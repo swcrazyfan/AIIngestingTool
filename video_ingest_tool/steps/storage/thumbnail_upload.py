@@ -108,7 +108,7 @@ def upload_thumbnails_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
                 file_exists = False
                 try:
                     # List files in the path to check if the file exists
-                    files = client.storage.from_('videos').list(storage_path)
+                    files = client.storage.from_('clips').list(storage_path)
                     file_exists = any(file_obj.get('name') == filename for file_obj in files)
                 except Exception as e:
                     # If the directory doesn't exist, this will raise an exception
@@ -119,7 +119,7 @@ def upload_thumbnails_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
                         logger.info(f"Thumbnail already exists, skipping upload: {storage_path_with_file}")
                 else:
                     # Upload the file to storage
-                    upload_result = client.storage.from_('videos').upload(
+                    upload_result = client.storage.from_('clips').upload(
                         path=storage_path_with_file,
                         file=file_content,
                         file_options={"content-type": content_type}
@@ -128,7 +128,7 @@ def upload_thumbnails_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
                         logger.info(f"Uploaded thumbnail: {storage_path_with_file}")
                 
                 # Get the public URL in either case
-                thumbnail_url = client.storage.from_('videos').get_public_url(storage_path_with_file)
+                thumbnail_url = client.storage.from_('clips').get_public_url(storage_path_with_file)
                 # Remove any trailing question mark
                 thumbnail_url = thumbnail_url.rstrip('?')
                 thumbnail_urls.append({
@@ -140,7 +140,7 @@ def upload_thumbnails_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
             except Exception as e:
                 if "Duplicate" in str(e):
                     # File already exists, just get the URL
-                    thumbnail_url = client.storage.from_('videos').get_public_url(storage_path_with_file)
+                    thumbnail_url = client.storage.from_('clips').get_public_url(storage_path_with_file)
                     # Remove any trailing question mark
                     thumbnail_url = thumbnail_url.rstrip('?')
                     thumbnail_urls.append({
@@ -201,7 +201,7 @@ def upload_thumbnails_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
                 # Check if the file already exists
                 file_exists = False
                 try:
-                    files = client.storage.from_('videos').list(storage_path)
+                    files = client.storage.from_('clips').list(storage_path)
                     file_exists = any(file_obj.get('name') == filename for file_obj in files)
                 except Exception:
                     file_exists = False
@@ -211,7 +211,7 @@ def upload_thumbnails_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
                         logger.info(f"AI thumbnail already exists, skipping upload: {storage_path_with_file}")
                 else:
                     # Upload the file to storage
-                    upload_result = client.storage.from_('videos').upload(
+                    upload_result = client.storage.from_('clips').upload(
                         path=storage_path_with_file,
                         file=file_content,
                         file_options={"content-type": content_type}
@@ -220,7 +220,7 @@ def upload_thumbnails_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
                         logger.info(f"Uploaded AI thumbnail: {storage_path_with_file}")
                 
                 # Get the public URL
-                thumbnail_url = client.storage.from_('videos').get_public_url(storage_path_with_file)
+                thumbnail_url = client.storage.from_('clips').get_public_url(storage_path_with_file)
                 # Remove any trailing question mark
                 thumbnail_url = thumbnail_url.rstrip('?')
                 
@@ -238,7 +238,7 @@ def upload_thumbnails_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
             except Exception as e:
                 if "Duplicate" in str(e):
                     # File already exists, just get the URL
-                    thumbnail_url = client.storage.from_('videos').get_public_url(storage_path_with_file)
+                    thumbnail_url = client.storage.from_('clips').get_public_url(storage_path_with_file)
                     # Remove any trailing question mark
                     thumbnail_url = thumbnail_url.rstrip('?')
                     ai_thumbnail_urls.append({

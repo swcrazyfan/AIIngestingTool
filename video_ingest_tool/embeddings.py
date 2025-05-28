@@ -140,17 +140,19 @@ def prepare_embedding_content(video_data) -> Tuple[str, str, Dict[str, Any]]:
         video_data.analysis.ai_analysis.visual_analysis.shot_types):
         # Extract shot types and convert to natural language
         for shot in video_data.analysis.ai_analysis.visual_analysis.shot_types:
-            if shot.shot_type:
-                # Convert technical terms to searchable concepts
-                shot_type = shot.shot_type.lower()
-                if "static" in shot_type or "locked" in shot_type:
-                    shot_style_parts.append("stationary camera work")
-                elif "wide" in shot_type:
-                    shot_style_parts.append("wide angle cinematography")
-                elif "close" in shot_type:
-                    shot_style_parts.append("close-up footage")
-                else:
-                    shot_style_parts.append(f"{shot_type} cinematography")
+            if hasattr(shot, 'shot_attributes_ordered') and shot.shot_attributes_ordered:
+                primary_type = shot.shot_attributes_ordered[0].lower()
+                # Use primary_type and all attributes for embedding logic
+                for attr in shot.shot_attributes_ordered:
+                    # Add each attribute to embedding concepts
+                    if "static" in attr or "locked" in attr:
+                        shot_style_parts.append("stationary camera work")
+                    elif "wide" in attr:
+                        shot_style_parts.append("wide angle cinematography")
+                    elif "close" in attr:
+                        shot_style_parts.append("close-up footage")
+                    else:
+                        shot_style_parts.append(f"{attr} cinematography")
     
     if shot_style_parts:
         summary_parts.append(f"Features {', '.join(set(shot_style_parts))}")
@@ -214,10 +216,12 @@ def prepare_embedding_content(video_data) -> Tuple[str, str, Dict[str, Any]]:
         video_data.analysis.ai_analysis.visual_analysis and
         video_data.analysis.ai_analysis.visual_analysis.shot_types):
         for shot in video_data.analysis.ai_analysis.visual_analysis.shot_types:
-            if shot.shot_type:
-                # Extract key concepts from shot types
-                shot_words = shot.shot_type.lower().replace("/", " ").replace("-", " ").split()
-                visual_concepts.extend([word for word in shot_words if len(word) > 2])
+            if hasattr(shot, 'shot_attributes_ordered') and shot.shot_attributes_ordered:
+                primary_type = shot.shot_attributes_ordered[0].lower()
+                # Use primary_type and all attributes for embedding logic
+                for attr in shot.shot_attributes_ordered:
+                    # Add each attribute to embedding concepts
+                    visual_concepts.append(attr.lower())
     
     # Activity and purpose concepts
     activity_concepts = []
@@ -363,6 +367,19 @@ def prepare_embedding_content(video_data) -> Tuple[str, str, Dict[str, Any]]:
     
     keyword_concepts.extend(all_concepts)
     keyword_content = " ".join([str(k) for k in keyword_concepts if k])
+    
+    # Add shot attributes from all shots
+    try:
+        shots = video_data.analysis.ai_analysis.visual_analysis.shot_types
+        all_shot_attrs = []
+        for shot in shots:
+            attrs = getattr(shot, 'shot_attributes_ordered', None)
+            if attrs:
+                all_shot_attrs.extend(attrs)
+        if all_shot_attrs:
+            keyword_content += " Shot Attributes: " + ", ".join(all_shot_attrs)
+    except Exception:
+        pass
     
     # Truncate both contents
     summary_content, summary_truncation = truncate_text(summary_content, 3500)

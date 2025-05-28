@@ -462,7 +462,7 @@ def search_videos():
     success, results_or_error, status_code = perform_search(query, search_type, limit)
     return jsonify(results_or_error), status_code
 
-@app.route('/api/videos', methods=['GET'])
+@app.route('/api/clips', methods=['GET'])
 def list_videos_endpoint():
     """HTTP API endpoint for listing videos with sorting and filtering."""
     if not BACKEND_AVAILABLE:

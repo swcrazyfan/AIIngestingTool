@@ -73,7 +73,8 @@ def create_model_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
                 for shot in visual_data.get('shot_types', []):
                     shot_types.append(ShotType(
                         timestamp=shot.get('timestamp', '00:00:000'),
-                        shot_type=shot.get('shot_type', ''),
+                        duration_seconds=shot.get('duration_seconds'),
+                        shot_attributes_ordered=shot.get('shot_attributes_ordered', []),
                         description=shot.get('description', ''),
                         confidence=shot.get('confidence')
                     ))
@@ -309,7 +310,11 @@ def create_model_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
         ref_frames=master_metadata.get('ref_frames'),
         gop_size=master_metadata.get('gop_size'),
         scan_type=master_metadata.get('scan_type'),
-        field_order=master_metadata.get('field_order')
+        field_order=master_metadata.get('field_order'),
+        format_name=master_metadata.get('format_name'),
+        format_long_name=master_metadata.get('format_long_name'),
+        codec_long_name=master_metadata.get('codec_long_name'),
+        file_size_bytes=master_metadata.get('file_size_bytes')
     )
 
     video_resolution_obj = VideoResolution(
@@ -388,7 +393,8 @@ def create_model_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
         lens_model=master_metadata.get('lens_model'),
         focal_length=camera_focal_length_obj,
         settings=camera_settings_obj,
-        location=camera_location_obj
+        location=camera_location_obj,
+        camera_serial_number=master_metadata.get('camera_serial_number')
     )
 
     # Extract content tags and summary from AI analysis if available
@@ -411,15 +417,18 @@ def create_model_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
         full_ai_analysis = data.get('full_ai_analysis_data', {})
         if full_ai_analysis.get('visual_analysis', {}).get('shot_types'):
             shot_types = full_ai_analysis['visual_analysis']['shot_types']
-            unique_shot_types = set()
+            unique_shot_attributes = set()
             for shot in shot_types:
-                shot_type = shot.get('shot_type', '').strip()
-                if shot_type:
-                    unique_shot_types.add(shot_type)
-            
-            # Add each unique shot type as a tag
-            for shot_type in sorted(unique_shot_types):
-                content_tags.append(shot_type)
+                attrs = shot.get('shot_attributes_ordered', [])
+                if attrs:
+                    # Use the first attribute as the primary for tags
+                    unique_shot_attributes.add(attrs[0])
+                    # Optionally, add all attributes for richer tags
+                    for attr in attrs:
+                        unique_shot_attributes.add(attr)
+            # Add each unique shot attribute as a tag
+            for attr in sorted(unique_shot_attributes):
+                content_tags.append(attr)
         
         # Use overall summary as content summary
         content_summary = ai_analysis_summary.get('overall_summary')
