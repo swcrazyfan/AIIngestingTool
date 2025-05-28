@@ -275,6 +275,12 @@ const IngestPanel: React.FC = () => {
                                   ? 'Completed'
                                   : file.status.charAt(0).toUpperCase() + file.status.slice(1)}
                           </span>
+                          {file.status === 'failed' && file.error && (
+                            <span className="file-error">{file.error}</span>
+                          )}
+                          {file.status === 'skipped' && file.error && (
+                            <span className="file-skipped-reason">{file.error}</span>
+                          )}
                           {file.status === 'processing' && file.current_step && (
                             <span className="file-step">{file.current_step}</span>
                           )}
