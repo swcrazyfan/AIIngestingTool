@@ -184,3 +184,26 @@ def categorize_focal_length(focal_length: Optional[Union[str, int, float]], rang
         return None
     except (ValueError, TypeError):
         return None
+
+
+def get_json_files(directory: str) -> list:
+    """
+    Recursively find all JSON files in a directory.
+    
+    Args:
+        directory: Path to the directory to search
+        
+    Returns:
+        list: List of paths to JSON files
+    """
+    json_files = []
+    
+    if not os.path.exists(directory) or not os.path.isdir(directory):
+        return json_files
+        
+    for root, _, files in os.walk(directory):
+        for file in files:
+            if file.lower().endswith('.json'):
+                json_files.append(os.path.join(root, file))
+                
+    return json_files

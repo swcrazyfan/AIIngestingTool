@@ -57,5 +57,10 @@ Thumbs.db
 /output_poselib
 /test_poselib_output
 /thumbnails_output
-P1000011.MOV
+/test
 *.mp4
+*.MOV
+*.MP4
+*.mp4
+*.MOV
+/ait-extension/node_modules

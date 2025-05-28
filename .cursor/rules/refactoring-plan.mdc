@@ -1,0 +1,163 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# AI Thumbnail Implementation Guide
+
+This guide outlines the implementation process for the AI thumbnail selection and embedding features according to the plan in `ai_thumbnail_plan.md`. Follow this guide to ensure consistent implementation practices.
+
+## Core Principles
+
+1. **Feature Cohesion**: Each component should focus on a single aspect of the AI thumbnail functionality
+2. **Consistent Naming**: Use `AI_` prefix for AI-selected thumbnails and maintain timestamp formatting
+3. **Documentation**: Every module and function requires proper docstrings with parameter descriptions
+4. **Type Safety**: All functions should have complete type annotations
+5. **Error Handling**: Include appropriate error handling for API calls and file operations
+6. **Supabase MCP**: Use Supabase MCP tools for ALL database operations and schema changes
+7. **Conda Environment**: Always use the `video-ingest` conda environment for development and testing
+
+## How to Use This Implementation Guide
+
+### Before Starting Any Task
+
+1. **Check Current Progress**: Open `ai_thumbnail_plan.md` to see which tasks are waiting (⬜), in progress (🔄), or complete (✅)
+2. **Review Related Components**: Understand how the AI thumbnail feature integrates with existing code
+3. **Review API Documentation**: Check documentation for external services (LiteLLM, Supabase, etc.)
+4. **Examine Existing Thumbnails**: Review how regular thumbnails are currently processed and stored
+
+### Starting a Task
+
+1. **Mark Task as In Progress**: Update the checkbox in `ai_thumbnail_plan.md` from ⬜ to 🔄
+2. **Create Directory Structure**: Ensure the target directories exist before creating files
+3. **Review Related Code**: Understand the existing code that interacts with the new components
+
+### During Implementation
+
+1. **Follow Single Responsibility**: Each file should handle exactly one aspect of AI thumbnail processing
+2. **Supabase MCP Usage**: 
+   - Use `mcp_supabase_execute_sql` for ALL database queries
+   - Use `mcp_supabase_apply_migration` for schema changes
+   - NEVER use direct SQL connections
+3. **Proper Documentation**: Include docstrings for all functions with parameter and return type descriptions
+4. **Storage Pattern Consistency**: Follow the same storage path pattern used for regular thumbnails
+5. **Testing**: Test each component before moving to dependent components
+
+### Verifying Changes
+
+1. **Test Pipeline Integration**: Verify that AI thumbnail steps integrate properly with the pipeline
+2. **Check Database Updates**: Verify that database changes are correctly applied through Supabase MCP
+3. **Validate Thumbnail Generation**: Ensure thumbnails are correctly generated with proper naming
+4. **Validate Storage Upload**: Confirm thumbnails are uploaded to the correct Supabase storage paths
+5. **Embedding Verification**: Test embedding generation and storage in vector database
+
+### Completing a Task
+
+1. **Mark as Complete**: Update the checkbox in `ai_thumbnail_plan.md` from 🔄 to ✅
+2. **Document Integration Points**: Note how the component integrates with other parts of the system
+3. **Select Next Task**: Choose the next logical task based on dependencies
+
+## Implementation Specifics
+
+### Database Operations
+
+For ALL database operations, use Supabase MCP tools:
+
+```python
+# Example: Adding new columns to clips table
+def add_ai_thumbnail_columns():
+    # CORRECT: Using MCP
+    mcp_supabase_execute_sql(
+        project_id="your_project_id",
+        query="""
+        ALTER TABLE clips ADD COLUMN IF NOT EXISTS ai_thumbnail_1_path TEXT;
+        ALTER TABLE clips ADD COLUMN IF NOT EXISTS ai_thumbnail_2_path TEXT;
+        ALTER TABLE clips ADD COLUMN IF NOT EXISTS ai_thumbnail_3_path TEXT;
+        """
+    )
+    
+    # INCORRECT: Do NOT use direct SQL connections
+    # conn = psycopg2.connect(...)
+    # cursor = conn.cursor()
+    # cursor.execute("ALTER TABLE...")
+```
+
+### Thumbnail Naming Convention
+
+Always follow this naming convention for AI-selected thumbnails:
+
+```
+AI_{original_filename}_{timestamp}_{rank}.jpg
+```
+
+Examples:
+- `AI_video.mp4_5s600ms_1.jpg` (rank 1 thumbnail at 5.6 seconds)
+- `AI_P1000011.MOV_10s800ms_2.jpg` (rank 2 thumbnail at 10.8 seconds)
+
+### Storage Path Structure
+
+Maintain consistency with existing thumbnails:
+
+```
+users/{user_id}/videos/{clip_id}/thumbnails/AI_{filename}_{timestamp}_{rank}.jpg
+```
+
+## Progress Tracking
+
+Progress is tracked in `ai_thumbnail_plan.md` using these symbols:
+
+- ⬜ = Waiting / Not Started
+- 🔄 = In Progress
+- ✅ = Completed
+
+## Example Workflow
+
+1. Select a task: "Update AI analysis schema"
+2. Mark it as in progress (🔄)
+3. Create or update the necessary files:
+   - `video_processor/analysis.py`
+4. Use Supabase MCP for any database changes
+5. Test functionality with sample videos
+6. Mark the task as completed (✅)
+7. Move to the next task
+
+## Implementation Sequence
+
+Follow this implementation sequence to minimize dependency issues:
+
+1. First: Schema and model updates (no database changes yet)
+2. Second: Thumbnail processing logic
+3. Third: Database schema updates using Supabase MCP
+4. Fourth: Embedding generation
+5. Fifth: Integration with existing pipeline
+6. Last: UI and search updates
+
+## Common Supabase MCP Operations
+
+```python
+# List organizations
+organizations = mcp_supabase_list_organizations(random_string="check")
+
+# List projects
+projects = mcp_supabase_list_projects(random_string="check")
+
+# Get project details
+project = mcp_supabase_get_project(id="your_project_id")
+
+# Execute SQL query
+result = mcp_supabase_execute_sql(
+    project_id="your_project_id",
+    query="SELECT * FROM clips LIMIT 5;"
+)
+
+# Apply migration
+mcp_supabase_apply_migration(
+    project_id="your_project_id",
+    name="add_ai_thumbnail_columns",
+    query="""
+    ALTER TABLE clips ADD COLUMN IF NOT EXISTS ai_thumbnail_1_path TEXT;
+    """
+)
+```
+
+Always refer to `ai_thumbnail_plan.md` for the detailed implementation plan and current progress status. 

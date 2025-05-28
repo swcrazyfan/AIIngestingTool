@@ -8,25 +8,27 @@ import os
 import time
 import json
 import typer
+import requests
 from typing import List, Dict, Optional
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn
 from rich.panel import Panel
 from rich.table import Table
+from rich.progress import BarColumn, Progress
 
-from .config import setup_logging, console
+from .config import setup_logging, console, DEFAULT_COMPRESSION_CONFIG
 from .discovery import scan_directory
-from .processor import (
-    process_video_file, 
-    get_default_pipeline_config, 
-    get_available_pipeline_steps
-)
+from .pipeline.registry import get_available_pipeline_steps, get_default_pipeline
+from .steps import process_video_file
+from .config.settings import get_default_pipeline_config
 from .output import save_to_json, save_run_outputs
-from .video_processor import DEFAULT_COMPRESSION_CONFIG
 from .utils import calculate_checksum
 
 # Create Typer app
 app = typer.Typer(help="AI-Powered Video Ingest & Catalog Tool")
+
+# API server URL
+API_SERVER_URL = "http://localhost:8000/api"
 
 @app.command()
 def ingest(
@@ -41,6 +43,7 @@ def ingest(
     compression_bitrate: str = typer.Option(DEFAULT_COMPRESSION_CONFIG['video_bitrate'], "--bitrate", help=f"Video bitrate for compression (default: {DEFAULT_COMPRESSION_CONFIG['video_bitrate']})"),
     store_database: bool = typer.Option(False, "--store-database", help="Store results in Supabase database (requires authentication)"),
     generate_embeddings: bool = typer.Option(False, "--generate-embeddings", help="Generate vector embeddings for semantic search (requires authentication)"),
+    upload_thumbnails: bool = typer.Option(False, "--upload-thumbnails", help="Upload thumbnails to Supabase storage (requires authentication)"),
     force_reprocess: bool = typer.Option(False, "--force-reprocess", "-f", help="Force reprocessing of files even if they already exist in database")
 ):
     """
@@ -106,8 +109,8 @@ def ingest(
                 logger.warning(f"Unknown step to enable: {step}")
                 console.print(f"[yellow]Warning:[/yellow] Unknown step '{step}'")
     
-    # Handle database storage and embeddings
-    if store_database or generate_embeddings:
+    # Handle database storage, embeddings, and thumbnail uploads
+    if store_database or generate_embeddings or upload_thumbnails:
         from .auth import AuthManager
         from .supabase_config import verify_connection
         
@@ -136,6 +139,13 @@ def ingest(
             pipeline_config['database_storage'] = True  # Embeddings require database
             logger.info("Enabled vector embeddings generation")
             console.print("[green]✓[/green] Vector embeddings enabled")
+        
+        # Enable thumbnail uploads if requested (also requires database storage)
+        if upload_thumbnails:
+            pipeline_config['thumbnail_upload'] = True
+            pipeline_config['database_storage'] = True  # Thumbnail uploads require database storage for clip_id
+            logger.info("Enabled thumbnail uploads")
+            console.print("[green]✓[/green] Thumbnail uploads enabled")
     
     # Save the active configuration to the run directory
     config_path = os.path.join(run_dir, "pipeline_config.json")
@@ -312,7 +322,64 @@ def list_steps():
 search_app = typer.Typer(help="Search video catalog")
 app.add_typer(search_app, name="search")
 
-@search_app.command("query")
+@search_app.command("recent")
+def list_recent_videos(
+    limit: int = typer.Option(10, "--limit", "-l", help="Maximum number of results"),
+    output_format: str = typer.Option("table", "--format", help="Output format: table, json")
+):
+    """List recent videos from your catalog."""
+    from .search import VideoSearcher, format_search_results # Import here to avoid circular deps
+    from .auth import AuthManager # Import AuthManager
+
+    auth_manager = AuthManager()
+    if not auth_manager.get_current_session():
+        console.print("[red]Authentication required. Please login using 'ait auth login'.[/red]")
+        raise typer.Exit(code=1)
+
+    try:
+        video_searcher = VideoSearcher()
+        # Call the new list_videos method, default sort is 'processed_at' descending
+        results = video_searcher.list_videos(limit=limit) 
+
+        if not results:
+            console.print("No recent videos found.")
+            return
+
+        if output_format == "json":
+            # For JSON, we might not need the 'format_search_results' if list_videos returns sufficient data
+            # Or, adapt format_search_results if specific formatting is still needed
+            console.print_json(data=results)
+        else:
+            # Assuming 'list_videos' returns data in a structure that format_search_results can handle
+            # or that we can adapt. For now, let's assume it's compatible or we'll adjust format_search_results later.
+            # We pass a generic search_type like 'recent' or None if format_search_results needs it.
+            # For now, let's try to display raw fields if format_search_results is not directly applicable.
+            
+            table = Table(title=f"Recent Videos (Top {limit})")
+            if results:
+                # Dynamically create columns from the keys of the first result
+                # This makes it flexible if list_videos returns different fields than search
+                headers = results[0].keys()
+                for header in headers:
+                    table.add_column(header.replace("_", " ").title())
+                
+                for item in results:
+                    table.add_row(*[str(item.get(header, "N/A")) for header in headers])
+            
+            console.print(table)
+
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        console.print(f"[red]An unexpected error occurred: {e}[/red]")
+        logger.exception("Error listing recent videos in CLI") # Make sure logger is defined
+        raise typer.Exit(code=1)
+
+
+@search_app.command("query") 
+# Renamed from 'search' to 'query' to avoid conflict with the 'search' subcommand group
+# and to be more descriptive of its action (querying with text)
 def search_videos(
     query: str = typer.Argument(..., help="Search query"),
     search_type: str = typer.Option("hybrid", "--type", "-t", help="Search type: semantic, fulltext, hybrid, transcripts"),
@@ -327,9 +394,19 @@ def search_videos(
     from .search import VideoSearcher, format_search_results, format_duration
     
     # Validate search type
-    valid_types = ["semantic", "fulltext", "hybrid", "transcripts"]
+    valid_types = ["semantic", "fulltext", "hybrid", "transcripts", "similar", "recent"]
     if search_type not in valid_types:
         console.print(f"[red]Error:[/red] Invalid search type. Must be one of: {', '.join(valid_types)}")
+        raise typer.Exit(1)
+        
+    # Handle special search types
+    if search_type == "recent":
+        # Redirect to the recent command
+        console.print("[yellow]Redirecting to 'recent' command...[/yellow]")
+        list_recent_videos(limit=limit, output_format=output_format)
+        return
+    elif search_type == "similar":
+        console.print("[red]Error:[/red] For similar search, use: python -m video_ingest_tool search similar <clip_id>")
         raise typer.Exit(1)
     
     try:
@@ -389,14 +466,20 @@ def search_videos(
                 
                 if show_scores:
                     if search_type == "hybrid":
+                        search_rank_val = result.get('search_rank')
+                        search_rank_str = f"{search_rank_val:.3f}" if search_rank_val is not None else "N/A"
                         row.extend([
-                            f"{result.get('search_rank', 0):.3f}",
+                            search_rank_str,
                             result.get('match_type', 'unknown')
                         ])
                     elif search_type == "semantic":
-                        row.append(f"{result.get('combined_similarity', 0):.3f}")
+                        combined_similarity_val = result.get('combined_similarity')
+                        combined_similarity_str = f"{combined_similarity_val:.3f}" if combined_similarity_val is not None else "N/A"
+                        row.append(combined_similarity_str)
                     elif search_type in ["fulltext", "transcripts"]:
-                        row.append(f"{result.get('fts_rank', 0):.3f}")
+                        fts_rank_val = result.get('fts_rank')
+                        fts_rank_str = f"{fts_rank_val:.3f}" if fts_rank_val is not None else "N/A"
+                        row.append(fts_rank_str)
                 
                 results_table.add_row(*row)
             
@@ -576,6 +659,91 @@ def show_catalog_stats():
     except Exception as e:
         console.print(f"[red]Failed to get statistics:[/red] {str(e)}")
         raise typer.Exit(1)
+
+@app.command("check-progress")
+def check_ingest_progress():
+    """Check the progress of the current ingest job running on the API server.
+    
+    This command connects to the API server (http://localhost:8000) and retrieves
+    the current status of any running ingest job. If no job is running, it will
+    show an idle status.
+    """
+    try:
+        console.print("[bold]Checking ingest progress on API server...[/bold]")
+        response = requests.get(f"{API_SERVER_URL}/ingest/progress")
+        
+        if response.status_code != 200:
+            console.print(f"[red]Error: API server returned status code {response.status_code}[/red]")
+            if response.status_code == 404:
+                console.print("[yellow]Endpoint not found. Make sure the API server is running and up to date.[/yellow]")
+            return
+            
+        progress_data = response.json()
+        
+        # Create a styled status indicator
+        status = progress_data.get("status", "unknown")
+        status_color = {
+            "idle": "white",
+            "running": "blue",
+            "scanning": "cyan",
+            "processing": "green",
+            "completed": "green",
+            "failed": "red"
+        }.get(status, "yellow")
+        
+        # Create a progress bar
+        progress_value = progress_data.get("progress", 0)
+        progress = Progress(
+            "[progress.description]{task.description}",
+            BarColumn(bar_width=40),
+            "[progress.percentage]{task.percentage:>3.0f}%",
+            console=console
+        )
+        
+        # Display the progress information in a panel
+        console.print(Panel.fit(
+            f"[bold]Status:[/bold] [{status_color}]{status.upper()}[/{status_color}]\n"
+            f"[bold]Message:[/bold] {progress_data.get('message', 'No message')}\n",
+            title="Ingest Progress"
+        ))
+        
+        # Show the progress bar
+        with progress:
+            task = progress.add_task("Progress", total=100, completed=progress_value)
+            progress.update(task, completed=progress_value)
+        
+        # Show additional statistics if available
+        if "processed_count" in progress_data or "results_count" in progress_data:
+            stats_table = Table(title="Processing Statistics")
+            stats_table.add_column("Metric", style="cyan")
+            stats_table.add_column("Value", style="green")
+            
+            processed = progress_data.get("processed_count", progress_data.get("results_count", 0))
+            stats_table.add_row("Processed Files", str(processed))
+            
+            if "total_count" in progress_data:
+                stats_table.add_row("Total Files", str(progress_data["total_count"]))
+                
+            if "failed_count" in progress_data:
+                failed_color = "red" if progress_data["failed_count"] > 0 else "green"
+                stats_table.add_row("Failed Files", f"[{failed_color}]{progress_data['failed_count']}[/{failed_color}]")
+                
+            console.print(stats_table)
+            
+        # Show next steps based on status
+        if status == "idle":
+            console.print("\n[yellow]No active ingest job. Use 'ingest' command or the API to start processing.[/yellow]")
+        elif status == "completed":
+            console.print("\n[green]Processing completed successfully![/green]")
+        elif status == "failed":
+            console.print("\n[red]Processing failed. Check the API server logs for details.[/red]")
+                
+    except requests.exceptions.ConnectionError:
+        console.print("[red]Error: Could not connect to the API server[/red]")
+        console.print("[yellow]Make sure the API server is running on http://localhost:8000[/yellow]")
+        console.print("[yellow]Start it with 'python api_server.py' from the project root[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error checking progress: {str(e)}[/red]")
 
 if __name__ == "__main__":
     app()

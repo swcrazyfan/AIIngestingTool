@@ -1,0 +1,60 @@
+.accordion-item {
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  margin-bottom: 10px;
+  background-color: #2c2c2c; // Slightly different from modal content for distinction
+  overflow: hidden; // Ensures content doesn't spill before animation (if added)
+
+  .accordion-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 15px;
+    background-color: #333333;
+    color: #e0e0e0;
+    font-weight: bold;
+    font-size: 0.95em;
+    cursor: pointer;
+    -webkit-user-select: none; // Safari
+    user-select: none; // Prevents text selection on click
+
+    &:hover {
+      background-color: #3f3f3f;
+    }
+
+    .accordion-icon {
+      font-size: 1.2em;
+      transition: transform 0.2s ease-in-out;
+    }
+  }
+
+  .accordion-content {
+    padding: 15px;
+    border-top: 1px solid #3a3a3a;
+    background-color: #252525;
+    color: #d0d0d0;
+    font-size: 0.9em;
+
+    pre {
+      background-color: #1e1e1e;
+      padding: 10px;
+      border-radius: 4px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      max-height: 300px; // Increased max-height for accordion view
+      overflow-y: auto;
+      font-size: 0.85em;
+    }
+
+    .full-transcript-text {
+      max-height: 300px; // Increased max-height
+      overflow-y: auto;
+      font-size: 0.9em;
+      line-height: 1.5;
+      padding: 8px;
+      white-space: pre-wrap;
+      background-color: #1e1e1e;
+      border-radius: 4px;
+    }
+  }
+}

@@ -62,7 +62,7 @@ def truncate_text(text: str, max_tokens: int = 3500) -> Tuple[str, str]:
                         break
                 rebuilt_text = test_text
         
-        # Fallback to token-based truncation with ellipsis
+    # Fallback to token-based truncation with ellipsis
         return truncated_text + "...", "token_boundary"
         
     except Exception as e:
@@ -83,7 +83,7 @@ def truncate_text(text: str, max_tokens: int = 3500) -> Tuple[str, str]:
 def prepare_embedding_content(video_data) -> Tuple[str, str, Dict[str, Any]]:
     """
     Prepare semantic content for embedding generation optimized for hybrid search.
-    Technical specs are handled by full-text search.
+    Technical specs are handled by full-text search, but now also included in keyword embeddings.
     
     Args:
         video_data: VideoIngestOutput model
@@ -94,6 +94,9 @@ def prepare_embedding_content(video_data) -> Tuple[str, str, Dict[str, Any]]:
     
     # SUMMARY EMBEDDING: Semantic narrative content
     summary_parts = []
+    
+    # Initialize siglip_summary at the top level
+    siglip_summary = None
     
     # Core content description
     if video_data.analysis and video_data.analysis.ai_analysis and video_data.analysis.ai_analysis.summary:
@@ -106,6 +109,10 @@ def prepare_embedding_content(video_data) -> Tuple[str, str, Dict[str, Any]]:
         # Main semantic description (the "what" and "why")
         if summary.overall:
             summary_parts.append(summary.overall)
+        
+        # Condensed summary for SigLIP
+        if hasattr(summary, 'condensed_summary') and summary.condensed_summary:
+            siglip_summary = summary.condensed_summary
         
         # Key activities in natural language
         if summary.key_activities:
@@ -133,17 +140,19 @@ def prepare_embedding_content(video_data) -> Tuple[str, str, Dict[str, Any]]:
         video_data.analysis.ai_analysis.visual_analysis.shot_types):
         # Extract shot types and convert to natural language
         for shot in video_data.analysis.ai_analysis.visual_analysis.shot_types:
-            if shot.shot_type:
-                # Convert technical terms to searchable concepts
-                shot_type = shot.shot_type.lower()
-                if "static" in shot_type or "locked" in shot_type:
-                    shot_style_parts.append("stationary camera work")
-                elif "wide" in shot_type:
-                    shot_style_parts.append("wide angle cinematography")
-                elif "close" in shot_type:
-                    shot_style_parts.append("close-up footage")
-                else:
-                    shot_style_parts.append(f"{shot_type} cinematography")
+            if hasattr(shot, 'shot_attributes_ordered') and shot.shot_attributes_ordered:
+                primary_type = shot.shot_attributes_ordered[0].lower()
+                # Use primary_type and all attributes for embedding logic
+                for attr in shot.shot_attributes_ordered:
+                    # Add each attribute to embedding concepts
+                    if "static" in attr or "locked" in attr:
+                        shot_style_parts.append("stationary camera work")
+                    elif "wide" in attr:
+                        shot_style_parts.append("wide angle cinematography")
+                    elif "close" in attr:
+                        shot_style_parts.append("close-up footage")
+                    else:
+                        shot_style_parts.append(f"{attr} cinematography")
     
     if shot_style_parts:
         summary_parts.append(f"Features {', '.join(set(shot_style_parts))}")
@@ -167,7 +176,7 @@ def prepare_embedding_content(video_data) -> Tuple[str, str, Dict[str, Any]]:
     
     summary_content = ". ".join(summary_parts)
     
-    # KEYWORD EMBEDDING: Concept tags and semantic keywords
+    # KEYWORD EMBEDDING: Concept tags, semantic keywords, and ALL technical metadata
     keyword_concepts = []
     
     # Core semantic concepts from transcript
@@ -207,10 +216,12 @@ def prepare_embedding_content(video_data) -> Tuple[str, str, Dict[str, Any]]:
         video_data.analysis.ai_analysis.visual_analysis and
         video_data.analysis.ai_analysis.visual_analysis.shot_types):
         for shot in video_data.analysis.ai_analysis.visual_analysis.shot_types:
-            if shot.shot_type:
-                # Extract key concepts from shot types
-                shot_words = shot.shot_type.lower().replace("/", " ").replace("-", " ").split()
-                visual_concepts.extend([word for word in shot_words if len(word) > 2])
+            if hasattr(shot, 'shot_attributes_ordered') and shot.shot_attributes_ordered:
+                primary_type = shot.shot_attributes_ordered[0].lower()
+                # Use primary_type and all attributes for embedding logic
+                for attr in shot.shot_attributes_ordered:
+                    # Add each attribute to embedding concepts
+                    visual_concepts.append(attr.lower())
     
     # Activity and purpose concepts
     activity_concepts = []
@@ -229,6 +240,122 @@ def prepare_embedding_content(video_data) -> Tuple[str, str, Dict[str, Any]]:
         if video_data.analysis.ai_analysis.summary.content_category:
             category_concepts.append(video_data.analysis.ai_analysis.summary.content_category.lower())
     
+    # --- Camera and EXIF ---
+    if hasattr(video_data, 'camera') and video_data.camera:
+        if video_data.camera.make:
+            keyword_concepts.append(video_data.camera.make)
+        if video_data.camera.model:
+            keyword_concepts.append(video_data.camera.model)
+        if video_data.camera.lens_model:
+            keyword_concepts.append(video_data.camera.lens_model)
+        if video_data.camera.focal_length:
+            if video_data.camera.focal_length.value_mm:
+                keyword_concepts.append(f"focal length {video_data.camera.focal_length.value_mm}mm")
+            if video_data.camera.focal_length.category:
+                category = video_data.camera.focal_length.category.lower()
+                keyword_concepts.append(category)
+                keyword_concepts.append(f"{category} shot")
+        if video_data.camera.settings:
+            if video_data.camera.settings.iso:
+                keyword_concepts.append(f"ISO {video_data.camera.settings.iso}")
+            if video_data.camera.settings.shutter_speed:
+                keyword_concepts.append(f"shutter speed {video_data.camera.settings.shutter_speed}")
+            if video_data.camera.settings.f_stop:
+                keyword_concepts.append(f"f/{video_data.camera.settings.f_stop}")
+            if video_data.camera.settings.exposure_mode:
+                keyword_concepts.append(f"{video_data.camera.settings.exposure_mode} exposure")
+            if video_data.camera.settings.white_balance:
+                keyword_concepts.append(f"{video_data.camera.settings.white_balance} white balance")
+        if video_data.camera.location:
+            if video_data.camera.location.location_name:
+                keyword_concepts.append(video_data.camera.location.location_name)
+            if video_data.camera.location.gps_latitude and video_data.camera.location.gps_longitude:
+                keyword_concepts.append(f"gps {video_data.camera.location.gps_latitude},{video_data.camera.location.gps_longitude}")
+
+    # --- Video Codec/Container ---
+    if hasattr(video_data, 'video') and video_data.video:
+        if video_data.video.codec:
+            if video_data.video.codec.name:
+                keyword_concepts.append(video_data.video.codec.name)
+            if video_data.video.codec.profile:
+                keyword_concepts.append(video_data.video.codec.profile)
+            if video_data.video.codec.level:
+                keyword_concepts.append(f"level {video_data.video.codec.level}")
+            if video_data.video.codec.bitrate_kbps:
+                keyword_concepts.append(f"{video_data.video.codec.bitrate_kbps} kbps")
+            if video_data.video.codec.bit_depth:
+                keyword_concepts.append(f"{video_data.video.codec.bit_depth}-bit")
+            if video_data.video.codec.chroma_subsampling:
+                keyword_concepts.append(f"chroma {video_data.video.codec.chroma_subsampling}")
+            if video_data.video.codec.pixel_format:
+                keyword_concepts.append(video_data.video.codec.pixel_format)
+            if video_data.video.codec.bitrate_mode:
+                keyword_concepts.append(video_data.video.codec.bitrate_mode)
+            if video_data.video.codec.cabac is not None:
+                keyword_concepts.append(f"cabac {video_data.video.codec.cabac}")
+            if video_data.video.codec.ref_frames:
+                keyword_concepts.append(f"{video_data.video.codec.ref_frames} ref frames")
+            if video_data.video.codec.gop_size:
+                keyword_concepts.append(f"gop size {video_data.video.codec.gop_size}")
+            if video_data.video.codec.scan_type:
+                keyword_concepts.append(video_data.video.codec.scan_type)
+            if video_data.video.codec.field_order:
+                keyword_concepts.append(video_data.video.codec.field_order)
+        if video_data.video.container:
+            keyword_concepts.append(video_data.video.container)
+        if video_data.video.resolution:
+            if video_data.video.resolution.width and video_data.video.resolution.height:
+                keyword_concepts.append(f"{video_data.video.resolution.width}x{video_data.video.resolution.height}")
+            if hasattr(video_data.video.resolution, 'aspect_ratio') and video_data.video.resolution.aspect_ratio:
+                keyword_concepts.append(f"aspect ratio {video_data.video.resolution.aspect_ratio}")
+        if video_data.video.frame_rate:
+            keyword_concepts.append(f"{video_data.video.frame_rate} fps")
+        # --- HDR/Color ---
+        if video_data.video.color:
+            if video_data.video.color.color_space:
+                keyword_concepts.append(video_data.video.color.color_space)
+            if video_data.video.color.color_primaries:
+                keyword_concepts.append(video_data.video.color.color_primaries)
+            if video_data.video.color.transfer_characteristics:
+                keyword_concepts.append(video_data.video.color.transfer_characteristics)
+            if video_data.video.color.matrix_coefficients:
+                keyword_concepts.append(video_data.video.color.matrix_coefficients)
+            if video_data.video.color.color_range:
+                keyword_concepts.append(video_data.video.color.color_range)
+            if video_data.video.color.hdr:
+                if video_data.video.color.hdr.format:
+                    keyword_concepts.append(f"HDR {video_data.video.color.hdr.format}")
+                if video_data.video.color.hdr.master_display:
+                    keyword_concepts.append(f"master display {video_data.video.color.hdr.master_display}")
+                if video_data.video.color.hdr.max_cll:
+                    keyword_concepts.append(f"max CLL {video_data.video.color.hdr.max_cll}")
+                if video_data.video.color.hdr.max_fall:
+                    keyword_concepts.append(f"max FALL {video_data.video.color.hdr.max_fall}")
+        # --- Exposure ---
+        if video_data.video.exposure:
+            if video_data.video.exposure.warning:
+                keyword_concepts.append(f"exposure warning: {video_data.video.exposure.warning}")
+            if video_data.video.exposure.stops:
+                keyword_concepts.append(f"{video_data.video.exposure.stops} stops")
+            if video_data.video.exposure.overexposed_percentage is not None:
+                keyword_concepts.append(f"overexposed {video_data.video.exposure.overexposed_percentage}%")
+            if video_data.video.exposure.underexposed_percentage is not None:
+                keyword_concepts.append(f"underexposed {video_data.video.exposure.underexposed_percentage}%")
+
+    # --- Audio/Subtitle Tracks ---
+    if hasattr(video_data, 'audio_tracks') and video_data.audio_tracks:
+        for track in video_data.audio_tracks:
+            if hasattr(track, 'language') and track.language:
+                keyword_concepts.append(f"audio language {track.language}")
+            if hasattr(track, 'codec') and track.codec:
+                keyword_concepts.append(f"audio codec {track.codec}")
+    if hasattr(video_data, 'subtitle_tracks') and video_data.subtitle_tracks:
+        for track in video_data.subtitle_tracks:
+            if hasattr(track, 'language') and track.language:
+                keyword_concepts.append(f"subtitle language {track.language}")
+            if hasattr(track, 'codec') and track.codec:
+                keyword_concepts.append(f"subtitle codec {track.codec}")
+
     # Combine all concept lists
     all_concepts = []
     if visual_concepts:
@@ -239,17 +366,32 @@ def prepare_embedding_content(video_data) -> Tuple[str, str, Dict[str, Any]]:
         all_concepts.append(" ".join(set(category_concepts)))
     
     keyword_concepts.extend(all_concepts)
-    keyword_content = " ".join(keyword_concepts)
+    keyword_content = " ".join([str(k) for k in keyword_concepts if k])
+    
+    # Add shot attributes from all shots
+    try:
+        shots = video_data.analysis.ai_analysis.visual_analysis.shot_types
+        all_shot_attrs = []
+        for shot in shots:
+            attrs = getattr(shot, 'shot_attributes_ordered', None)
+            if attrs:
+                all_shot_attrs.extend(attrs)
+        if all_shot_attrs:
+            keyword_content += " Shot Attributes: " + ", ".join(all_shot_attrs)
+    except Exception:
+        pass
     
     # Truncate both contents
     summary_content, summary_truncation = truncate_text(summary_content, 3500)
     keyword_content, keyword_truncation = truncate_text(keyword_content, 3500)
     
+    # Add SigLIP condensed summary to metadata
     metadata = {
         "summary_tokens": count_tokens(summary_content),
         "keyword_tokens": count_tokens(keyword_content),
         "summary_truncation": summary_truncation,
         "keyword_truncation": keyword_truncation,
+        "siglip_summary": siglip_summary,
         "original_transcript_length": len(video_data.analysis.ai_analysis.audio_analysis.transcript.full_text) if (
             video_data.analysis and video_data.analysis.ai_analysis and 
             video_data.analysis.ai_analysis.audio_analysis and 
@@ -300,47 +442,116 @@ def store_embeddings(
     summary_embedding: List[float],
     keyword_embedding: List[float],
     summary_content: str,
-    keyword_content: str,
     original_content: str,
     metadata: Dict[str, Any],
+    thumbnail_embeddings: Optional[Dict[int, List[float]]] = None,
+    thumbnail_descriptions: Optional[Dict[int, str]] = None,
+    thumbnail_reasons: Optional[Dict[int, str]] = None,
     logger=None
 ) -> bool:
-    """Store embeddings in Supabase database following pgvector patterns."""
+    """
+    Store embeddings in Supabase database.
+    
+    Args:
+        clip_id: ID of the clip the embeddings are for
+        summary_embedding: Vector embedding of the summary content
+        keyword_embedding: Vector embedding for keyword search
+        summary_content: The content that was embedded (used as primary matching content)
+        original_content: The original unprocessed content
+        metadata: Additional metadata about the embeddings
+        thumbnail_embeddings: Optional dictionary mapping thumbnail ranks to embeddings
+        thumbnail_descriptions: Optional dictionary mapping thumbnail ranks to descriptions
+        thumbnail_reasons: Optional dictionary mapping thumbnail ranks to selection reasons
+        logger: Optional logger
+        
+    Returns:
+        bool: True if embeddings were stored successfully, False otherwise
+    """
     from .auth import AuthManager
     
+    # Check authentication
     auth_manager = AuthManager()
     client = auth_manager.get_authenticated_client()
     
     if not client:
-        raise ValueError("Authentication required for storing embeddings")
+        if logger:
+            logger.error("Authentication required for storing embeddings")
+        return False
     
     try:
-        # Get user ID
-        user_response = client.auth.get_user()
-        user_id = user_response.user.id
+        # Get user_id from auth manager
+        user_id = auth_manager.get_user_id()
+        if not user_id:
+            if logger:
+                logger.error("Cannot store embeddings: No authenticated user")
+            return False
         
+        # First, delete any existing vectors for this clip
+        if logger:
+            logger.info(f"Deleting existing vector records for clip: {clip_id}")
+            
+        client.table('vectors').delete().eq('clip_id', clip_id).execute()
+        
+        # Create base vector data
         vector_data = {
             "clip_id": clip_id,
             "user_id": user_id,
-            "embedding_type": "full_clip",
-            "embedding_source": "combined",
-            "summary_vector": summary_embedding,
-            "keyword_vector": keyword_embedding,
-            "embedded_content": f"Summary: {summary_content}\nKeywords: {keyword_content}",
-            "original_content": original_content,
-            "token_count": metadata["summary_tokens"] + metadata["keyword_tokens"],
-            "original_token_count": count_tokens(original_content),
-            "truncation_method": metadata["summary_truncation"]
+            "embedding_type": "full_clip",  # Must be 'full_clip' when segment_id is NULL
+            "embedding_source": "BAAI/bge-m3",
+            "summary_embedding": summary_embedding,
+            "keyword_embedding": keyword_embedding,
+            "embedded_content": summary_content,  # Primary content for matching
+            "original_content": original_content, # Original content before processing
+            "metadata": metadata,
+            # Add thumbnails metadata as JSONB (without the actual embeddings)
+            "thumbnail_embeddings": {}
         }
+        
+        # Add thumbnail embeddings if available
+        if thumbnail_embeddings and thumbnail_descriptions:
+            # Store thumbnail embeddings in dedicated vector columns
+            # and store metadata in the JSONB structure
+            thumbnail_data = {}
+            
+            for rank, embedding in thumbnail_embeddings.items():
+                if embedding is not None:
+                    # Store embedding in the dedicated vector column
+                    if str(rank) == "1":
+                        vector_data["thumbnail_1_embedding"] = embedding
+                    elif str(rank) == "2":
+                        vector_data["thumbnail_2_embedding"] = embedding
+                    elif str(rank) == "3":
+                        vector_data["thumbnail_3_embedding"] = embedding
+                    
+                    # Store metadata in the JSONB field (without the embedding)
+                    thumbnail_info = {
+                        "rank": str(rank)  # Ensure rank is stored as string
+                    }
+                    
+                    # Add description if available
+                    if thumbnail_descriptions and rank in thumbnail_descriptions:
+                        thumbnail_info["description"] = thumbnail_descriptions[rank]
+                    
+                    # Add reason if available
+                    if thumbnail_reasons and rank in thumbnail_reasons:
+                        thumbnail_info["reason"] = thumbnail_reasons[rank]
+                    
+                    # Use rank as the key in the JSONB
+                    thumbnail_data[str(rank)] = thumbnail_info
+            
+            vector_data["thumbnail_embeddings"] = thumbnail_data
         
         result = client.table('vectors').insert(vector_data).execute()
         
         if logger:
             logger.info(f"Stored embeddings for clip: {clip_id}")
+            if thumbnail_embeddings:
+                thumbnail_count = sum(1 for rank in thumbnail_embeddings if thumbnail_embeddings[rank] is not None)
+                logger.info(f"Stored {thumbnail_count} thumbnail embeddings")
         
         return True
         
     except Exception as e:
         if logger:
             logger.error(f"Failed to store embeddings: {str(e)}")
-        raise
+        return False
