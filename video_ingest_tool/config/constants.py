@@ -15,7 +15,7 @@ FOCAL_LENGTH_RANGES = {
 
 # Default compression configuration - single source of truth
 DEFAULT_COMPRESSION_CONFIG = {
-    'max_dimension': 1280,  # Scale longest dimension to this size
+    'max_dimension': 854,  # Scale longest dimension to this size
     'fps': 5,
     'video_bitrate': '1000k',
     'audio_bitrate': '32k',

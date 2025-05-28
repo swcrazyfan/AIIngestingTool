@@ -71,24 +71,15 @@ class VideoAnalyzer:
                                 "properties": {
                                     "timestamp": {"type": "STRING"},
                                     "duration_seconds": {"type": "NUMBER"},
-                                    "shot_type": {
-                                        "type": "STRING",
-                                        "enum": [
-                                            "Drone Shot", "Scenic Wide / Exterior", "Interview Setup",
-                                            "Talking Head", "Close-Up", "Extreme Close-Up / Detail Shot",
-                                            "Wide Shot (General Context)", "POV (Point of View) Shot",
-                                            "Tracking / Follow Shot", "Static / Locked-Down Shot",
-                                            "Handheld Shot", "Slow Motion Visuals", "Time-Lapse Visuals",
-                                            "Screen Recording / Screencast", "Graphic / Animation",
-                                            "Dutch Angle / Canted Shot", "Rack Focus",
-                                            "Over-the-Shoulder Shot (OTS)", "Low Angle Shot",
-                                            "High Angle Shot", "Other"
-                                        ]
+                                    "shot_attributes_ordered": {
+                                        "type": "ARRAY",
+                                        "items": {"type": "STRING"},
+                                        "description": "A list of 2-5 descriptive attributes for the shot, ordered by prominence or accuracy (most prominent/defining attribute first). Attributes can describe framing, angle, movement, production techniques, or visual style. Use consistent terminology from the provided vocabulary."
                                     },
                                     "description": {"type": "STRING"},
                                     "confidence": {"type": "NUMBER", "minimum": 0, "maximum": 1}
                                 },
-                                "required": ["timestamp", "shot_type", "description"]
+                                "required": ["timestamp", "shot_attributes_ordered", "description"]
                             }
                         },
                         "technical_quality": {
@@ -410,8 +401,8 @@ class VideoAnalyzer:
             str: Prompt for the Gemini model
         """
         return """
-You a professional filmaker and producer. Your job is to analyze this video so that you can accurately describe it to others and so it can  e categorized to to find later. Please analyze this video comprehensively and provide detailed information in all of the following areas:
-
+You are a professional filmmaker and producer. Your job is to analyze this video so that you can accurately describe it to others and so it can be categorized and found later. Please analyze this video comprehensively and provide detailed information in all of the following areas:
+        
 1. For the 'summary' object in the schema, provide the following details:
    - **For the 'overall' field:** Construct a detailed and accurate narrative description, **approximately 100-256 tokens long,** of what is seen and heard throughout the video. This description must:
      - Detail specific visual elements, subjects, key actions in sequence, settings, and dominant colors.
@@ -422,10 +413,38 @@ You a professional filmaker and producer. Your job is to analyze this video so t
    - **For the 'condensed_summary' field (string):** Generate an ultra-concise version, **strictly limited to a maximum of 64 tokens,** of the overall video description. This summary must include only the most essential and directly observable visual elements, subjects, and the immediate setting. This is critical for SigLIP embeddings and must be purely descriptive of visuals.
 
 2. For the 'visual_analysis' object in the schema, provide the following details:
-   - **For the 'shot_types' field (array of objects):** Identify distinct camera shots. For each shot, provide an object with the following properties:
+   - **For the 'shot_types' field (array of objects):** For each identified distinct shot segment in the video, you will populate an object. Instead of a single 'shot_type', you will now provide an ordered list of descriptive attributes for its 'shot_attributes_ordered' field.
+     - **List between 2 to 5 attributes for each shot segment.**
+     - **Order these attributes starting with the one you deem most defining, primary, or most accurate for that shot segment, followed by other relevant attributes in decreasing order of prominence or confidence.**
+     - **You MUST ONLY use the following vocabulary for all shot attributes, unless a shot has a truly unique style not covered by these terms (in which case use 'Other Notable Style' and explain in the description). Do NOT invent new terms or use synonyms. Use only the above vocabulary for all shot attributes:**
+         - Aerial / Drone Shot
+         - Wide Shot / Establishing Shot
+         - Medium Shot
+         - Medium Close-Up (MCU)
+         - Close-Up (CU)
+         - Extreme Close-Up (ECU) / Detail Shot
+         - Over-the-Shoulder Shot (OTS)
+         - Low Angle Shot
+         - High Angle Shot
+         - Dutch Angle / Canted Shot
+         - POV (Point of View) Shot
+         - Tracking / Follow Shot
+         - Static / Locked-Down Shot
+         - Handheld Shot
+         - Interview Setup
+         - Screen Recording / Screencast
+         - Graphic / Animation
+         - Green Screen
+         - Slow Motion
+         - Time-Lapse
+         - Rack Focus
+         - Medium Close-Up
+         - Other Notable Style (use this ONLY if a shot has a very distinct visual characteristic not covered, and elaborate in the shot's 'description' field)
+     - **The 'description' field for this shot segment should then provide a brief (1-2 sentences) natural language summary that contextualizes these attributes for the specific shot.**
+     - **The 'confidence' field for this shot segment should reflect your confidence in the primary (first) attribute listed or the overall set of attributes provided.**
      - 'timestamp' (string): Start time of the shot. **Use the format "5s600ms" (e.g., 5 seconds and 600 milliseconds) for all timestamps.**
      - 'duration_seconds' (number): Duration of the shot.
-     - 'shot_type' (string): Classify from the predefined enum (e.g., "Drone Shot", "Interview Setup", "Close-Up").
+     - 'shot_attributes_ordered' (array of strings): The ordered list of attributes as described above.
      - 'description' (string): A brief description of the shot's content or composition.
      - 'confidence' (number, optional): If your model can provide it, include a confidence score (0-1) for the shot type classification.
    - **For the 'technical_quality' object:**
@@ -465,11 +484,11 @@ You a professional filmaker and producer. Your job is to analyze this video so t
      - **For 'objects_of_interest' (array of objects):** Identify key objects. Each object should include 'object' (string, e.g., "laptop," "red book"), 'significance' (from enum), and 'timestamps' (array of strings indicating when the object is visible). **Use the format "5s600ms" for all timestamps.**
    - **For the 'activity_summary' field (array of objects):** Summarize key activities segment by segment. Each object should include 'timestamp', 'activity' (string description), 'duration' (string, e.g., "5 seconds"), and 'importance' (from enum). **Use the format "5s600ms" for all timestamps.**
    - **For the 'content_warnings' field (array of objects):** If any sensitive content is present, provide an array where each object details a warning, including 'type' (from enum like "Violence", "Strong Language"), 'description' (string, specific details), and 'timestamp'. If no warnings, this can be an empty array or omitted if allowed by schema. **Use the format "5s600ms" for all timestamps.**
-
+        
 MOST IMPORTANT: Your descriptions must be accurate and precise. Focus on exactly what is seen and heard, with specific details about visual elements and audio content. This is critical for accurate indexing and searchability of the video content.
-
+        
 Please be thorough but concise in your descriptions. Organize the analysis according to the provided schema. Focus on information that would be valuable for video editors to quickly understand and organize footage.
-"""
+        """
         
     def analyze_video(self, video_path: str) -> Dict[str, Any]:
         """

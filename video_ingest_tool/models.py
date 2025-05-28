@@ -54,6 +54,10 @@ class VideoCodecDetails(BaseModel):
     gop_size: Optional[int] = None
     scan_type: Optional[str] = None
     field_order: Optional[str] = None
+    format_name: Optional[str] = None
+    format_long_name: Optional[str] = None
+    codec_long_name: Optional[str] = None
+    file_size_bytes: Optional[int] = None
 
 class VideoResolution(BaseModel):
     width: Optional[int] = None
@@ -115,14 +119,17 @@ class CameraDetails(BaseModel):
     focal_length: CameraFocalLength
     settings: CameraSettings
     location: CameraLocation
+    camera_serial_number: Optional[str] = None
 
 # ===== AI Analysis Models =====
 
 class ShotType(BaseModel):
-    """Individual shot type detection"""
+    """Individual shot segment with ordered descriptive attributes.
+    - 'shot_attributes_ordered': A list of 2-5 descriptive attributes for the shot, ordered by prominence/accuracy (most defining first). Attributes can describe framing, angle, movement, production techniques, or visual style.
+    """
     timestamp: str
     duration_seconds: Optional[float] = None
-    shot_type: str
+    shot_attributes_ordered: List[str]
     description: str
     confidence: Optional[float] = None
 

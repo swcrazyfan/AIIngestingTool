@@ -32,20 +32,22 @@ def generate_searchable_content(video_data: VideoIngestOutput) -> str:
     if video_data.video:
         if video_data.video.resolution:
             content_parts.append(f"{video_data.video.resolution.width}x{video_data.video.resolution.height}")
-            content_parts.append(f"{video_data.video.resolution.resolution_name}")
         
         if video_data.video.frame_rate:
             content_parts.append(f"{video_data.video.frame_rate}fps")
         
         if video_data.video.codec:
-            content_parts.append(f"{video_data.video.codec.name} {video_data.video.codec.long_name}")
+            # Use codec name and long name if available
+            codec_name = video_data.video.codec.name or ''
+            # Prefer format_long_name, then codec_long_name, else empty string
+            codec_long = video_data.video.codec.format_long_name or video_data.video.codec.codec_long_name or ''
+            content_parts.append(f"{codec_name} {codec_long}".strip())
         
         if video_data.video.color:
             content_parts.append(f"{video_data.video.color.color_primaries}")
             content_parts.append(f"{video_data.video.color.color_space}")
         
-        if video_data.video.exposure:
-            content_parts.append(f"{video_data.video.exposure.overall_exposure}")
+        # Removed overall_exposure as it does not exist in the model
     
     # Camera details - Extract all camera settings as individual terms
     if video_data.camera:
@@ -114,8 +116,12 @@ def generate_searchable_content(video_data: VideoIngestOutput) -> str:
                 # Shot types
                 if visual.shot_types:
                     for shot in visual.shot_types:
-                        content_parts.append(f"{shot.shot_type} shot")
-                        if shot.description:
+                        # Add all shot attributes as searchable terms
+                        if hasattr(shot, 'shot_attributes_ordered') and shot.shot_attributes_ordered:
+                            for attr in shot.shot_attributes_ordered:
+                                content_parts.append(f"{attr} shot")
+                        # Add description if present
+                        if hasattr(shot, 'description') and shot.description:
                             content_parts.append(shot.description)
                 
                 # Technical quality

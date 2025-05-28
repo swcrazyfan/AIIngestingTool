@@ -42,12 +42,23 @@ def consolidate_metadata_step(data: Dict[str, Any], logger=None) -> Dict[str, An
     master_metadata = {}
 
     # Prioritize sources for technical video properties
-    tech_keys = ['codec', 'width', 'height', 'frame_rate', 'bit_rate_kbps', 'bit_depth', 'color_space', 'container', 'duration_seconds', 'profile', 'level', 'chroma_subsampling', 'pixel_format', 'bitrate_mode', 'scan_type', 'field_order', 'cabac', 'ref_frames', 'gop_size']
+    tech_keys = [
+        'codec', 'width', 'height', 'frame_rate', 'bit_rate_kbps', 'bit_depth', 'color_space',
+        'container', 'duration_seconds', 'profile', 'level', 'chroma_subsampling', 'pixel_format',
+        'bitrate_mode', 'scan_type', 'field_order', 'cabac', 'ref_frames', 'gop_size',
+        'format_name', 'format_long_name', 'codec_long_name', 'file_size_bytes',
+        # Add any other technical fields you want to preserve
+    ]
     for key in tech_keys:
         master_metadata[key] = mediainfo_data.get(key, ffprobe_data.get(key, exiftool_data.get(key, codec_params.get(key))))
 
     # Prioritize sources for camera/lens info
-    camera_keys = ['camera_make', 'camera_model', 'focal_length_mm', 'focal_length_category', 'lens_model', 'iso', 'shutter_speed', 'f_stop', 'exposure_mode', 'white_balance', 'gps_latitude', 'gps_longitude', 'gps_altitude', 'location_name', 'camera_serial_number']
+    camera_keys = [
+        'camera_make', 'camera_model', 'focal_length_mm', 'focal_length_category', 'lens_model',
+        'iso', 'shutter_speed', 'f_stop', 'exposure_mode', 'white_balance', 'gps_latitude',
+        'gps_longitude', 'gps_altitude', 'location_name', 'camera_serial_number',
+        # Add any other EXIF/camera fields you want to preserve
+    ]
     for key in camera_keys:
         # Prioritize extended_exif_data then exiftool_data for camera specific info
         master_metadata[key] = extended_exif_data.get(key, exiftool_data.get(key, mediainfo_data.get(key, ffprobe_data.get(key))))
