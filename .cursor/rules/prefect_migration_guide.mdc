@@ -1,0 +1,123 @@
+# Prefect Migration Implementation Guide
+
+This guide outlines the process for migrating your video ingest pipeline to Prefect, following the plan in `prefect_migration_plan.md`. Use this guide to ensure a smooth, consistent, and trackable migration to a concurrent, dependency-aware pipeline.
+
+## Core Principles
+
+1. **Incremental Migration**: Tackle one phase at a time, marking progress in the plan
+2. **Minimal Disruption**: Keep step logic unchanged where possible; focus on orchestration
+3. **Consistent Naming**: Use clear, descriptive names for flows, tasks, and CLI options
+4. **Documentation**: Every new or refactored module/function should have proper docstrings
+5. **Type Safety**: Add or preserve type annotations in all functions
+6. **Error Handling**: Use Prefect's retry and error hooks for robust error management
+7. **Testing**: Test each phase before moving to the next
+8. **Leverage Documentation**: Always consult the latest Prefect documentation using context7 before and during migration
+
+## How to Use This Implementation Guide
+
+### Before Starting Any Task
+
+1. **Check Current Progress**: Open `prefect_migration_plan.md` to see which tasks are waiting (⬜), in progress (🔄), or complete (✅)
+2. **Review Pipeline Structure**: Understand how your current pipeline and CLI are organized
+3. **Get the Latest Prefect Docs**: Use context7 to fetch the most up-to-date Prefect documentation before you begin. This ensures you are using the correct APIs and best practices.
+4. **Read Prefect Documentation**: Familiarize yourself with [Prefect Flows and Tasks](https://docs.prefect.io/latest/concepts/flows/) (or use context7 to get the relevant sections)
+5. **Set Up Environment**: Ensure you are in the correct Python environment and have Prefect installed
+
+### Starting a Task
+
+1. **Mark Task as In Progress**: Update the checkbox in `prefect_migration_plan.md` from ⬜ to 🔄
+2. **Review Related Code**: Identify which files/functions will be affected by this phase
+3. **Plan Refactor**: Sketch out how the step or flow will look with Prefect decorators and dependencies
+
+### During Implementation
+
+1. **Follow Single Responsibility**: Each task/flow should handle a single aspect of the pipeline
+2. **Use Prefect Decorators**: Apply `@task` to step functions and `@flow` to orchestration logic
+3. **Preserve Step Logic**: Only change orchestration; keep the core logic of each step intact
+4. **Add/Update Docstrings**: Document all new or refactored functions
+5. **Type Annotations**: Ensure all functions have type annotations
+6. **Error Handling**: Use Prefect's retry and error hooks where appropriate
+7. **Testing**: Test each new task/flow in isolation before integrating
+
+### Verifying Changes
+
+1. **Test Pipeline Integration**: Run the full flow on a small batch of files
+2. **Check Parallelism**: Confirm that multiple files are processed in parallel as expected
+3. **Validate Step Dependencies**: Ensure dependent steps (e.g., AI thumbnail selection) wait for their prerequisites
+4. **Error Handling**: Simulate failures to verify Prefect's retry and error reporting
+5. **CLI Integration**: Test CLI options for concurrency and ensure progress reporting works
+6. **If You Encounter Errors or Issues**: Use context7 to fetch the relevant Prefect documentation again. Prefect's API and best practices can change, so always check the docs if something doesn't work as expected.
+
+### Completing a Task
+
+1. **Mark as Complete**: Update the checkbox in `prefect_migration_plan.md` from 🔄 to ✅
+2. **Document Integration Points**: Note how the new/refactored component integrates with the rest of the pipeline
+3. **Select Next Task**: Choose the next logical task based on dependencies and the plan
+
+## Implementation Specifics
+
+### Prefect Task and Flow Decorators
+
+- Use `@task` for individual pipeline steps (e.g., extraction, compression, AI analysis)
+- Use `@flow` for orchestration logic (e.g., per-file pipeline, batch processing)
+
+### Parallelism and Mapping
+
+- Use `.map()` on flows to process multiple files concurrently
+- Use Prefect's concurrency controls to limit resource-heavy steps (e.g., compression, AI)
+
+### CLI Integration
+
+- Add CLI options for concurrency (e.g., `--concurrency`)
+- Ensure CLI calls the Prefect flow and passes user options
+
+### Progress Tracking
+
+Track your progress in `prefect_migration_plan.md` using these symbols:
+
+- ⬜ = Waiting / Not Started
+- 🔄 = In Progress
+- ✅ = Completed
+
+## Example Workflow
+
+1. Select a task: "Wrap steps as tasks"
+2. Mark it as in progress (🔄) in `prefect_migration_plan.md`
+3. Refactor the relevant step functions with `@task` decorators
+4. Test the new tasks in isolation
+5. Mark the task as completed (✅) in the plan
+6. Move to the next task (e.g., "Refactor pipeline as flow")
+
+## Implementation Sequence
+
+Follow this sequence for minimal disruption and clear progress:
+
+1. First: Prefect installation and hello world
+2. Second: Wrap steps as tasks
+3. Third: Refactor pipeline as a flow
+4. Fourth: Add per-file parallelism
+5. Fifth: Integrate with CLI and add concurrency options
+6. Last: Testing, tuning, and documentation
+
+## Common Prefect Operations
+
+```python
+from prefect import task, flow
+
+@task
+def my_step(...):
+    ...
+
+@flow
+def my_pipeline(...):
+    ...
+    my_step.submit(...)
+```
+
+- Use `.map()` for parallel execution
+- Use `.submit()` for launching tasks asynchronously
+- Use Prefect's UI or CLI for monitoring and debugging
+
+**Best Practice:** Always use context7 to fetch the latest Prefect documentation before starting a new phase, and whenever you encounter errors or unexpected behavior.
+
+Always refer to `prefect_migration_plan.md` for the detailed implementation plan and current progress status. 

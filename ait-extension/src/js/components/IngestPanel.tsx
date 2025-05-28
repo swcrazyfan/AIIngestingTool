@@ -266,7 +266,15 @@ const IngestPanel: React.FC = () => {
                       <div key={index} className="file-item">
                         <span className="file-name">{file.file_name || file.path || 'Unknown file'}</span>
                         <div className="file-status-container">
-                          <span className={`file-status ${file.status}`}>{file.status}</span>
+                          <span className={`file-status ${file.status}`}>
+                            {file.status === 'skipped'
+                              ? 'Already in library'
+                              : file.status === 'failed'
+                                ? 'Failed'
+                                : file.status === 'completed'
+                                  ? 'Completed'
+                                  : file.status.charAt(0).toUpperCase() + file.status.slice(1)}
+                          </span>
                           {file.status === 'processing' && file.current_step && (
                             <span className="file-step">{file.current_step}</span>
                           )}

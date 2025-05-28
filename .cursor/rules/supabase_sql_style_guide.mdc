@@ -1,5 +1,5 @@
 ---
-description: Any time it's working with SQL for supabase.
+description: Guidelines for writing Postgres SQL
 globs: 
 alwaysApply: false
 ---

@@ -67,10 +67,10 @@ def reorder_pipeline_steps():
     
     # Define the correct order of steps (only those that have dependencies)
     step_order = {
-        "checksum_generation": 1,  # Must run before thumbnail_generation 
-        "thumbnail_generation": 2, # Depends on checksum
-        "exposure_analysis": 3,    # Depends on thumbnails
-        "duplicate_check": 4,      # Should run after checksum but before more intensive steps
+        "checksum_generation": 1,  # Must run first
+        "duplicate_check": 2,      # Now runs immediately after checksum
+        "thumbnail_generation": 3, # Depends on checksum
+        "exposure_analysis": 4,    # Depends on thumbnails
         "ai_video_analysis": 12,   # Should run after basic extraction steps
         "ai_thumbnail_selection": 13, # Should run after AI video analysis
         "metadata_consolidation": 15, # Should run after all extraction steps
