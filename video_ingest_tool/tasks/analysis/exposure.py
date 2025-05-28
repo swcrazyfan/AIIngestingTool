@@ -5,16 +5,9 @@ Analyzes exposure in thumbnails.
 """
 
 from typing import Any, Dict
-
-from ...pipeline.registry import register_step
 from ...processors import analyze_exposure
 from prefect import task
 
-@register_step(
-    name="exposure_analysis", 
-    enabled=True,
-    description="Analyze exposure in thumbnails"
-)
 @task
 def analyze_exposure_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """

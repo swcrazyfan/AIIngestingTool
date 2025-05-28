@@ -5,16 +5,9 @@ Extracts HDR metadata from video files.
 """
 
 from typing import Any, Dict
-
-from ...pipeline.registry import register_step
 from ...extractors.hdr import extract_hdr_metadata
 from prefect import task
 
-@register_step(
-    name="hdr_extraction", 
-    enabled=True,
-    description="Extract HDR metadata"
-)
 @task
 def extract_hdr_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """

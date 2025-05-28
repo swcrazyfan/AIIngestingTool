@@ -18,11 +18,10 @@ from rich.progress import BarColumn, Progress
 
 from .config import setup_logging, console, DEFAULT_COMPRESSION_CONFIG
 from .discovery import scan_directory
-from .flows.registry import get_available_pipeline_steps, get_default_pipeline
-from .steps import process_video_file
 from .config.settings import get_default_pipeline_config
 from .output import save_to_json, save_run_outputs
 from .utils import calculate_checksum
+from .flows.prefect_flows import process_video_file_flow, process_videos_batch_flow
 
 # Create Typer app
 app = typer.Typer(help="AI-Powered Video Ingest & Catalog Tool")
@@ -44,10 +43,12 @@ def ingest(
     store_database: bool = typer.Option(False, "--store-database", help="Store results in Supabase database (requires authentication)"),
     generate_embeddings: bool = typer.Option(False, "--generate-embeddings", help="Generate vector embeddings for semantic search (requires authentication)"),
     upload_thumbnails: bool = typer.Option(False, "--upload-thumbnails", help="Upload thumbnails to Supabase storage (requires authentication)"),
-    force_reprocess: bool = typer.Option(False, "--force-reprocess", "-f", help="Force reprocessing of files even if they already exist in database")
+    force_reprocess: bool = typer.Option(False, "--force-reprocess", "-f", help="Force reprocessing of files even if they already exist in database"),
+    flow: str = typer.Option("full", "--flow", help="Which Prefect flow to use (default: full, runs all steps)"),
+    concurrency: int = typer.Option(2, "--concurrency", help="Number of files to process in parallel (default: 2)")
 ):
     """
-    Scan a directory for video files and extract metadata.
+    Scan a directory for video files and extract metadata using the Prefect-based pipeline (default: full flow).
     """
     start_time = time.time()
     
@@ -164,16 +165,38 @@ def ingest(
         border_style="green"
     ))
     
-    # Display active pipeline steps
+    # Display active pipeline steps (replace registry call with static list)
     steps_table = Table(title="Active Pipeline Steps")
     steps_table.add_column("Step", style="cyan")
     steps_table.add_column("Status", style="green")
     steps_table.add_column("Description", style="yellow")
-    
-    for step in get_available_pipeline_steps():
-        status = "[green]Enabled" if pipeline_config.get(step['name'], step['enabled']) else "[red]Disabled"
-        steps_table.add_row(step['name'], status, step['description'])
-    
+
+    # Static list of steps (update as needed)
+    step_info = [
+        ("generate_checksum_step", "Enabled", "Calculate file checksum for deduplication"),
+        ("check_duplicate_step", "Enabled", "Check for duplicate files in the database"),
+        ("video_compression_step", "Enabled", "Compress video using ffmpeg and store compressed path"),
+        ("extract_mediainfo_step", "Enabled", "Extract metadata using MediaInfo"),
+        ("extract_ffprobe_step", "Enabled", "Extract metadata using FFprobe/PyAV"),
+        ("extract_exiftool_step", "Enabled", "Extract EXIF metadata"),
+        ("extract_extended_exif_step", "Enabled", "Extract extended EXIF metadata"),
+        ("extract_codec_step", "Enabled", "Extract detailed codec parameters"),
+        ("extract_hdr_step", "Enabled", "Extract HDR metadata"),
+        ("extract_audio_step", "Enabled", "Extract audio track information"),
+        ("extract_subtitle_step", "Enabled", "Extract subtitle track information"),
+        ("generate_thumbnails_step", "Enabled", "Generate thumbnails from video"),
+        ("analyze_exposure_step", "Enabled", "Analyze exposure in thumbnails"),
+        ("detect_focal_length_step", "Enabled", "Detect focal length using AI or EXIF"),
+        ("ai_video_analysis_step", "Enabled", "Comprehensive video analysis using Gemini Flash 2.5 AI"),
+        ("ai_thumbnail_selection_step", "Enabled", "Extract AI-selected thumbnails based on analysis"),
+        ("consolidate_metadata_step", "Enabled", "Consolidate metadata from all sources"),
+        ("create_model_step", "Enabled", "Create Pydantic model from processed data"),
+        ("database_storage_step", "Enabled", "Store video metadata and analysis in Supabase database"),
+        ("generate_embeddings_step", "Enabled", "Generate vector embeddings for semantic search"),
+        ("upload_thumbnails_step", "Enabled", "Upload thumbnails to Supabase storage"),
+    ]
+    for name, status, desc in step_info:
+        steps_table.add_row(name, f"[green]{status}", desc)
     console.print(steps_table)
     
     console.print(f"[bold yellow]Step 1:[/bold yellow] Scanning directory for video files...")
@@ -200,51 +223,59 @@ def ingest(
         transient=True    
     ) as progress:
         task = progress.add_task("[green]Processing videos...", total=len(video_files))
-        
-        for file_path in video_files:
+
+        if len(video_files) == 1:
+            # Single file: use the selected flow (default: full)
+            file_path = video_files[0]
             progress.update(task, advance=0, description=f"[cyan]Processing {os.path.basename(file_path)}")
-            
             try:
-                result = process_video_file(
-                    file_path, 
-                    thumbnails_dir, 
-                    logger,
-                    config=pipeline_config,
-                    compression_fps=compression_fps,
-                    compression_bitrate=compression_bitrate,
-                    force_reprocess=force_reprocess
-                )
-                
-                # Handle skipped files (duplicates)
-                if isinstance(result, dict) and result.get('skipped'):
-                    skipped_files.append({
-                        'file_path': file_path,
-                        'reason': result.get('reason'),
-                        'existing_clip_id': result.get('existing_clip_id'),
-                        'existing_file_name': result.get('existing_file_name'),
-                        'existing_processed_at': result.get('existing_processed_at')
-                    })
-                    logger.info("Skipped duplicate file", 
-                               file=file_path, 
-                               existing_id=result.get('existing_clip_id'))
+                if flow == "full":
+                    result = process_video_file_flow(
+                        file_path=file_path,
+                        thumbnails_dir=thumbnails_dir,
+                        compression_fps=compression_fps,
+                        compression_bitrate=compression_bitrate,
+                        force_reprocess=force_reprocess
+                    )
                 else:
-                    # Normal processing result
-                    video_file = result
-                    processed_files.append(video_file)
-                    
-                    # Create filename with original name and UUID
-                    base_name = os.path.splitext(os.path.basename(file_path))[0]
-                    json_filename = f"{base_name}_{video_file.id}.json"
-                    
-                    # Save individual JSON to run directory
-                    individual_json_path = os.path.join(json_dir, json_filename)
-                    save_to_json(video_file, individual_json_path, logger)
-                
+                    raise NotImplementedError(f"Flow '{flow}' is not implemented yet.")
+                processed_files = [result] if result else []
+                failed_files = [] if result else [file_path]
+                skipped_files = []
             except Exception as e:
                 failed_files.append(file_path)
                 logger.error("Error processing video file", path=file_path, error=str(e))
-            
             progress.update(task, advance=1)
+        else:
+            # Batch: use the batch flow ONCE with all files
+            try:
+                if flow == "full":
+                    results = process_videos_batch_flow(
+                        file_list=video_files,
+                        thumbnails_dir=thumbnails_dir,
+                        compression_fps=compression_fps,
+                        compression_bitrate=compression_bitrate,
+                        force_reprocess=force_reprocess,
+                        concurrency_limit=concurrency,
+                        config=pipeline_config
+                    )
+                else:
+                    raise NotImplementedError(f"Flow '{flow}' is not implemented yet.")
+                # Update progress bar as each file completes
+                for idx, (file_path, result) in enumerate(zip(video_files, results)):
+                    progress.update(task, advance=1, description=f"[cyan]Processing {os.path.basename(file_path)}")
+                    if result:
+                        processed_files.append(result)
+                        # Save individual JSON to run directory
+                        base_name = os.path.splitext(os.path.basename(file_path))[0]
+                        json_filename = f"{base_name}_{result.id}.json"
+                        individual_json_path = os.path.join(json_dir, json_filename)
+                        save_to_json(result, individual_json_path, logger)
+                    else:
+                        failed_files.append(file_path)
+            except Exception as e:
+                failed_files.extend(video_files)
+                logger.error("Error processing video files in batch", error=str(e))
     
     # Save run outputs with directory name in the summary filename
     output_paths = save_run_outputs(

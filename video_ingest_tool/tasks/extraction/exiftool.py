@@ -5,16 +5,9 @@ Extracts basic EXIF metadata using ExifTool.
 """
 
 from typing import Any, Dict
-
-from ...pipeline.registry import register_step
 from ...extractors.exif import extract_exiftool_info
 from prefect import task
 
-@register_step(
-    name="exiftool_extraction", 
-    enabled=True,
-    description="Extract EXIF metadata"
-)
 @task
 def extract_exiftool_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
