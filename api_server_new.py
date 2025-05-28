@@ -1265,7 +1265,7 @@ def execute_ingest_task(directory, recursive=True, limit=0, store_database=False
                             "file_name": file_name,
                             "path": file_path,
                             "status": "skipped",
-                            "error": result.get('reason', 'Duplicate file'),
+                            "error": "Already in library",
                             "current_step": "duplicate_check",
                             "progress_percentage": 100
                         }
