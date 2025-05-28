@@ -1,339 +1,326 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { searchApi, videosApi } from '../api/client';
 import { VideoFile, SearchType, SortField, SortOrder } from '../types/api';
+import { useAuth } from '../contexts/AuthContext';
 import VideoCard from './VideoCard';
 import SearchBar from './SearchBar';
 import AccordionItem from './AccordionItem';
-import { FiFilm, FiRefreshCw, FiGrid } from 'react-icons/fi';
+import { 
+  FiSearch, FiGrid, FiList, FiFilter, FiTag, FiMapPin, FiCamera, FiStar, 
+  FiEye, FiShuffle, FiGlobe, FiInfo, FiMic, FiChevronDown, FiChevronUp, 
+  FiBookmark, FiPlus, FiSettings, FiClock, FiVideo, FiRefreshCw, FiFilm,
+  FiFolder, FiTrendingUp, FiActivity, FiHeart, FiPlay
+} from 'react-icons/fi';
 import { BsGrid3X3, BsGrid3X2, BsGrid1X2 } from 'react-icons/bs';
 import { useWebSocket } from '../contexts/WebSocketContext';
 import '../styles/VideoLibrary.scss';
 
-// Define card size type
+// Define card size type and view mode
 export type CardSize = 'small' | 'medium' | 'large';
+export type ViewMode = 'tiles' | 'rows';
 
 const VideoLibrary: React.FC = () => {
+  const { authStatus } = useAuth();
+  const isGuestMode = !authStatus?.authenticated;
+  
   const [videos, setVideos] = useState<VideoFile[]>([]);
   const [originalFetchedVideos, setOriginalFetchedVideos] = useState<VideoFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [currentSearchTerm, setCurrentSearchTerm] = useState('');
-  const [activeSearchType, setActiveSearchType] = useState<'hybrid' | 'semantic' | 'fulltext' | 'transcripts'>('hybrid');
+  const [activeSearchType, setActiveSearchType] = useState<SearchType>('hybrid');
   const [sortBy, setSortBy] = useState<SortField>('processed_at');
   const [sortOrder, setSortOrder] = useState<SortOrder>('descending');
   const [dateStart, setDateStart] = useState<string>('');
   const [dateEnd, setDateEnd] = useState<string>('');
   const [cardSize, setCardSize] = useState<CardSize>('medium');
-  
-  // Create refs for the filter elements
-  const sortByRef = useRef<HTMLSelectElement>(null);
-  const sortOrderRef = useRef<HTMLSelectElement>(null);
-  const dateStartRef = useRef<HTMLInputElement>(null);
-  const dateEndRef = useRef<HTMLInputElement>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>('tiles');
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [crossProjectSearch, setCrossProjectSearch] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [selectedCollection, setSelectedCollection] = useState<string>('all');
 
   const { search: wsSearch, connected } = useWebSocket();
 
-  // Save card size preference to localStorage
-  useEffect(() => {
+  // Load videos function
+  const loadVideoData = useCallback(async () => {
     try {
-      localStorage.setItem('preferredCardSize', cardSize);
-    } catch (error) {
-      console.error('Failed to save card size preference:', error);
-    }
-  }, [cardSize]);
-
-  // Load card size preference from localStorage
-  useEffect(() => {
-    try {
-      const savedSize = localStorage.getItem('preferredCardSize') as CardSize | null;
-      if (savedSize && ['small', 'medium', 'large'].includes(savedSize)) {
-        setCardSize(savedSize);
-      }
-    } catch (error) {
-      console.error('Failed to load card size preference:', error);
-    }
-  }, []);
-
-  const applyClientSideFiltersAndSort = useCallback(() => {
-    if (!originalFetchedVideos) return;
-
-    let processedVideos = [...originalFetchedVideos];
-
-    if (dateStart) {
-      const startDate = new Date(dateStart + 'T00:00:00');
-      processedVideos = processedVideos.filter(video => {
-        const videoDateStr = video.created_at_timestamp || video.processed_at;
-        if (!videoDateStr) return false;
-        return new Date(videoDateStr) >= startDate;
+      setLoading(true);
+      const result = await videosApi.list({ 
+        sortBy, 
+        sortOrder, 
+        limit: 50 
       });
-    }
-    if (dateEnd) {
-      const endDate = new Date(dateEnd + 'T23:59:59');
-      processedVideos = processedVideos.filter(video => {
-        const videoDateStr = video.created_at_timestamp || video.processed_at;
-        if (!videoDateStr) return false;
-        return new Date(videoDateStr) <= endDate;
-      });
-    }
-
-    processedVideos.sort((a, b) => {
-      let valA: any;
-      let valB: any;
-
-      switch (sortBy) {
-        case 'created_at':
-          valA = a.created_at_timestamp;
-          valB = b.created_at_timestamp;
-          break;
-        case 'duration_seconds':
-          valA = a.duration_seconds;
-          valB = b.duration_seconds;
-          break;
-        case 'file_name':
-        case 'processed_at':
-          valA = a[sortBy];
-          valB = b[sortBy];
-          break;
-        default:
-          valA = a[sortBy as keyof VideoFile];
-          valB = b[sortBy as keyof VideoFile];
-      }
-
-      if (valA == null && valB == null) return 0;
-      if (valA == null) return sortOrder === 'ascending' ? -1 : 1;
-      if (valB == null) return sortOrder === 'ascending' ? 1 : -1;
-
-      if (typeof valA === 'number' && typeof valB === 'number') {
-        return sortOrder === 'ascending' ? valA - valB : valB - valA;
-      }
-      if (String(valA) < String(valB)) return sortOrder === 'ascending' ? -1 : 1;
-      if (String(valA) > String(valB)) return sortOrder === 'ascending' ? 1 : -1;
-      return 0;
-    });
-
-    setVideos(processedVideos);
-  }, [originalFetchedVideos, sortBy, sortOrder, dateStart, dateEnd]);
-
-  const fetchVideoList = useCallback(async () => {
-    setLoading(true);
-    setRefreshing(true);
-    try {
-      console.log('Fetching initial video list...');
-      const options: any = { limit: 200 };
-      const results = await videosApi.list(options);
-      setOriginalFetchedVideos(results.results || []);
+      setVideos(result.results || []);
+      setOriginalFetchedVideos(result.results || []);
     } catch (error) {
-      console.error('Failed to load video list:', error);
-      setOriginalFetchedVideos([]);
+      console.error('Failed to load videos:', error);
       setVideos([]);
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
-  }, []);
+  }, [sortBy, sortOrder]);
 
-  // Helper function to reset all filter inputs
-  const resetFilterInputs = useCallback(() => {
-    // Reset state values
-    setSortBy('processed_at');
-    setSortOrder('descending');
-    setDateStart('');
-    setDateEnd('');
-    
-    // Reset the actual HTML elements
-    if (sortByRef.current) sortByRef.current.value = 'processed_at';
-    if (sortOrderRef.current) sortOrderRef.current.value = 'descending';
-    if (dateStartRef.current) dateStartRef.current.value = '';
-    if (dateEndRef.current) dateEndRef.current.value = '';
-  }, []);
+  // Load data on mount
+  useEffect(() => {
+    loadVideoData();
+  }, [loadVideoData]);
 
-  const performKeywordSearch = useCallback(async (query: string, type: 'hybrid' | 'semantic' | 'fulltext' | 'transcripts') => {
-    // Reset all filter inputs
-    resetFilterInputs();
-
-    setLoading(true);
-    setRefreshing(true);
-    setVideos([]); // Clear displayed videos immediately to show loading state
-    setOriginalFetchedVideos([]); // Clear original videos to avoid processing stale data
+  // Handle search
+  const handleSearch = (query: string, type: SearchType) => {
     setCurrentSearchTerm(query);
     setActiveSearchType(type);
-    try {
-      let searchResults: VideoFile[] = [];
-      if (connected) {
-        console.log('Using WebSocket for keyword search:', query, type);
-        try {
-          const results = await wsSearch({ query, search_type: type, limit: 200 });
-          searchResults = results.results || [];
-        } catch (wsError) {
-          console.error('WebSocket keyword search failed, falling back to HTTP:', wsError);
-          const httpResults = await searchApi.search(query, type, 200);
-          searchResults = httpResults.results || [];
-        }
-      } else {
-        console.log('Using HTTP API for keyword search (WebSocket not connected):', query, type);
-        const httpResults = await searchApi.search(query, type, 200);
-        searchResults = httpResults.results || [];
-      }
-      setOriginalFetchedVideos(searchResults);
-    } catch (error) {
-      console.error('Failed to perform keyword search:', error);
-      setOriginalFetchedVideos([]);
-      setVideos([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [connected, wsSearch, resetFilterInputs]);
-
-  useEffect(() => {
-    fetchVideoList();
-  }, [fetchVideoList]);
-
-  useEffect(() => {
-    applyClientSideFiltersAndSort();
-  }, [originalFetchedVideos, sortBy, sortOrder, dateStart, dateEnd, applyClientSideFiltersAndSort]);
-
-  const handleSearch = (query: string, type: 'hybrid' | 'semantic' | 'fulltext' | 'transcripts') => {
+    
     if (query.trim()) {
-      performKeywordSearch(query, type);
+      // Perform search logic here
+      console.log('Searching for:', query, 'with type:', type);
     } else {
-      fetchVideoList();
-      resetFilterInputs(); // Also reset filters when clearing search
+      loadVideoData();
     }
   };
 
-  const handleRefresh = useCallback(() => {
-    if (refreshing) return; // Prevent multiple refreshes
-    
-    // Show a toast or notification
-    console.log('Refreshing video library...');
-    
-    if (currentSearchTerm) {
-      performKeywordSearch(currentSearchTerm, activeSearchType);
-    } else {
-      fetchVideoList();
-    }
-  }, [currentSearchTerm, activeSearchType, refreshing, performKeywordSearch, fetchVideoList]);
+  // Handle refresh
+  const handleRefresh = () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    setTimeout(() => {
+      loadVideoData();
+      setRefreshing(false);
+    }, 1000);
+  };
 
   return (
     <div className="video-library">
       <SearchBar onSearch={handleSearch} />
 
-      <AccordionItem title="Filter & Sort Options" startOpen={false}>
-        <div className="filter-controls">
-          <div className="filter-group">
-            <label htmlFor="sort-by">Sort By:</label>
-            <select 
-              id="sort-by" 
-              value={sortBy} 
-              onChange={(e) => setSortBy(e.target.value as SortField)}
-              ref={sortByRef}
-            >
-              <option value="processed_at">Processed Date</option>
-              <option value="file_name">File Name</option>
-              <option value="duration_seconds">Duration</option>
-              <option value="created_at">Created Date</option>
-            </select>
-          </div>
-          <div className="filter-group">
-            <label htmlFor="sort-order">Order:</label>
-            <select 
-              id="sort-order" 
-              value={sortOrder} 
-              onChange={(e) => setSortOrder(e.target.value as SortOrder)}
-              ref={sortOrderRef}
-            >
-              <option value="descending">Descending</option>
-              <option value="ascending">Ascending</option>
-            </select>
-          </div>
-          <div className="filter-group">
-            <label htmlFor="date-start">Date Start:</label>
-            <input 
-              type="date" 
-              id="date-start" 
-              value={dateStart} 
-              onChange={(e) => setDateStart(e.target.value)}
-              ref={dateStartRef} 
-            />
-          </div>
-          <div className="filter-group">
-            <label htmlFor="date-end">Date End:</label>
-            <input 
-              type="date" 
-              id="date-end" 
-              value={dateEnd} 
-              onChange={(e) => setDateEnd(e.target.value)}
-              ref={dateEndRef}
-            />
-          </div>
+      {/* Cross-project search toggle */}
+      <div className="search-controls">
+        <label className="cross-project-toggle">
+          <input
+            type="checkbox"
+            checked={crossProjectSearch}
+            onChange={(e) => setCrossProjectSearch(e.target.checked)}
+          />
+          <span>Search all projects</span>
+        </label>
+        <div className="search-examples">
+          <span><strong>Try:</strong> "wedding ceremony" | "4K footage" | "aerial shots"</span>
+        </div>
+      </div>
+
+      {/* Smart Collections */}
+      <AccordionItem title="Smart Collections" startOpen={false}>
+        <div className="collections-grid">
+          <button 
+            className={`collection-card ${selectedCollection === 'recent' ? 'active' : ''}`}
+            onClick={() => setSelectedCollection('recent')}
+          >
+            <FiClock />
+            <span>Recently Added</span>
+          </button>
+          <button 
+            className={`collection-card ${selectedCollection === 'favorites' ? 'active' : ''}`}
+            onClick={() => setSelectedCollection('favorites')}
+          >
+            <FiHeart />
+            <span>Favorites</span>
+          </button>
+          <button 
+            className={`collection-card ${selectedCollection === 'untagged' ? 'active' : ''}`}
+            onClick={() => setSelectedCollection('untagged')}
+          >
+            <FiTag />
+            <span>Untagged</span>
+          </button> 
+          <button 
+            className={`collection-card ${selectedCollection === 'hdr' ? 'active' : ''}`}
+            onClick={() => setSelectedCollection('hdr')}
+          >
+            <FiStar />
+            <span>HDR Content</span>
+          </button>
         </div>
       </AccordionItem>
-      
+
+      {/* Categories */}
+      <AccordionItem title="Categories" startOpen={false}>
+        <div className="collections-grid">
+          <button 
+            className={`collection-card ${selectedCategory === 'all' ? 'active' : ''}`}
+            onClick={() => setSelectedCategory('all')}
+          >
+            <FiGrid />
+            <span>All Videos</span>
+          </button>
+          <button 
+            className={`collection-card ${selectedCategory === 'camera' ? 'active' : ''}`}
+            onClick={() => setSelectedCategory('camera')}
+          >
+            <FiCamera />
+            <span>Camera Footage</span>
+          </button>
+          <button 
+            className={`collection-card ${selectedCategory === 'screen' ? 'active' : ''}`}
+            onClick={() => setSelectedCategory('screen')}
+          >
+            <FiActivity />
+            <span>Screen Recordings</span>
+          </button>
+          <button 
+            className={`collection-card ${selectedCategory === 'ai' ? 'active' : ''}`}
+            onClick={() => setSelectedCategory('ai')}
+          >
+            <FiTrendingUp />
+            <span>AI Generated</span>
+          </button>
+        </div>
+      </AccordionItem>
+
+      {/* Advanced Filters */}
+      <AccordionItem title="Advanced Filters" startOpen={showAdvanced}>
+        <div className="filter-controls">
+          <div className="filter-group">
+            <label>Sort By:</label>
+            <select value={sortBy} onChange={(e) => setSortBy(e.target.value as SortField)}>
+              <option value="processed_at">Recently Processed</option>
+              <option value="created_at">Date Created</option>
+              <option value="file_name">File Name</option>
+              <option value="duration_seconds">Duration</option>
+            </select>
+          </div>
+          
+          <div className="filter-group">
+            <label>Order:</label>
+            <select value={sortOrder} onChange={(e) => setSortOrder(e.target.value as SortOrder)}>
+              <option value="descending">Newest First</option>
+              <option value="ascending">Oldest First</option>
+            </select>
+          </div>
+          
+          <div className="filter-group">
+            <label>Date Range:</label>
+            <input
+              type="date"
+              value={dateStart}
+              onChange={(e) => setDateStart(e.target.value)}
+              placeholder="Start Date"
+            />
+            <input
+              type="date"
+              value={dateEnd}
+              onChange={(e) => setDateEnd(e.target.value)}
+              placeholder="End Date"
+            />
+          </div>
+          
+          <button className="apply-filters-button" onClick={loadVideoData}>
+            Apply Filters
+          </button>
+        </div>
+      </AccordionItem>
+
+      {/* Controls */}
       <div className="library-header">
-        <h3>{currentSearchTerm ? `Search results for "${currentSearchTerm}"` : 'Browse Videos'}</h3>
+        <h3>Videos ({videos.length})</h3>
         <div className="library-controls">
-          <div className="card-size-selector">
-            <button 
-              className={`size-button ${cardSize === 'small' ? 'active' : ''}`}
-              onClick={() => setCardSize('small')}
-              title="Small cards"
-              data-size="sm"
+          {/* View Mode Toggle */}
+          <div className="view-toggle">
+            <button
+              className={`view-button ${viewMode === 'tiles' ? 'active' : ''}`}
+              onClick={() => setViewMode('tiles')}
+              title="Tiles View"
             >
               <BsGrid3X3 />
             </button>
-            <button 
-              className={`size-button ${cardSize === 'medium' ? 'active' : ''}`}
-              onClick={() => setCardSize('medium')}
-              title="Medium cards"
-              data-size="md"
+            <button
+              className={`view-button ${viewMode === 'rows' ? 'active' : ''}`}
+              onClick={() => setViewMode('rows')}
+              title="Rows View"
             >
-              <BsGrid3X2 />
-            </button>
-            <button 
-              className={`size-button ${cardSize === 'large' ? 'active' : ''}`}
-              onClick={() => setCardSize('large')}
-              title="Large cards"
-              data-size="lg"
-            >
-              <BsGrid1X2 />
+              <FiList />
             </button>
           </div>
-          <button 
-            onClick={handleRefresh} 
-            className={`refresh-button ${refreshing ? 'refreshing' : ''}`}
-            title="Refresh video library"
-            disabled={refreshing}
-          >
-            <FiRefreshCw className="refresh-icon" />
-            {refreshing && <span className="refresh-status">Refreshing...</span>}
+
+          {/* Card Size Selector (only for tiles) */}
+          {viewMode === 'tiles' && (
+            <div className="card-size-selector">
+              <button
+                className={`size-button ${cardSize === 'small' ? 'active' : ''}`}
+                onClick={() => setCardSize('small')}
+                data-size="S"
+              >
+                <BsGrid3X3 />
+              </button>
+              <button
+                className={`size-button ${cardSize === 'medium' ? 'active' : ''}`}
+                onClick={() => setCardSize('medium')}
+                data-size="M"
+              >
+                <BsGrid3X2 />
+              </button>
+              <button
+                className={`size-button ${cardSize === 'large' ? 'active' : ''}`}
+                onClick={() => setCardSize('large')}
+                data-size="L"
+              >
+                <BsGrid1X2 />
+              </button>
+            </div>
+          )}
+
+          {/* Refresh Button */}
+          <button className="refresh-button" onClick={handleRefresh} disabled={refreshing}>
+            <FiRefreshCw className={refreshing ? 'refreshing' : ''} />
           </button>
         </div>
       </div>
-      
-      <div className={`video-grid video-grid-${cardSize}`}>
-        {loading && videos.length === 0 ? (
-          <div className="loading-state">
-            <div className="spinner"></div>
-            <p>Loading videos...</p>
-          </div>
-        ) : videos.length > 0 ? (
-          videos.map((video) => (
+
+      {/* Cross-project search toggle */}
+      <div className="search-controls">
+        <label className="search-toggle">
+          <input
+            type="checkbox"
+            checked={crossProjectSearch}
+            onChange={(e) => setCrossProjectSearch(e.target.checked)}
+          />
+          <span>Search all projects</span>
+        </label>
+      </div>
+
+      {/* Video Grid/List */}
+      {loading ? (
+        <div className="loading-state">
+          <div className="spinner" />
+          <h3>Loading Videos</h3>
+          <p>Getting your video library...</p>
+        </div>
+      ) : videos.length > 0 ? (
+        <div className={`video-container ${viewMode === 'tiles' 
+          ? `video-grid video-grid-${cardSize}` 
+          : 'video-rows'
+        }`}>
+          {videos.map((video) => (
             <VideoCard 
               key={video.id} 
               video={video} 
               onRefresh={handleRefresh}
               size={cardSize}
+              viewMode={viewMode}
             />
-          ))
-        ) : (
-          <div className="empty-state">
-            <FiFilm size={48} />
-            <h3>No videos found</h3>
-            <p>{currentSearchTerm ? 'Try a different search query or clear filters.' : 'Ingest some videos or clear filters.'}</p>
-          </div>
-        )}
-      </div>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state">
+          <FiVideo />
+          <h3>No Videos Found</h3>
+          <p>
+            {currentSearchTerm 
+              ? `No videos match "${currentSearchTerm}". Try a different search term.`
+              : 'Process some videos to see them appear here.'
+            }
+          </p>
+        </div>
+      )}
     </div>
   );
 };

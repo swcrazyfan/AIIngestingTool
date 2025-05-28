@@ -7,12 +7,14 @@ Consolidates metadata from all sources.
 from typing import Any, Dict
 
 from ...pipeline.registry import register_step
+from prefect import task
 
 @register_step(
     name="metadata_consolidation", 
     enabled=True,
     description="Consolidate metadata from all sources"
 )
+@task
 def consolidate_metadata_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Consolidate metadata from all sources.

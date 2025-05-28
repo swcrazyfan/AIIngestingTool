@@ -11,12 +11,14 @@ from typing import Any, Dict, List
 
 from ...pipeline.registry import register_step
 from ...auth import AuthManager
+from prefect import task
 
 @register_step(
     name="thumbnail_upload",
     enabled=True,  # Enabled by default
     description="Upload thumbnails to Supabase storage"
 )
+@task
 def upload_thumbnails_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Upload thumbnails to Supabase storage.

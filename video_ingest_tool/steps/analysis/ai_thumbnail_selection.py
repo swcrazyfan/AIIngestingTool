@@ -10,6 +10,7 @@ import logging
 from typing import Any, Dict, List, Optional
 from PIL import Image
 import av
+from prefect import task
 
 from ...pipeline.registry import register_step
 
@@ -132,6 +133,7 @@ def extract_frame_at_timestamp(file_path: str, timestamp: str, output_path: str,
     enabled=True,
     description="Extract AI-selected thumbnails based on analysis"
 )
+@task
 def ai_thumbnail_selection_step(data: Dict[str, Any], thumbnails_dir=None, logger=None) -> Dict[str, Any]:
     """
     Extract frames from the video at timestamps recommended by AI analysis.

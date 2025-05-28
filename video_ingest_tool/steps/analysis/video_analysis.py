@@ -9,11 +9,13 @@ from typing import Dict, Any, Optional
 
 from ...config import DEFAULT_COMPRESSION_CONFIG, Config
 from ...pipeline.registry import register_step
+from prefect import task
 
 # Try to import VideoProcessor - it may not be available if dependencies are missing
 try:
     from ...video_processor.processor import VideoProcessor
     HAS_VIDEO_PROCESSOR = True
+    VIDEO_PROCESSOR_ERROR = ""
 except ImportError as e:
     HAS_VIDEO_PROCESSOR = False
     VIDEO_PROCESSOR_ERROR = str(e)
@@ -103,6 +105,7 @@ def _create_ai_summary(analysis_json: Dict[str, Any]) -> Dict[str, Any]:
     enabled=False,  # Disabled by default due to API costs
     description="Comprehensive video analysis using Gemini Flash 2.5 AI"
 )
+@task
 def ai_video_analysis_step(
     data: Dict[str, Any], 
     thumbnails_dir: Optional[str] = None, 
@@ -112,55 +115,47 @@ def ai_video_analysis_step(
 ) -> Dict[str, Any]:
     """
     Perform comprehensive AI video analysis using Gemini Flash 2.5.
-    
-    Args:
-        data: Pipeline data containing file_path, checksum, and other metadata
-        thumbnails_dir: Directory where thumbnails are stored
-        logger: Optional logger
-        compression_fps: Frame rate for video compression
-        compression_bitrate: Bitrate for video compression
-        
-    Returns:
-        Dict[str, Any]: Dictionary with AI analysis results
+    Always returns a dict with all expected keys, even in error cases.
     """
+    # Default output structure
+    output = {
+        'ai_analysis_summary': {},
+        'ai_analysis_file_path': None,
+        'full_ai_analysis_data': {},
+        'compressed_video_path': data.get('compressed_video_path'),
+        'ai_analysis_data': {},
+    }
     if not HAS_VIDEO_PROCESSOR:
         if logger:
             logger.warning(f"VideoProcessor not available: {VIDEO_PROCESSOR_ERROR}")
-        return {
-            'ai_analysis_data': {},
-            'ai_analysis_file_path': None
-        }
-    
+        output['error'] = VIDEO_PROCESSOR_ERROR
+        return output
+
     file_path = data.get('file_path')
     compressed_path = data.get('compressed_video_path')
-    
+
     if not file_path:
         if logger:
             logger.error("No file_path provided for AI analysis")
-        return {
-            'ai_analysis_data': {},
-            'ai_analysis_file_path': None
-        }
-    
+        output['error'] = 'No file_path provided'
+        return output
+
     try:
         if logger:
             logger.info(f"Starting comprehensive AI analysis for: {os.path.basename(file_path)}")
-        
+        from ...config import Config
         # Initialize VideoProcessor with compression configuration
         config = Config()
-        
         # Create compression config with custom parameters
         compression_config = {
             'fps': compression_fps,
             'video_bitrate': compression_bitrate
         }
         video_processor = VideoProcessor(config, compression_config=compression_config)
-        
         # Determine output directory for compressed files
         run_dir = None
         if thumbnails_dir:
             run_dir = os.path.dirname(thumbnails_dir)  # thumbnails_dir is run_dir/thumbnails
-        
         # Use pre-compressed video if available, otherwise compress now
         if compressed_path and os.path.exists(compressed_path):
             if logger:
@@ -170,42 +165,34 @@ def ai_video_analysis_step(
             if logger:
                 logger.info("No pre-compressed video found, compressing now...")
             # Compress the video now
+            from ...video_processor.compression import VideoCompressor
             compressor = VideoCompressor(compression_config)
             compressed_path = compressor.compress(file_path, run_dir)
             video_to_analyze = compressed_path
-        
+            output['compressed_video_path'] = compressed_path
         # Process the video (this will analyze the compressed video)
         result = video_processor.process(video_to_analyze, run_dir)
-        
         if not result.get('success'):
             if logger:
                 logger.error(f"AI analysis failed: {result.get('error', 'Unknown error')}")
-            return {
-                'ai_analysis_data': {},
-                'ai_analysis_file_path': None
-            }
-        
+            output['error'] = result.get('error', 'Unknown error')
+            return output
         # Get the analysis results
         analysis_json = result.get('analysis_json', {})
-        
         # Create AI-specific JSON file with proper naming
         if analysis_json and file_path:
             try:
                 import json
-                
                 # Create AI analysis directory in run structure (same level as thumbnails)
                 if run_dir:
                     ai_analysis_dir = os.path.join(run_dir, "ai_analysis")
                     os.makedirs(ai_analysis_dir, exist_ok=True)
-                    
                     input_basename = os.path.basename(file_path)
                     ai_filename = f"{os.path.splitext(input_basename)[0]}_AI_analysis.json"
                     ai_analysis_path = os.path.join(ai_analysis_dir, ai_filename)
-                    
                     # Save the complete AI analysis to AI-specific file
                     with open(ai_analysis_path, 'w') as f:
                         json.dump(analysis_json, f, indent=2)
-                    
                     if logger:
                         logger.info(f"AI analysis saved to: {ai_analysis_path}")
                 else:
@@ -213,37 +200,25 @@ def ai_video_analysis_step(
                     ai_analysis_path = None
                     if logger:
                         logger.warning("No run directory available - AI analysis not saved to separate file")
-                
                 # Create summary for main JSON (lightweight)
                 ai_summary = _create_ai_summary(analysis_json)
-                
-                return {
-                    'ai_analysis_summary': ai_summary,  # Lightweight summary for main JSON
-                    'ai_analysis_file_path': ai_analysis_path,  # Path to full AI analysis
-                    'full_ai_analysis_data': analysis_json,  # Full analysis data for model creation
-                    'compressed_video_path': result.get('compressed_path')
-                }
-                
+                output.update({
+                    'ai_analysis_summary': ai_summary,
+                    'ai_analysis_file_path': ai_analysis_path,
+                    'full_ai_analysis_data': analysis_json,
+                    'compressed_video_path': result.get('compressed_path'),
+                })
+                return output
             except Exception as e:
                 if logger:
                     logger.error(f"Failed to save AI analysis files: {str(e)}")
-        
+                output['error'] = str(e)
+                return output
         if logger:
             logger.info(f"AI analysis completed successfully")
-        
-        return {
-            'ai_analysis_summary': {},
-            'ai_analysis_file_path': None,
-            'full_ai_analysis_data': {},
-            'compressed_video_path': result.get('compressed_path')
-        }
-        
+        return output
     except Exception as e:
         if logger:
             logger.error(f"AI analysis failed with exception: {str(e)}")
-        return {
-            'ai_analysis_summary': {},
-            'ai_analysis_file_path': None,
-            'full_ai_analysis_data': {},
-            'error': str(e)
-        } 
+        output['error'] = str(e)
+        return output 

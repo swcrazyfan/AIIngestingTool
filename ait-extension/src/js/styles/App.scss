@@ -27,6 +27,33 @@ body {
   position: relative;
 }
 
+.guest-mode-banner {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: white;
+  padding: 8px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 500;
+  z-index: 100;
+  
+  button {
+    background: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: white;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    
+    &:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+  }
+}
+
 .app-loading {
   display: flex;
   flex-direction: column;
@@ -83,6 +110,17 @@ body {
     &.active {
       color: #fff;
       border-bottom-color: #0066cc;
+    }
+    
+    &.disabled-guest {
+      opacity: 0.5;
+      cursor: not-allowed;
+      position: relative;
+      
+      &:hover {
+        color: #999 !important;
+        background: transparent !important;
+      }
     }
   }
 }

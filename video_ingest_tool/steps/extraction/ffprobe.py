@@ -8,12 +8,14 @@ from typing import Any, Dict
 
 from ...pipeline.registry import register_step
 from ...extractors.media import extract_ffprobe_info
+from prefect import task
 
 @register_step(
     name="ffprobe_extraction", 
     enabled=True,
     description="Extract metadata using FFprobe/PyAV"
 )
+@task
 def extract_ffprobe_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Extract metadata using FFprobe/PyAV.

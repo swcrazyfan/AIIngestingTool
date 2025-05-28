@@ -14,7 +14,7 @@ from .analysis import (
     ai_video_analysis_step, ai_thumbnail_selection_step
 )
 from .processing import (
-    generate_checksum_step, check_duplicate_step, video_compression_step, consolidate_metadata_step
+    generate_checksum_step, check_duplicate_step, consolidate_metadata_step
 )
 from .storage import (
     create_model_step, database_storage_step, generate_embeddings_step,
@@ -42,7 +42,6 @@ __all__ = [
     # Processing steps
     'generate_checksum_step',
     'check_duplicate_step',
-    'video_compression_step',
     'consolidate_metadata_step',
     
     # Storage steps

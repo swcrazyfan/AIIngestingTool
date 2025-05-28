@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { healthApi } from '../api/client';
-import { FiWifi, FiWifiOff, FiLogOut, FiUser } from 'react-icons/fi';
+import { FiWifi, FiWifiOff, FiLogOut, FiUser, FiFolder } from 'react-icons/fi';
 import '../styles/Header.scss';
 
 const Header: React.FC = () => {
   const { authStatus, logout } = useAuth();
   const [isConnected, setIsConnected] = useState(false);
+  const [currentProject, setCurrentProject] = useState('All Projects');
 
   useEffect(() => {
     const checkConnection = async () => {
@@ -23,7 +24,20 @@ const Header: React.FC = () => {
   return (
     <header className="app-header">
       <div className="header-content">
-        <h1>AI Video Ingest Tool</h1>
+        <div className="header-left">
+          <h1>AI Video Ingest Tool</h1>
+          <div className="project-selector">
+            <FiFolder />
+            <select 
+              value={currentProject} 
+              onChange={(e) => setCurrentProject(e.target.value)}
+            >
+              <option value="All Projects">All Projects</option>
+              <option value="Wedding 2024">Wedding 2024</option>
+              <option value="Corporate Videos">Corporate Videos</option>
+            </select>
+          </div>
+        </div>
         
         <div className="header-actions">
           <div className={`connection-status ${isConnected ? 'connected' : 'disconnected'}`}>

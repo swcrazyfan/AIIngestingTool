@@ -22,12 +22,14 @@ from ...models import (
     Entities, PersonDetail, Location, ObjectOfInterest, Activity, ContentWarning
 )
 from ...utils import calculate_aspect_ratio_str
+from prefect import task
 
 @register_step(
     name="model_creation", 
     enabled=True,
     description="Create Pydantic model from processed data"
 )
+@task
 def create_model_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Create Pydantic model from processed data.

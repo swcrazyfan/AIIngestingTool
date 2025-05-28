@@ -7,12 +7,14 @@ This module handles storing processed video data in the Supabase database.
 from typing import Any, Dict
 
 from ...pipeline.registry import register_step
+from prefect import task
 
 @register_step(
     name="database_storage", 
     enabled=True,  # Enabled by default
     description="Store video metadata and analysis in Supabase database"
 )
+@task
 def database_storage_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Store video data in Supabase database.

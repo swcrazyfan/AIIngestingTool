@@ -9,12 +9,14 @@ from typing import Any, Dict
 
 from ...pipeline.registry import register_step
 from ...processors import generate_thumbnails
+from prefect import task
 
 @register_step(
     name="thumbnail_generation", 
     enabled=True,
     description="Generate thumbnails from video"
 )
+@task
 def generate_thumbnails_step(data: Dict[str, Any], thumbnails_dir=None, logger=None) -> Dict[str, Any]:
     """
     Generate thumbnails for a video file.

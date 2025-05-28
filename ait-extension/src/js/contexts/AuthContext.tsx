@@ -8,10 +8,12 @@ interface AuthContextType {
   loading: boolean;
   isConnected: boolean;
   requiresReLogin: boolean;
+  isGuestMode: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
   handleAuthError: () => void;
+  setGuestMode: (guest: boolean) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -29,6 +31,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [loading, setLoading] = useState(true);
   const [isConnected, setIsConnected] = useState(true);
   const [requiresReLogin, setRequiresReLogin] = useState(false);
+  const [isGuestMode, setIsGuestMode] = useState(false);
 
   const handleAuthError = useCallback(() => {
     console.warn('Authentication error detected, forcing re-login.');
@@ -67,8 +70,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const logout = async () => {
     setLoading(true);
     try {
-      await authApi.logout();
+      if (!isGuestMode) {
+        await authApi.logout();
+      }
       setAuthStatus(null);
+      setIsGuestMode(false);
       // Clear the thumbnail cache when logging out
       clearCache();
       localStorage.removeItem('reconnectAfterAuth');
@@ -76,6 +82,25 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.error('Logout failed:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const setGuestMode = (guest: boolean) => {
+    if (guest) {
+      // Create mock auth status for guest mode
+      setAuthStatus({
+        authenticated: true,
+        user: {
+          id: 'guest',
+          email: 'guest@example.com',
+          profile_type: 'guest'
+        }
+      });
+      setIsGuestMode(true);
+      setLoading(false);
+    } else {
+      setAuthStatus(null);
+      setIsGuestMode(false);
     }
   };
 
@@ -110,7 +135,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [handleAuthError]);
 
   return (
-    <AuthContext.Provider value={{ authStatus, loading, isConnected, login, logout, checkAuth, requiresReLogin, handleAuthError }}>
+    <AuthContext.Provider value={{ authStatus, loading, isConnected, login, logout, checkAuth, requiresReLogin, handleAuthError, isGuestMode, setGuestMode }}>
       {children}
     </AuthContext.Provider>
   );

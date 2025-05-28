@@ -7,12 +7,14 @@ Checks for duplicate files in the database.
 from typing import Any, Dict
 
 from ...pipeline.registry import register_step
+from prefect import task
 
 @register_step(
     name="duplicate_check", 
     enabled=True,
     description="Check database for existing files with same checksum"
 )
+@task
 def check_duplicate_step(data: Dict[str, Any], logger=None, force_reprocess: bool = False) -> Dict[str, Any]:
     """
     Check if a file with the same checksum already exists in the database.

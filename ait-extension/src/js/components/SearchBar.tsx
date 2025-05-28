@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
 import { FiSearch } from 'react-icons/fi';
+import { SearchType } from '../types/api';
 import '../styles/SearchBar.scss';
 
 interface SearchBarProps {
-  onSearch: (query: string, type: 'hybrid' | 'semantic' | 'fulltext' | 'transcripts') => void;
+  onSearch: (query: string, type: SearchType) => void;
 }
 
 const SearchBar: React.FC<SearchBarProps> = ({ onSearch }) => {
   const [query, setQuery] = useState('');
-  const [searchType, setSearchType] = useState<'hybrid' | 'semantic' | 'fulltext' | 'transcripts'>('hybrid');
+  const [searchType, setSearchType] = useState<SearchType>('hybrid');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

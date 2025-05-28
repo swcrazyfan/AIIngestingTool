@@ -6,14 +6,17 @@ import Header from '../components/Header';
 import Login from '../components/Login';
 import VideoLibrary from '../components/VideoLibrary';
 import IngestPanel from '../components/IngestPanel';
+import Dashboard from '../components/Dashboard';
+import ProjectsPanel from '../components/ProjectsPanel';
+import SettingsPanel from '../components/SettingsPanel';
 import ConnectionMonitor from '../components/ConnectionMonitor';
 import '../styles/App.scss';
 
 const queryClient = new QueryClient();
 
 const AppContent: React.FC = () => {
-  const { authStatus, loading, isConnected } = useAuth();
-  const [activeTab, setActiveTab] = useState<'library' | 'ingest'>('library');
+  const { authStatus, loading, isConnected, isGuestMode } = useAuth();
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'library' | 'ingest' | 'projects' | 'settings'>('dashboard');
 
   if (loading) {
     return (
@@ -24,7 +27,7 @@ const AppContent: React.FC = () => {
     );
   }
 
-  if (!authStatus?.authenticated) {
+  if (!authStatus?.authenticated && !isGuestMode) {
     return <Login />;
   }
 
@@ -33,33 +36,69 @@ const AppContent: React.FC = () => {
       {/* Connection status monitor */}
       <ConnectionMonitor />
       
+      {/* Guest mode banner */}
+      {isGuestMode && (
+        <div className="guest-mode-banner">
+          <span>👁️ Guest Mode - Read-only preview (some features disabled)</span>
+          <button onClick={() => window.location.reload()}>Exit Guest Mode</button>
+        </div>
+      )}
+      
       <Header />
       
       <div className="app-content">
         <div className="tab-navigation">
           <button
-            className={`tab-button ${activeTab === 'library' ? 'active' : ''}`}
-            onClick={() => setActiveTab('library')}
-            disabled={!isConnected}
+            className={`tab-button ${activeTab === 'dashboard' ? 'active' : ''}`}
+            onClick={() => setActiveTab('dashboard')}
+            disabled={!isConnected && !isGuestMode}
           >
-            Video Library
+            Dashboard
           </button>
           <button
-            className={`tab-button ${activeTab === 'ingest' ? 'active' : ''}`}
-            onClick={() => setActiveTab('ingest')}
-            disabled={!isConnected}
+            className={`tab-button ${activeTab === 'library' ? 'active' : ''}`}
+            onClick={() => setActiveTab('library')}
+            disabled={!isConnected && !isGuestMode}
           >
-            Process Videos
+            Library
+          </button>
+          <button
+            className={`tab-button ${activeTab === 'ingest' ? 'active' : ''} ${isGuestMode ? 'disabled-guest' : ''}`}
+            onClick={() => !isGuestMode && setActiveTab('ingest')}
+            disabled={(!isConnected && !isGuestMode) || isGuestMode}
+            title={isGuestMode ? 'Not available in guest mode' : ''}
+          >
+            Ingest
+          </button>
+          <button
+            className={`tab-button ${activeTab === 'projects' ? 'active' : ''}`}
+            onClick={() => setActiveTab('projects')}
+            disabled={!isConnected && !isGuestMode}
+          >
+            Projects
+          </button>
+          <button
+            className={`tab-button ${activeTab === 'settings' ? 'active' : ''}`}
+            onClick={() => setActiveTab('settings')}
+            disabled={!isConnected && !isGuestMode}
+          >
+            Settings
           </button>
         </div>
 
         <div className="tab-content">
-          {!isConnected ? (
+          {!isConnected && !isGuestMode ? (
             <div className="connection-lost-message">
               <p>Connection to the server has been lost. Attempting to reconnect...</p>
             </div>
           ) : (
-            activeTab === 'library' ? <VideoLibrary /> : <IngestPanel />
+            <>
+              {activeTab === 'dashboard' && <Dashboard />}
+              {activeTab === 'library' && <VideoLibrary />}
+              {activeTab === 'ingest' && !isGuestMode && <IngestPanel />}
+              {activeTab === 'projects' && <ProjectsPanel />}
+              {activeTab === 'settings' && <SettingsPanel />}
+            </>
           )}
         </div>
       </div>
