@@ -307,3 +307,53 @@
     }
   }
 }
+
+// Row layout for video cards
+.video-card-row {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  padding: 12px !important;
+  border-radius: 8px !important;
+  
+  .video-thumbnail {
+    width: 120px !important;
+    height: 68px !important;
+    flex-shrink: 0;
+    margin-bottom: 0 !important;
+    margin-right: 16px;
+    padding-bottom: 0 !important; // Override aspect ratio padding
+  }
+  
+  .video-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    margin-bottom: 0 !important;
+  }
+  
+  .video-actions {
+    flex-shrink: 0;
+    grid-template-columns: repeat(4, 1fr) !important;
+    width: auto;
+    margin-top: 0 !important;
+    
+    button {
+      min-width: 80px;
+    }
+  }
+  
+  .video-meta {
+    margin-bottom: 4px !important;
+  }
+  
+  .video-summary {
+    margin-bottom: 8px !important;
+    -webkit-line-clamp: 1 !important;
+  }
+  
+  .video-tags {
+    margin-bottom: 8px !important;
+  }
+}

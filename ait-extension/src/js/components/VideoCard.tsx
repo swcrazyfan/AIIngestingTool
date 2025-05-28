@@ -6,16 +6,22 @@ import { FiPlay, FiFolder, FiSearch, FiClock, FiCamera, FiInfo } from 'react-ico
 import SimilarVideosModal from './SimilarVideosModal';
 import VideoDetailsModal from './VideoDetailsModal';
 import { thumbnailCache, CACHE_EXPIRATION, cleanupCacheEntry } from './shared/ThumbnailCache';
-import { CardSize } from './VideoLibrary';
+import { CardSize, ViewMode } from './VideoLibrary';
 import '../styles/VideoCard.scss';
 
 interface VideoCardProps {
   video: VideoFile;
   onRefresh: () => void;
   size?: CardSize;
+  viewMode?: ViewMode;
 }
 
-const VideoCard: React.FC<VideoCardProps> = ({ video, onRefresh, size = 'medium' }) => {
+const VideoCard: React.FC<VideoCardProps> = ({ 
+  video, 
+  onRefresh, 
+  size = 'medium', 
+  viewMode = 'tiles' 
+}) => {
   const [showSimilar, setShowSimilar] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [thumbnailError, setThumbnailError] = useState(false);
@@ -171,7 +177,7 @@ const VideoCard: React.FC<VideoCardProps> = ({ video, onRefresh, size = 'medium'
   
   return (
     <>
-      <div className={`video-card video-card-${size}`}>
+      <div className={`video-card video-card-${size} ${viewMode === 'rows' ? 'video-card-row' : ''}`}>
         <div className="video-thumbnail" onClick={() => setShowDetails(true)} style={{ cursor: 'pointer' }}>
           {imgSrc && !thumbnailError ? (
             <img 

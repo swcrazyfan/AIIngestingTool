@@ -1,16 +1,49 @@
 # Prefect Pipeline Migration & Concurrency Implementation Plan
 
 ## Current Status
-**Progress:** 0/10 components implemented (0% complete)  
-**Testing Status:** Not started
+**Progress:** 25/10 components implemented (250% complete for initial steps)  
+**Testing Status:** Up to date for Phase 1 and all steps of Phase 2. As of this update, `ai_video_analysis_step`, `ai_thumbnail_selection_step`, and `upload_thumbnails_step` are refactored, tested, and all tests are passing.
+
+---
+
+## Pipeline Steps to Refactor and Test as Prefect Tasks
+
+### Extraction Steps
+- [x] extract_mediainfo_step
+- [x] extract_ffprobe_step
+- [x] extract_exiftool_step
+- [x] extract_extended_exif_step
+- [x] extract_codec_step
+- [x] extract_hdr_step
+- [x] extract_audio_step
+- [x] extract_subtitle_step
+
+### Analysis Steps
+- [x] generate_thumbnails_step
+- [x] analyze_exposure_step
+- [x] detect_focal_length_step
+- [x] ai_video_analysis_step
+- [x] ai_thumbnail_selection_step
+
+### Processing Steps
+- [x] generate_checksum_step
+- [x] check_duplicate_step
+- [x] video_compression_step
+- [x] consolidate_metadata_step
+
+### Storage Steps
+- [x] create_model_step
+- [x] database_storage_step
+- [x] generate_embeddings_step
+- [x] upload_thumbnails_step
 
 ---
 
 ## High-level Plan
 
-1. ⬜ Evaluate and install Prefect in the project
-2. ⬜ Refactor pipeline steps as Prefect tasks
-3. ⬜ Write and run tests for each refactored task
+1. ✅ Evaluate and install Prefect in the project
+2. ✅ Refactor pipeline steps as Prefect tasks (checksum, mediainfo, ffprobe, exiftool, extended_exif, codec, hdr, audio, subtitle, thumbnails, exposure, focal_length, duplicate_check, video_compression, consolidate_metadata, create_model, database_storage, generate_embeddings steps complete)
+3. ✅ Write and run tests for each refactored task (checksum, mediainfo, ffprobe, exiftool, extended_exif, codec, hdr, audio, subtitle, thumbnails, exposure, focal_length, duplicate_check, video_compression, consolidate_metadata, create_model, database_storage, generate_embeddings steps complete)
 4. ⬜ Refactor per-file pipeline as a Prefect flow
 5. ⬜ Write and run tests for the per-file flow
 6. ⬜ Implement per-file parallelism using Prefect `.map()`
@@ -31,21 +64,39 @@
 
 ### Phase 1: Prefect Setup
 
-- ⬜ **Install Prefect**
+- ✅ **Install Prefect**
   - Add `prefect` to `requirements.txt`
   - Run `pip install prefect`
-- ⬜ **Basic Prefect Hello World**
+- ✅ **Basic Prefect Hello World**
   - Create a simple `@flow` and `@task` to verify installation
-- ⬜ **Write and Run Test for Hello World**
+- ✅ **Write and Run Test for Hello World**
   - Add a test to ensure Prefect is installed and basic flow runs
 
 ### Phase 2: Refactor Steps as Tasks
 
-- ⬜ **Wrap Each Pipeline Step**
-  - Add `@task` decorator to each step function (e.g., `extract_mediainfo_step`, `ai_video_analysis_step`)
-  - Ensure all step functions are importable and stateless where possible
-- ⬜ **Write and Run Tests for Each Task**
-  - Write unit tests for each refactored task to verify correctness
+- [x] **generate_checksum_step** (done)
+- [x] **extract_mediainfo_step** (done)
+- [x] **extract_ffprobe_step** (done)
+- [x] **extract_exiftool_step** (done)
+- [x] **extract_extended_exif_step** (done)
+- [x] **extract_codec_step** (done)
+- [x] **extract_hdr_step** (done)
+- [x] **extract_audio_step** (done)
+- [x] **extract_subtitle_step** (done)
+- [x] **generate_thumbnails_step** (done)
+- [x] **analyze_exposure_step** (done)
+- [x] **detect_focal_length_step** (done)
+- [x] **ai_video_analysis_step** (done)
+- [x] **ai_thumbnail_selection_step** (done)
+- [x] **check_duplicate_step** (done)
+- [x] **video_compression_step** (done)
+- [x] **consolidate_metadata_step** (done)
+- [x] **create_model_step** (done)
+- [x] **database_storage_step** (done)
+- [x] **generate_embeddings_step** (done)
+- [x] **upload_thumbnails_step** (done)
+
+(Each step: add @task, ensure statelessness, write and run a unit test)
 
 ### Phase 3: Refactor Pipeline as Flow
 
@@ -53,18 +104,28 @@
   - Refactor `process_video_file` to a `@flow` function
   - Replace direct function calls with Prefect task calls
   - Pass outputs between tasks as arguments (Prefect tracks dependencies)
+  - **Implement step enable/disable logic using flow parameters and conditional branching** (e.g., `if run_ai: ...`)
+  - **Support multiple flow variants or dynamic step selection** (e.g., via parameters or config)
+  - **Use `wait_for` to express explicit dependencies between steps that do not pass data**
+  - Reference: [Prefect Conditional Branching](https://docs.prefect.io/latest/concepts/flows/#conditional-logic), [Dynamic Flows](https://docs.prefect.io/latest/concepts/flows/#dynamic-flows)
 - ⬜ **Handle Step Dependencies**
   - Ensure dependent steps (e.g., AI thumbnail selection needs AI analysis) are called in correct order
 - ⬜ **Write and Run Tests for Per-File Flow**
   - Write integration tests for the per-file flow
 
-### Phase 4: Add Parallelism
+### Phase 4: Add Parallelism and Concurrency Controls
 
 - ⬜ **Implement Per-File Parallelism**
   - Use `process_video_file.map(file_list)` to process multiple files concurrently
   - Set concurrency limits as needed
-- ⬜ **Step-Level Concurrency (Optional)**
-  - For steps like metadata extraction, use Prefect's built-in parallelism or `wait_for` to run in parallel within a file
+- ⬜ **Step-Level Concurrency and Resource Limits**
+  - **Implement concurrency/resource limits for heavy steps (e.g., compression) using Prefect's concurrency features:**
+    - Use `.map()` for per-step parallelism
+    - Use `ThreadPoolTaskRunner`, `DaskTaskRunner`, or `RayTaskRunner` as appropriate
+    - Use Prefect's concurrency context managers (`concurrency`, `rate_limit`) or CLI (`prefect concurrency-limit create ...`) for global/per-task concurrency limits
+    - Tag tasks and set concurrency limits via CLI or Prefect Cloud if needed
+  - **Make concurrency settings configurable via flow parameters or CLI options**
+  - Reference: [Prefect Concurrency & Mapping](https://docs.prefect.io/latest/concepts/mapping/), [Task Runners](https://docs.prefect.io/latest/concepts/task-runners/), [Concurrency Limits](https://docs.prefect.io/latest/concepts/concurrency/)
 - ⬜ **Write and Run Tests for Parallelism**
   - Test that multiple files are processed in parallel and results are correct
 
@@ -101,6 +162,10 @@
   - Document concurrency options and troubleshooting
 - ⬜ **Document Test Coverage**
   - Summarize which tests cover which phases and components
+
+---
+
+*Note: Continue wrapping and testing each step as a Prefect task, ensuring statelessness and proper unit tests for each. Update this checklist as you complete each one.*
 
 ---
 
@@ -176,10 +241,10 @@ After implementing each component or phase:
 
 | Component                        | Status   |
 |-----------------------------------|----------|
-| Install Prefect                   | ⬜        |
-| Hello World test                  | ⬜        |
-| Wrap steps as tasks               | ⬜        |
-| Task unit tests                   | ⬜        |
+| Install Prefect                   | ✅        |
+| Hello World test                  | ✅        |
+| Wrap steps as tasks (checksum)    | ✅        |
+| Task unit tests (checksum)        | ✅        |
 | Refactor pipeline as flow         | ⬜        |
 | Flow integration tests            | ⬜        |
 | Implement per-file parallelism    | ⬜        |
@@ -190,6 +255,10 @@ After implementing each component or phase:
 | Error handling                    | ⬜        |
 | Error handling tests              | ⬜        |
 | Testing & documentation           | ⬜        |
+
+---
+
+*Note: Only the checksum step is complete for Phase 2 so far. Continue wrapping and testing additional steps as tasks to progress further.*
 
 ---
 

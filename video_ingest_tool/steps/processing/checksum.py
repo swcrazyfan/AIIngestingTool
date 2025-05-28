@@ -9,12 +9,14 @@ from typing import Any, Dict
 
 from ...pipeline.registry import register_step
 from ...utils import calculate_checksum
+from prefect import task
 
 @register_step(
     name="checksum_generation", 
     enabled=True,
     description="Calculate file checksum for deduplication"
 )
+@task
 def generate_checksum_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Generate checksum for a video file.

@@ -30,6 +30,84 @@
   }
 }
 
+.session-check {
+  margin-bottom: 24px;
+  text-align: center;
+  
+  .session-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 12px;
+    background: #333;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #ccc;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    
+    &:hover:not(:disabled) {
+      background: #3a3a3a;
+      border-color: #555;
+      color: #fff;
+    }
+    
+    &:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+    }
+    
+    &.guest-button {
+      background: linear-gradient(135deg, #0066cc, #0052a3);
+      border-color: #0066cc;
+      color: #fff;
+      
+      &:hover:not(:disabled) {
+        background: linear-gradient(135deg, #0052a3, #004182);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0, 102, 204, 0.3);
+      }
+    }
+    
+    .spinning {
+      animation: spin 1s linear infinite;
+    }
+  }
+  
+  .session-help {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #666;
+  }
+}
+
+.login-divider {
+  position: relative;
+  text-align: center;
+  margin: 24px 0;
+  
+  &::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: #333;
+  }
+  
+  span {
+    background: #252525;
+    padding: 0 16px;
+    color: #666;
+    font-size: 12px;
+  }
+}
+
 .login-form {
   display: flex;
   flex-direction: column;
@@ -102,4 +180,8 @@
     opacity: 0.7;
     cursor: not-allowed;
   }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }

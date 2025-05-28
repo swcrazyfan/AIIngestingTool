@@ -9,12 +9,14 @@ from typing import Any, Dict
 from ...pipeline.registry import register_step
 from ...processors import detect_focal_length_with_ai
 from ...config.constants import FOCAL_LENGTH_RANGES, HAS_TRANSFORMERS
+from prefect import task
 
 @register_step(
     name="ai_focal_length", 
     enabled=True,
     description="Detect focal length using AI when EXIF data is not available"
 )
+@task
 def detect_focal_length_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Detect focal length using AI when EXIF data is not available.

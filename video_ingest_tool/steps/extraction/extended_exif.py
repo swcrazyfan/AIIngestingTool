@@ -8,12 +8,14 @@ from typing import Any, Dict
 
 from ...pipeline.registry import register_step
 from ...extractors.exif import extract_extended_exif_metadata
+from prefect import task
 
 @register_step(
     name="extended_exif_extraction", 
     enabled=True,
     description="Extract extended EXIF metadata"
 )
+@task
 def extract_extended_exif_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Extract extended EXIF metadata.

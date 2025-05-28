@@ -8,12 +8,14 @@ for video metadata to enable semantic search functionality.
 from typing import Any, Dict, List, Optional
 
 from ...pipeline.registry import register_step
+from prefect import task
 
 @register_step(
     name="generate_embeddings", 
     enabled=True,  # Enabled by default
     description="Generate vector embeddings for semantic search"
 )
+@task
 def generate_embeddings_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Generate and store vector embeddings for semantic search.

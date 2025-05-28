@@ -4,6 +4,7 @@ import { PlayCircle, Camera, Volume2, FileText, Settings, X, Image } from 'lucid
 import { FiPlay, FiFolder, FiSearch, FiInfo } from 'react-icons/fi';
 import { VideoFile } from '../types/api';
 import { formatDuration } from '../utils/format';
+import AccordionItem from './AccordionItem';
 import '../styles/Modal.scss';
 import '../styles/VideoCard.scss';
 import { thumbnailCache, CACHE_EXPIRATION } from './shared/ThumbnailCache';
@@ -440,27 +441,17 @@ const VideoDetailsModal: React.FC<VideoDetailsCardProps> = ({
                 </div>
 
                 {data?.analysis?.summary || displayClip.content_summary ? (
-                  <div className="analysis-section">
-                    <h3 className="section-title">
-                      <FileText size={16} />
-                      AI Analysis Summary
-                    </h3>
+                  <AccordionItem title="AI Analysis Summary" startOpen={true}>
                     <p className="section-content">{data?.analysis?.summary || displayClip.content_summary}</p>
-                  </div>
+                  </AccordionItem>
                 ) : null}
 
                 {data?.transcript?.full_text || displayClip.full_transcript ? (
-                  <div className="analysis-section">
-                    <h3 className="section-title">
-                      <FileText size={16} />
-                      Transcript
-                    </h3>
-                    <p className="section-content transcript">
-                      "{(data?.transcript?.full_text || displayClip.full_transcript || '').length > 200 
-                        ? (data?.transcript?.full_text || displayClip.full_transcript || '').substring(0, 200) + '...' 
-                        : (data?.transcript?.full_text || displayClip.full_transcript)}"
-                    </p>
-                  </div>
+                  <AccordionItem title="Full Transcript" startOpen={false}>
+                    <div className="full-transcript-text">
+                      {data?.transcript?.full_text || displayClip.full_transcript}
+                    </div>
+                  </AccordionItem>
                 ) : null}
 
                 {(data?.analysis?.tags || displayClip.content_tags) && 

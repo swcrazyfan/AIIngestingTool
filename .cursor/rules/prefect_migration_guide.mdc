@@ -1,3 +1,8 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
 # Prefect Migration Implementation Guide
 
 This guide outlines the process for migrating your video ingest pipeline to Prefect, following the plan in `prefect_migration_plan.md`. Use this guide to ensure a smooth, consistent, and trackable migration to a concurrent, dependency-aware pipeline.
@@ -12,6 +17,7 @@ This guide outlines the process for migrating your video ingest pipeline to Pref
 6. **Error Handling**: Use Prefect's retry and error hooks for robust error management
 7. **Testing**: Test each phase before moving to the next
 8. **Leverage Documentation**: Always consult the latest Prefect documentation using context7 before and during migration
+9. **Always use the conda activate video-ingest** Use this environment to work because it is where everything is installed and ready to go.
 
 ## How to Use This Implementation Guide
 
@@ -20,7 +26,7 @@ This guide outlines the process for migrating your video ingest pipeline to Pref
 1. **Check Current Progress**: Open `prefect_migration_plan.md` to see which tasks are waiting (⬜), in progress (🔄), or complete (✅)
 2. **Review Pipeline Structure**: Understand how your current pipeline and CLI are organized
 3. **Get the Latest Prefect Docs**: Use context7 to fetch the most up-to-date Prefect documentation before you begin. This ensures you are using the correct APIs and best practices.
-4. **Read Prefect Documentation**: Familiarize yourself with [Prefect Flows and Tasks](https://docs.prefect.io/latest/concepts/flows/) (or use context7 to get the relevant sections)
+4. **Read Prefect Documentation**: Familiarize yourself with [Prefect Flows and Tasks](mdc:https:/docs.prefect.io/latest/concepts/flows) (or use context7 to get the relevant sections)
 5. **Set Up Environment**: Ensure you are in the correct Python environment and have Prefect installed
 
 ### Starting a Task

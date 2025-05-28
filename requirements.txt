@@ -25,3 +25,6 @@ flask-cors>=4.0.0
 supabase>=2.3.0
 tiktoken>=0.5.0
 openai>=1.0.0
+
+# Prefect dependencies
+prefect>=2.0.0
