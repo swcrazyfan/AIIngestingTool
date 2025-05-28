@@ -3,7 +3,7 @@ Test script to verify refactored pipeline steps are properly registered.
 """
 
 import structlog
-from video_ingest_tool.pipeline.registry import get_all_steps
+from video_ingest_tool.flows.registry import get_all_steps
 from video_ingest_tool.steps.extraction import (
     extract_mediainfo_step, 
     extract_ffprobe_step,

@@ -18,7 +18,7 @@ from rich.progress import BarColumn, Progress
 
 from .config import setup_logging, console, DEFAULT_COMPRESSION_CONFIG
 from .discovery import scan_directory
-from .pipeline.registry import get_available_pipeline_steps, get_default_pipeline
+from .flows.registry import get_available_pipeline_steps, get_default_pipeline
 from .steps import process_video_file
 from .config.settings import get_default_pipeline_config
 from .output import save_to_json, save_run_outputs

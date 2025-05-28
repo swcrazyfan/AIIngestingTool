@@ -8,8 +8,8 @@ with the API server and other components that expect them in this location.
 from typing import Dict, Any, List
 
 # Re-export functions from other modules
-from .pipeline.registry import get_available_pipeline_steps
-from .steps import process_video_file
+from .flows.registry import get_available_pipeline_steps
+from .tasks import process_video_file
 from .config.settings import get_default_pipeline_config
 from .video_processor import DEFAULT_COMPRESSION_CONFIG
 
