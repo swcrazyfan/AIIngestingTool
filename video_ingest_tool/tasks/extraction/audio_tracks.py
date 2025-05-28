@@ -5,16 +5,9 @@ Extracts audio track information from video files.
 """
 
 from typing import Any, Dict
-
-from ...pipeline.registry import register_step
 from ...extractors.tracks import extract_audio_tracks
 from prefect import task
 
-@register_step(
-    name="audio_extraction", 
-    enabled=True,
-    description="Extract audio track information"
-)
 @task
 def extract_audio_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """

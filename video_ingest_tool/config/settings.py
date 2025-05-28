@@ -5,7 +5,6 @@ Provides configuration handling and management.
 """
 
 from typing import Dict, Any, Optional
-from ..flows.registry import get_default_pipeline
 
 class Config:
     """
@@ -75,20 +74,33 @@ class Config:
     def __repr__(self) -> str:
         return f"Config(config_data={self._config})"
 
-def get_default_pipeline_config() -> Dict[str, bool]:
+def get_default_pipeline_config() -> Dict[str, Any]:
     """
     Get the default configuration for all pipeline steps.
-    
     Returns:
-        Dict[str, bool]: Dictionary of step names and their enabled state
+        Dict[str, Any]: Dictionary of step names and their enabled state
     """
-    pipeline = get_default_pipeline()
-    
-    # Create a configuration dictionary based on the current pipeline state
-    config = {}
-    for step in pipeline.steps:
-        config[step.name] = step.enabled
-    # If AI analysis is enabled, also enable video_compression
-    if config.get('ai_video_analysis'):
-        config['video_compression'] = True
-    return config 
+    # Static default config for all steps (all enabled by default)
+    return {
+        'generate_checksum_step': True,
+        'check_duplicate_step': True,
+        'video_compression_step': True,
+        'extract_mediainfo_step': True,
+        'extract_ffprobe_step': True,
+        'extract_exiftool_step': True,
+        'extract_extended_exif_step': True,
+        'extract_codec_step': True,
+        'extract_hdr_step': True,
+        'extract_audio_step': True,
+        'extract_subtitle_step': True,
+        'generate_thumbnails_step': True,
+        'analyze_exposure_step': True,
+        'detect_focal_length_step': True,
+        'ai_video_analysis_step': True,
+        'ai_thumbnail_selection_step': True,
+        'consolidate_metadata_step': True,
+        'create_model_step': True,
+        'database_storage_step': True,
+        'generate_embeddings_step': True,
+        'upload_thumbnails_step': True,
+    } 

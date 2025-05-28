@@ -12,8 +12,6 @@ from PIL import Image
 import av
 from prefect import task
 
-from ...pipeline.registry import register_step
-
 def extract_frame_at_timestamp(file_path: str, timestamp: str, output_path: str, logger=None) -> Optional[str]:
     """
     Extract a specific frame from a video at the given timestamp.
@@ -128,11 +126,6 @@ def extract_frame_at_timestamp(file_path: str, timestamp: str, output_path: str,
             logger.error(f"Frame extraction failed for timestamp {timestamp}: {str(e)}")
         return None
 
-@register_step(
-    name="ai_thumbnail_selection", 
-    enabled=True,
-    description="Extract AI-selected thumbnails based on analysis"
-)
 @task
 def ai_thumbnail_selection_step(data: Dict[str, Any], thumbnails_dir=None, logger=None) -> Dict[str, Any]:
     """

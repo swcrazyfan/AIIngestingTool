@@ -1,16 +1,12 @@
 """
 AI video analysis step for the video ingest tool.
 
-Registered as a step in the flows registry.
-
 This module implements the video analysis step using Gemini Flash 2.5 AI.
 """
 
 import os
 from typing import Dict, Any, Optional
-
 from ...config import DEFAULT_COMPRESSION_CONFIG, Config
-from ...flows.registry import register_step
 from prefect import task
 
 # Try to import VideoProcessor - it may not be available if dependencies are missing
@@ -102,21 +98,10 @@ def _create_ai_summary(analysis_json: Dict[str, Any]) -> Dict[str, Any]:
         return {'error': str(e)}
 
 
-@register_step(
-    name="ai_video_analysis", 
-    enabled=False,  # Disabled by default due to API costs
-    description="Comprehensive video analysis using Gemini Flash 2.5 AI"
-)
 @task
-def ai_video_analysis_step(
-    data: Dict[str, Any], 
-    thumbnails_dir: Optional[str] = None, 
-    logger = None, 
-    compression_fps: int = DEFAULT_COMPRESSION_CONFIG['fps'], 
-    compression_bitrate: str = DEFAULT_COMPRESSION_CONFIG['video_bitrate']
-) -> Dict[str, Any]:
+def ai_video_analysis_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
-    Perform comprehensive AI video analysis using Gemini Flash 2.5.
+    Run AI video analysis using Gemini Flash 2.5 AI.
     Always returns a dict with all expected keys, even in error cases.
     """
     # Default output structure
@@ -150,14 +135,14 @@ def ai_video_analysis_step(
         config = Config()
         # Create compression config with custom parameters
         compression_config = {
-            'fps': compression_fps,
-            'video_bitrate': compression_bitrate
+            'fps': DEFAULT_COMPRESSION_CONFIG['fps'],
+            'video_bitrate': DEFAULT_COMPRESSION_CONFIG['video_bitrate']
         }
         video_processor = VideoProcessor(config, compression_config=compression_config)
         # Determine output directory for compressed files
         run_dir = None
-        if thumbnails_dir:
-            run_dir = os.path.dirname(thumbnails_dir)  # thumbnails_dir is run_dir/thumbnails
+        if data.get('thumbnails_dir'):
+            run_dir = os.path.dirname(data['thumbnails_dir'])  # thumbnails_dir is run_dir/thumbnails
         # Use pre-compressed video if available, otherwise compress now
         if compressed_path and os.path.exists(compressed_path):
             if logger:

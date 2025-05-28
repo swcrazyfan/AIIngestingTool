@@ -1,22 +1,13 @@
 """
 MediaInfo extraction step for the video ingest tool.
 
-Registered as a step in the flows registry.
-
 Extracts metadata using MediaInfo library.
 """
 
 from typing import Any, Dict
-
-from ...flows.registry import register_step
 from ...extractors.media import extract_mediainfo
 from prefect import task
 
-@register_step(
-    name="mediainfo_extraction", 
-    enabled=True,
-    description="Extract metadata using MediaInfo"
-)
 @task
 def extract_mediainfo_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """

@@ -1,23 +1,14 @@
 """
 Checksum generation step for the video ingest tool.
 
-Registered as a step in the flows registry.
-
 Calculates file checksum for deduplication.
 """
 
 import os
 from typing import Any, Dict
-
-from ...flows.registry import register_step
 from ...utils import calculate_checksum
 from prefect import task
 
-@register_step(
-    name="checksum_generation", 
-    enabled=True,
-    description="Calculate file checksum for deduplication"
-)
 @task
 def generate_checksum_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """

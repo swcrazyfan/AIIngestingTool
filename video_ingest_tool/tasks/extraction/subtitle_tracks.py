@@ -5,16 +5,9 @@ Extracts subtitle track information from video files.
 """
 
 from typing import Any, Dict
-
-from ...pipeline.registry import register_step
 from ...extractors.tracks import extract_subtitle_tracks
 from prefect import task
 
-@register_step(
-    name="subtitle_extraction", 
-    enabled=True,
-    description="Extract subtitle track information"
-)
 @task
 def extract_subtitle_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
