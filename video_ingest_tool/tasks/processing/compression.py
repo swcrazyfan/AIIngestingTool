@@ -1,15 +1,23 @@
 """
 Video compression step for the video ingest tool.
 
+Registered as a step in the flows registry.
+
 Compresses the video file using ffmpeg and stores the path to the compressed file.
 """
 
 from typing import Any, Dict, Optional
+from ...flows.registry import register_step
 from ...video_processor.compression import VideoCompressor
 from ...config import DEFAULT_COMPRESSION_CONFIG
 import os
 from prefect import task
 
+@register_step(
+    name="video_compression",
+    enabled=False,  # Only enabled when AI analysis is enabled or by config
+    description="Compress video using ffmpeg and store compressed path"
+)
 @task
 def video_compression_step(
     data: Dict[str, Any],

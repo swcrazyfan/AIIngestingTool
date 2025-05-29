@@ -1,13 +1,22 @@
 """
 Codec parameter extraction step for the video ingest tool.
 
+Registered as a step in the flows registry.
+
 Extracts detailed codec parameters.
 """
 
 from typing import Any, Dict
+
+from ...flows.registry import register_step
 from ...extractors.codec import extract_codec_parameters
 from prefect import task
 
+@register_step(
+    name="codec_extraction", 
+    enabled=True,
+    description="Extract detailed codec parameters"
+)
 @task
 def extract_codec_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """

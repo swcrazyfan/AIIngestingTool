@@ -9,6 +9,8 @@ import os
 import datetime
 import uuid
 from typing import Any, Dict, List, Optional
+
+from ...pipeline.registry import register_step
 from ...models import (
     VideoIngestOutput, FileInfo, VideoCodecDetails, VideoResolution, VideoHDRDetails,
     VideoColorDetails, VideoExposureDetails, VideoDetails, CameraFocalLength,
@@ -22,6 +24,11 @@ from ...models import (
 from ...utils import calculate_aspect_ratio_str
 from prefect import task
 
+@register_step(
+    name="model_creation", 
+    enabled=True,
+    description="Create Pydantic model from processed data"
+)
 @task
 def create_model_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """

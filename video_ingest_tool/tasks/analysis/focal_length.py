@@ -5,10 +5,17 @@ Detects focal length using AI when EXIF data is not available.
 """
 
 from typing import Any, Dict
+
+from ...pipeline.registry import register_step
 from ...processors import detect_focal_length_with_ai
 from ...config.constants import FOCAL_LENGTH_RANGES, HAS_TRANSFORMERS
 from prefect import task
 
+@register_step(
+    name="ai_focal_length", 
+    enabled=True,
+    description="Detect focal length using AI when EXIF data is not available"
+)
 @task
 def detect_focal_length_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
@@ -45,22 +52,33 @@ def detect_focal_length_step(data: Dict[str, Any], logger=None) -> Dict[str, Any
     if not thumbnail_paths:
         if logger:
             logger.warning("No thumbnails available for focal length detection")
-        return {'focal_length_source': None}
+        return {
+            'focal_length_source': None  # Source is unknown if no thumbnails and no EXIF
+        }
     
     if logger:
         logger.info("Focal length not found, attempting AI detection.")
-    
-    # Use only the first thumbnail for AI detection
-    first_thumbnail = thumbnail_paths[0]
+        
     category = detect_focal_length_with_ai(
-        first_thumbnail, FOCAL_LENGTH_RANGES, HAS_TRANSFORMERS, logger
+        thumbnail_paths[0],
+        FOCAL_LENGTH_RANGES,
+        has_transformers=HAS_TRANSFORMERS,
+        logger=logger
     )
+    
     if category:
-        return {
-            'focal_length_source': 'AI',
-            'focal_length_category': category
-        }
-    else:
         if logger:
-            logger.error("AI focal length detection failed for first thumbnail.")
-        return {'focal_length_source': None} 
+            logger.info(f"AI detected focal length category: {category}")
+        return {
+            'focal_length_category': category,    # The AI-detected category
+            'focal_length_mm': None,              # AI never provides mm value
+            'focal_length_source': 'AI'           # Mark as AI-sourced
+        }
+    
+    if logger:
+        logger.warning("AI detection failed to determine focal length")
+    return {
+        'focal_length_category': None,
+        'focal_length_mm': None,
+        'focal_length_source': None
+    } 

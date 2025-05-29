@@ -1,13 +1,22 @@
 """
 Embeddings generation step for the video ingest tool.
 
+Registered as a step in the flows registry.
+
 This module handles the generation and storage of vector embeddings
 for video metadata to enable semantic search functionality.
 """
 
 from typing import Any, Dict, List, Optional
+
+from ...flows.registry import register_step
 from prefect import task
 
+@register_step(
+    name="generate_embeddings", 
+    enabled=True,  # Enabled by default
+    description="Generate vector embeddings for semantic search"
+)
 @task
 def generate_embeddings_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
