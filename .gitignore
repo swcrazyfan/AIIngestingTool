@@ -64,3 +64,13 @@ Thumbs.db
 *.mp4
 *.MOV
 /ait-extension/node_modules
+ait-extension.zip
+data/prefect.db
+data/prefect.db-wal
+data/prefect.db-shm
+data/prefect.db-journal
+data/prefect.db-wal
+data/prefect.db-shm
+data/prefect.db-journal
+data/prefect.db-wal
+data/prefect.db-shm
