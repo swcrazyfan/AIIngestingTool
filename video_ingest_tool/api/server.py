@@ -342,8 +342,21 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
         """Start video ingest process for a directory."""
         data = request.get_json()
         directory = data.get('directory')
-        options = data.get('options', {}) # Corresponds to IngestOptions
         user_email = getattr(request, 'user_email', 'unknown_user')
+
+        # Extract options from the top level of the request
+        # These correspond to IngestCommand.start_ingest parameters
+        options = {
+            'recursive': data.get('recursive', True),
+            'limit': data.get('limit', 0),
+            'output_dir': data.get('output_dir', 'output'),
+            'store_database': data.get('store_database', False),
+            'generate_embeddings': data.get('generate_embeddings', False),
+            'force_reprocess': data.get('force_reprocess', False),
+            'ai_analysis': data.get('ai_analysis', False),
+            'compression_fps': data.get('compression_fps', 30),
+            'compression_bitrate': data.get('compression_bitrate', '1000k')
+        }
 
         logger.info(f"Ingest request received by /api/ingest", directory=directory, options=options, user=user_email)
 
@@ -371,11 +384,7 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
             )
             
             response_data = create_success_response(result['data'], f"Ingest process started for {directory}")
-            logger.info("Response from /api/ingest", response_payload=response_data.get_json())
-            return response_data
-            
-            response_data = create_success_response(result['data'], f"Ingest process started for {directory}")
-            logger.info("Response from /api/ingest", response_payload=response_data.get_json())
+            logger.info("Response from /api/ingest", response_payload=result['data'])
             return response_data
         elif result.get('success'): 
             logger.warning("Ingest command succeeded but no task_run_id returned from IngestCommand", result_data=result.get('data'))

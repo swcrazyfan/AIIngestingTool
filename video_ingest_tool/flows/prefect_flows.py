@@ -65,6 +65,13 @@ def process_video_file_task(
     file_name = os.path.basename(file_path)
     label_prefix = f"{user_id or 'unknown'} | {batch_uuid or 'batch'} | {file_name}"
     
+    # Get progress tracker instance
+    from ..api.progress_tracker import get_progress_tracker
+    progress_tracker = get_progress_tracker()
+    
+    # Use batch_uuid as flow_run_id for progress tracking
+    flow_run_id = batch_uuid or "unknown_batch"
+    
     # Create progress artifact for this file
     progress_artifact_id = None
     if file_index is not None:
@@ -75,6 +82,7 @@ def process_video_file_task(
         )
     
     # Step 1: Checksum
+    progress_tracker.update_file_step(flow_run_id, file_path, "generate_checksum", 5, "processing")
     if progress_artifact_id:
         update_progress_artifact(progress_artifact_id, progress=5.0, description="Generating checksum...")
     
@@ -85,6 +93,7 @@ def process_video_file_task(
     data.update(checksum_result.result())
     
     # Step 2: Duplicate check
+    progress_tracker.update_file_step(flow_run_id, file_path, "check_duplicate", 10, "processing")
     if progress_artifact_id:
         update_progress_artifact(progress_artifact_id, progress=10.0, description="Checking for duplicates...")
     
@@ -95,11 +104,13 @@ def process_video_file_task(
     data.update(duplicate_result.result())
     if data.get('pipeline_stopped'):
         logger.info('Duplicate detected, stopping pipeline.')
+        progress_tracker.update_file_step(flow_run_id, file_path, "check_duplicate", 100, "skipped")
         if progress_artifact_id:
             update_progress_artifact(progress_artifact_id, progress=100.0, description="Skipped (duplicate)")
         return None
 
     # Step 3: Launch all independent steps in parallel
+    progress_tracker.update_file_step(flow_run_id, file_path, "parallel_extraction", 20, "processing")
     if progress_artifact_id:
         update_progress_artifact(progress_artifact_id, progress=20.0, description="Starting parallel extraction...")
     
@@ -156,6 +167,7 @@ def process_video_file_task(
     thumbnails_future = thumbnails_task.submit(data, thumbnails_dir=thumbnails_dir)
 
     # Wait for thumbnails to be generated and update data
+    progress_tracker.update_file_step(flow_run_id, file_path, "generate_thumbnails", 40, "processing")
     if progress_artifact_id:
         update_progress_artifact(progress_artifact_id, progress=40.0, description="Generating thumbnails...")
     
@@ -163,6 +175,7 @@ def process_video_file_task(
     data['thumbnail_paths'] = thumbnails_result
 
     # Now call focal length detection (after thumbnails are ready)
+    progress_tracker.update_file_step(flow_run_id, file_path, "detect_focal_length", 50, "processing")
     if progress_artifact_id:
         update_progress_artifact(progress_artifact_id, progress=50.0, description="Detecting focal length...")
     
@@ -173,6 +186,7 @@ def process_video_file_task(
     focal_length_future = focal_length_task.submit(data)
 
     # Wait for all parallel steps to finish and update data
+    progress_tracker.update_file_step(flow_run_id, file_path, "completing_extraction", 60, "processing")
     if progress_artifact_id:
         update_progress_artifact(progress_artifact_id, progress=60.0, description="Completing extractions...")
     
@@ -189,6 +203,7 @@ def process_video_file_task(
     data.update(compression_future.result())
 
     # Step 4: AI analysis and downstream steps that depend on compression
+    progress_tracker.update_file_step(flow_run_id, file_path, "ai_analysis", 70, "processing")
     if progress_artifact_id:
         update_progress_artifact(progress_artifact_id, progress=70.0, description="Running AI analysis...")
     
@@ -204,16 +219,17 @@ def process_video_file_task(
         # AI Thumbnail selection is often tied to AI analysis
         if config.get('ai_thumbnail_selection_step', False):
             logger.info(f"Executing AI thumbnail selection step for {file_name}. Config value: {config.get('ai_thumbnail_selection_step')}")
+            progress_tracker.update_file_step(flow_run_id, file_path, "ai_thumbnail_selection", 75, "processing")
             ai_thumbnail_task = ai_thumbnail_selection_step.with_options(
                 name=f"{label_prefix} | ai_thumbnail_selection",
                 tags=["ai_thumbnail_selection_step"]
             )
-            ai_thumbnail_result = ai_thumbnail_task.submit(data)
+            ai_thumbnail_result = ai_thumbnail_task.submit(data, thumbnails_dir=thumbnails_dir)
             data.update(ai_thumbnail_result.result())
         else:
-            logger.info(f"Skipping AI thumbnail selection step for {file_name} based on config.", config_value=config.get('ai_thumbnail_selection_step'))
+            logger.info(f"Skipping AI thumbnail selection step for {file_name} based on config (config_value: {config.get('ai_thumbnail_selection_step')})")
     else:
-        logger.info(f"Skipping AI video analysis (and AI thumbnail selection) step for {file_name} based on config.", config_value=config.get('ai_video_analysis_step'))
+        logger.info(f"Skipping AI video analysis (and AI thumbnail selection) step for {file_name} based on config (config_value: {config.get('ai_video_analysis_step')})")
     
     # Step 5: Transcription (not implemented yet)
     # if progress_artifact_id:
@@ -229,6 +245,7 @@ def process_video_file_task(
     #     data.update(transcription_result.result())
 
     # Step 6: Embedding Generation (depends on transcription for text, or can use vision models)
+    progress_tracker.update_file_step(flow_run_id, file_path, "generate_embeddings", 90, "processing")
     if progress_artifact_id:
         update_progress_artifact(progress_artifact_id, progress=90.0, description="Generating embeddings...")
 
@@ -242,6 +259,7 @@ def process_video_file_task(
         data.update(embedding_result.result())
 
     # Step 7: Store data in database
+    progress_tracker.update_file_step(flow_run_id, file_path, "database_storage", 95, "processing")
     if progress_artifact_id:
         update_progress_artifact(progress_artifact_id, progress=95.0, description="Storing data...")
 
@@ -256,26 +274,44 @@ def process_video_file_task(
         data['database_storage_result'] = storage_result.result()
 
     # Step 8: Upload thumbnails
+    progress_tracker.update_file_step(flow_run_id, file_path, "upload_thumbnails", 98, "processing")
     if progress_artifact_id:
         update_progress_artifact(progress_artifact_id, progress=98.0, description="Uploading thumbnails...")
 
     if config and config.get('upload_thumbnails_step', False):
-        logger.info(f"Executing upload_thumbnails step for {file_name}", config_value=config.get('upload_thumbnails_step'))
+        logger.info(f"Executing upload_thumbnails step for {file_name} (config_value: {config.get('upload_thumbnails_step')})")
         upload_result = upload_thumbnails_step.with_options(
             name=f"{label_prefix} | upload_thumbnails",
             tags=["upload_thumbnails_step"]
         ).submit(data)
         data.update(upload_result.result())
     else:
-        logger.info(f"Skipping upload_thumbnails step for {file_name} based on config.", config_value=config.get('upload_thumbnails_step'))
+        logger.info(f"Skipping upload_thumbnails step for {file_name} based on config (config_value: {config.get('upload_thumbnails_step')})")
+    
+    # Step 9: Create output model (consolidate all data into VideoIngestOutput)
+    progress_tracker.update_file_step(flow_run_id, file_path, "create_model", 99, "processing")
+    if progress_artifact_id:
+        update_progress_artifact(progress_artifact_id, progress=99.0, description="Creating output model...")
+    
+    logger.info(f"Creating output model for {file_name}")
+    model_result = create_model_step.with_options(
+        name=f"{label_prefix} | create_model",
+        tags=["create_model_step"]
+    ).submit(data)
+    data.update(model_result.result())
     
     # Mark as completed
-    if progress_artifact_id:
-        update_progress_artifact(progress_artifact_id, progress=100.0, description="Completed successfully")
-    
     if 'model' in data and isinstance(data['model'], VideoIngestOutput):
+        progress_tracker.update_file_step(flow_run_id, file_path, "completed", 100, "completed")
+        if progress_artifact_id:
+            update_progress_artifact(progress_artifact_id, progress=100.0, description="Completed successfully")
         return data['model']
+    
+    # Mark as failed if no valid model was produced
     logger.error('Pipeline did not produce a valid output model')
+    progress_tracker.update_file_step(flow_run_id, file_path, "failed", 100, "failed")
+    if progress_artifact_id:
+        update_progress_artifact(progress_artifact_id, progress=100.0, description="Failed - no valid model")
     return None
 
 @flow
@@ -309,6 +345,14 @@ def process_videos_batch_flow(
                 user_id = "unknown"
         except Exception:
             user_id = "unknown"
+    
+    # Initialize progress tracking for all files
+    from ..api.progress_tracker import get_progress_tracker
+    progress_tracker = get_progress_tracker()
+    
+    # Initialize file details for all files at the start
+    for file_path in file_list:
+        progress_tracker.update_file_step(batch_uuid, file_path, "pending", 0, "pending")
     
     # Create batch progress artifact
     batch_progress_artifact_id = create_progress_artifact(
@@ -505,9 +549,13 @@ def process_video_file_flow(
                 name=f"{label_prefix} | ai_thumbnail_selection",
                 tags=["ai_thumbnail_selection_step"]
             )
-            ai_thumbnail_result = ai_thumbnail_task.submit(data)
+            ai_thumbnail_result = ai_thumbnail_task.submit(data, thumbnails_dir=thumbnails_dir)
             data.update(ai_thumbnail_result.result())
-
+        else:
+            logger.info(f"Skipping AI thumbnail selection step for {file_name} based on config (config_value: {config.get('ai_thumbnail_selection_step')})")
+    else:
+        logger.info(f"Skipping AI video analysis (and AI thumbnail selection) step for {file_name} based on config (config_value: {config.get('ai_video_analysis_step')})")
+    
     # Step 5: Transcription (not implemented yet)
     # if progress_artifact_id:
     #     update_progress_artifact(progress_artifact_id, progress=80.0, description="Running transcription...")
@@ -553,20 +601,32 @@ def process_video_file_flow(
         update_progress_artifact(progress_artifact_id, progress=98.0, description="Uploading thumbnails...")
 
     if config and config.get('upload_thumbnails_step', False):
-        logger.info(f"Executing upload_thumbnails step for {file_name}", config_value=config.get('upload_thumbnails_step'))
+        logger.info(f"Executing upload_thumbnails step for {file_name} (config_value: {config.get('upload_thumbnails_step')})")
         upload_result = upload_thumbnails_step.with_options(
             name=f"{label_prefix} | upload_thumbnails",
             tags=["upload_thumbnails_step"]
         ).submit(data)
         data.update(upload_result.result())
     else:
-        logger.info(f"Skipping upload_thumbnails step for {file_name} based on config.", config_value=config.get('upload_thumbnails_step'))
+        logger.info(f"Skipping upload_thumbnails step for {file_name} based on config (config_value: {config.get('upload_thumbnails_step')})")
+    
+    # Step 9: Create output model (consolidate all data into VideoIngestOutput)
+    progress_tracker.update_file_step(flow_run_id, file_path, "create_model", 99, "processing")
+    if progress_artifact_id:
+        update_progress_artifact(progress_artifact_id, progress=99.0, description="Creating output model...")
+    
+    logger.info(f"Creating output model for {file_name}")
+    model_result = create_model_step.with_options(
+        name=f"{label_prefix} | create_model",
+        tags=["create_model_step"]
+    ).submit(data)
+    data.update(model_result.result())
     
     # Mark as completed
-    if progress_artifact_id:
-        update_progress_artifact(progress_artifact_id, progress=100.0, description="Completed successfully")
-    
     if 'model' in data and isinstance(data['model'], VideoIngestOutput):
+        progress_tracker.update_file_step(flow_run_id, file_path, "completed", 100, "completed")
+        if progress_artifact_id:
+            update_progress_artifact(progress_artifact_id, progress=100.0, description="Completed successfully")
         return data['model']
     logger.error('Pipeline did not produce a valid output model')
     return None 

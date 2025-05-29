@@ -13,7 +13,7 @@ const IngestPanel: React.FC = () => {
     ai_analysis: true,
     generate_embeddings: true,
     store_database: true, // Always true by default, no UI control
-    force_reprocess: false
+    force_reprocess: true // Changed from false to true to default reingest on
   });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -42,9 +42,9 @@ const IngestPanel: React.FC = () => {
     try {
       await ingestApi.startIngest(selectedDirectory, ingestOptions);
       
-      // Show progress section
+      // Show progress section and clear any errors
       setShowProgress(true);
-      // setError(null); // Already cleared above
+      setError(null); // Ensure error is cleared on successful start
     } catch (error: any) { // Catch specific error type if known, else 'any'
       console.error('Ingest failed in IngestPanel:', error);
       // Use the error message from the caught error object
@@ -72,6 +72,11 @@ const IngestPanel: React.FC = () => {
         if (!connected) {
           const progressData = await ingestApi.getProgress();
           
+          // Clear errors if we successfully got progress data
+          if (progressData) {
+            setError(null);
+          }
+          
           // If there's an active ingest process
           if (progressData && (progressData.status === 'running' || 
                               progressData.status === 'scanning' || 
@@ -93,6 +98,9 @@ const IngestPanel: React.FC = () => {
   // Update UI based on ingest progress from WebSocket
   useEffect(() => {
     if (ingestProgress) {
+      // Clear any connection errors when we receive valid progress data
+      setError(null);
+      
       // Show progress section if there's an active process
       const activeStatuses = ['starting', 'running', 'scanning', 'processing'];
       const completeStatuses = ['idle', 'completed', 'failed'];
@@ -119,9 +127,10 @@ const IngestPanel: React.FC = () => {
       intervalId = setInterval(async () => {
         try {
           const progress = await ingestApi.getProgress();
-          // If we got progress data, update UI
+          // If we got progress data, update UI and clear any connection errors
           if (progress) {
             setIngestProgress(progress);
+            setError(null); // Clear connection errors when API is responsive
           }
         } catch (error) {
           console.error('Failed to poll ingest progress:', error);

@@ -20,6 +20,7 @@ from ..config import setup_logging
 from ..video_processor import DEFAULT_COMPRESSION_CONFIG
 from ..flows.prefect_flows import process_videos_batch_flow
 from ..auth import AuthManager
+from ..api.progress_tracker import get_progress_tracker
 
 logger = structlog.get_logger(__name__)
 
@@ -154,7 +155,8 @@ class IngestCommand(BaseCommand):
             # Validate authentication for database operations
             if store_database or generate_embeddings or ai_analysis:
                 auth_manager = AuthManager()
-                if not auth_manager.is_authenticated_user(user_email):
+                current_session = auth_manager.get_current_session()
+                if not current_session:
                     logger.warning("Authentication required for database operations or AI analysis.", user_email=user_email)
                     return {
                         "success": False,
@@ -180,14 +182,34 @@ class IngestCommand(BaseCommand):
                     }
                 }
 
+            # Generate batch UUID for progress tracking coordination
+            batch_uuid = str(uuid.uuid4())
+            
+            # Initialize progress tracking for this batch
+            progress_tracker = get_progress_tracker()
+            progress_tracker.start_tracking(
+                flow_run_id=batch_uuid,
+                directory=directory, 
+                total_files=len(video_files),
+                user_email=user_email
+            )
+            logger.info("Progress tracking initialized", batch_uuid=batch_uuid, total_files=len(video_files))
+
             pipeline_config = get_default_pipeline_config()
             
             # Apply user-selected options to pipeline_config steps
             # pipeline_config is a flat dictionary where keys are step names and values are booleans.
-            if 'ai_analysis_step' in pipeline_config:
-                pipeline_config['ai_analysis_step'] = ai_analysis
+            if 'ai_video_analysis_step' in pipeline_config:
+                pipeline_config['ai_video_analysis_step'] = ai_analysis
+                # AI thumbnail selection is typically enabled together with AI analysis
+                if 'ai_thumbnail_selection_step' in pipeline_config:
+                    pipeline_config['ai_thumbnail_selection_step'] = ai_analysis
+                # Video compression is primarily used for AI analysis, so disable it when AI analysis is disabled
+                if 'video_compression_step' in pipeline_config:
+                    pipeline_config['video_compression_step'] = ai_analysis
+                    logger.info(f"Video compression step {'enabled' if ai_analysis else 'disabled'} based on AI analysis setting")
             else:
-                logger.warning("'ai_analysis_step' not found in default pipeline_config. AI analysis option may not apply.")
+                logger.warning("'ai_video_analysis_step' not found in default pipeline_config. AI analysis option may not apply.")
 
             if 'embedding_generation_step' in pipeline_config:
                 pipeline_config['embedding_generation_step'] = generate_embeddings
@@ -212,52 +234,60 @@ class IngestCommand(BaseCommand):
             os.makedirs(thumbnails_dir, exist_ok=True)
             logger.info(f"Thumbnails will be stored in: {thumbnails_dir}")
 
-            # Submit the flow to Prefect using .submit() to get a future
-            # and allow asynchronous execution.
-            # Ensure this line is different from the previous state to force an update.
-            flow_run_future = process_videos_batch_flow.submit(
-                file_list=[vf for vf in video_files],
+            # In Prefect 3.x, flows are called directly like regular Python functions
+            # The flow will be tracked by Prefect automatically when called
+            logger.info(f"Starting video processing flow for {len(video_files)} files.")
+            logger.info(f"Thumbnails will be stored in: {thumbnails_dir}")
+            
+            # Call the flow directly - Prefect 3.x handles all orchestration automatically
+            # The flow uses .map() internally to process files in parallel
+            # Pass the batch_uuid to coordinate with progress tracking
+            flow_result = process_videos_batch_flow(
+                file_list=video_files,
                 thumbnails_dir=thumbnails_dir,
                 config=pipeline_config,
                 compression_fps=compression_fps,
                 compression_bitrate=compression_bitrate,
                 force_reprocess=force_reprocess,
                 user_id=user_email,
-                batch_uuid=str(uuid.uuid4()) # Ensure a unique batch_uuid is always generated
+                batch_uuid=batch_uuid  # Pass our batch_uuid for progress coordination
             )
             
-            # Access flow_run_id from the future object
-            flow_run_id = str(flow_run_future.flow_run_id)
-
-            # Update current_job for internal tracking
-            self.current_job = {
-                "job_id": flow_run_id,
-                "task_run_id": flow_run_id,
-                "status": "starting",
-                "directory": directory,
-                "progress": 0,
-                "total": len(video_files),
-                "message": "Prefect flow submitted.",
-                "started_at": time.time()
-            }
+            logger.info("Video processing flow completed successfully.")
             
-            logger.info("Prefect flow submitted successfully.", flow_run_id=flow_run_id, num_files=len(video_files))
+            # Count successful results
+            successful_count = sum(1 for result in flow_result if result is not None)
+            failed_count = len(flow_result) - successful_count
             
+            # Update final progress status
+            progress_tracker.update_progress(batch_uuid, {
+                'status': 'completed',
+                'progress': 100,
+                'message': f'Completed: {successful_count} successful, {failed_count} failed',
+                'processed_count': successful_count,
+                'failed_count': failed_count
+            })
+            
+            # Return flow information for API compatibility
             return {
-                "success": True,
-                "data": {
-                    "task_run_id": flow_run_id,
-                    "status": "started",
-                    "message": f"Ingest flow started for {len(video_files)} files",
-                    "total_files": len(video_files)
+                'success': True,
+                'data': {
+                    'task_run_id': batch_uuid,  # Use batch_uuid as task_run_id for API tracking
+                    'message': f'Ingest completed: {successful_count} successful, {failed_count} failed out of {len(video_files)} files',
+                    'status': 'completed',  # Since Prefect 3.x runs synchronously
+                    'total_files': len(video_files),
+                    'files_processed': successful_count,
+                    'files_failed': failed_count,
+                    'thumbnails_dir': thumbnails_dir
                 }
             }
             
         except Exception as e:
-            logger.error("Failed to start ingest flow via Prefect.", exc_info=True, error=str(e))
+            error_msg = f"Failed to start ingest flow: {str(e)}"
+            logger.error("Failed to execute ingest flow via Prefect.", error=str(e))
             return {
                 "success": False,
-                "error": f"Failed to start ingest flow: {str(e)}"
+                "error": error_msg
             }
     
     def stop_ingest(self) -> Dict[str, Any]:
