@@ -6,14 +6,11 @@ Defines per-file and batch flows using Prefect, supporting step enable/disable a
 Prefect flows for video ingest pipeline. Concurrency limits are set at CLI startup, not in the flow.
 """
 from typing import List, Dict, Optional, Any
-from prefect import flow, task, get_run_logger, get_client
-from prefect.tasks import task_input_hash
+from prefect import flow, task, get_run_logger
+from prefect.artifacts import create_progress_artifact, update_progress_artifact
 from datetime import timedelta
 import os
 import uuid
-import concurrent.futures
-from concurrent.futures import as_completed
-import asyncio
 
 # Import all step tasks
 from video_ingest_tool.tasks import (
@@ -42,18 +39,22 @@ from video_ingest_tool.tasks import (
 from video_ingest_tool.models import VideoIngestOutput
 from video_ingest_tool.config import DEFAULT_COMPRESSION_CONFIG
 
-@task
+@task(cache_policy=None)
 def process_video_file_task(
     file_path: str,
     thumbnails_dir: str,
-    config: Optional[Dict[str, bool]] = None,
     compression_fps: int = DEFAULT_COMPRESSION_CONFIG['fps'],
     compression_bitrate: str = DEFAULT_COMPRESSION_CONFIG['video_bitrate'],
     force_reprocess: bool = False,
-    step_toggles: Optional[Dict[str, bool]] = None,
+    user_id: Optional[str] = None,
+    batch_uuid: Optional[str] = None,
+    config: Optional[Dict[str, Any]] = None,
+    file_index: Optional[int] = None,
 ) -> Optional[VideoIngestOutput]:
     """
-    Prefect task to process a single video file, with step enable/disable logic.
+    Prefect task to process a single video file, orchestrating each pipeline step as Prefect tasks.
+    Steps that do not depend on each other are launched in parallel for maximum efficiency.
+    Concurrency for resource-heavy steps is set via Prefect concurrency limits and tags.
     """
     logger = get_run_logger()
     data = {
@@ -61,52 +62,217 @@ def process_video_file_task(
         'compression_fps': compression_fps,
         'compression_bitrate': compression_bitrate
     }
-    toggles = config or step_toggles or {}
-    if toggles.get('generate_checksum_step', True):
-        data.update(generate_checksum_step.fn(data))
-    if toggles.get('check_duplicate_step', True):
-        data.update(check_duplicate_step.fn(data, force_reprocess=force_reprocess))
-        if data.get('pipeline_stopped'):
-            logger.info('Duplicate detected, stopping pipeline.')
-            return None
-    if toggles.get('video_compression_step', True):
-        data.update(video_compression_step.fn(data, compression_fps=compression_fps, compression_bitrate=compression_bitrate))
-    if toggles.get('extract_mediainfo_step', True):
-        data.update(extract_mediainfo_step.fn(data))
-    if toggles.get('extract_ffprobe_step', True):
-        data.update(extract_ffprobe_step.fn(data))
-    if toggles.get('extract_exiftool_step', True):
-        data.update(extract_exiftool_step.fn(data))
-    if toggles.get('extract_extended_exif_step', True):
-        data.update(extract_extended_exif_step.fn(data))
-    if toggles.get('extract_codec_step', True):
-        data.update(extract_codec_step.fn(data))
-    if toggles.get('extract_hdr_step', True):
-        data.update(extract_hdr_step.fn(data))
-    if toggles.get('extract_audio_step', True):
-        data.update(extract_audio_step.fn(data))
-    if toggles.get('extract_subtitle_step', True):
-        data.update(extract_subtitle_step.fn(data))
-    if toggles.get('generate_thumbnails_step', True):
-        data.update(generate_thumbnails_step.fn(data, thumbnails_dir=thumbnails_dir))
-    if toggles.get('analyze_exposure_step', True):
-        data.update(analyze_exposure_step.fn(data))
-    if toggles.get('detect_focal_length_step', True):
-        data.update(detect_focal_length_step.fn(data))
-    if toggles.get('ai_video_analysis_step', True):
-        data.update(ai_video_analysis_step.fn(data))
-    if toggles.get('ai_thumbnail_selection_step', True):
-        data.update(ai_thumbnail_selection_step.fn(data, thumbnails_dir=thumbnails_dir))
-    if toggles.get('consolidate_metadata_step', True):
-        data.update(consolidate_metadata_step.fn(data))
-    if toggles.get('create_model_step', True):
-        data.update(create_model_step.fn(data))
-    if toggles.get('database_storage_step', True):
-        data.update(database_storage_step.fn(data))
-    if toggles.get('generate_embeddings_step', True):
-        data.update(generate_embeddings_step.fn(data))
-    if toggles.get('upload_thumbnails_step', True):
-        data.update(upload_thumbnails_step.fn(data))
+    file_name = os.path.basename(file_path)
+    label_prefix = f"{user_id or 'unknown'} | {batch_uuid or 'batch'} | {file_name}"
+    
+    # Create progress artifact for this file
+    progress_artifact_id = None
+    if file_index is not None:
+        progress_artifact_id = create_progress_artifact(
+            progress=0.0,
+            key=f"video-processing-{batch_uuid}-{file_index}",
+            description=f"Processing {file_name}"
+        )
+    
+    # Step 1: Checksum
+    if progress_artifact_id:
+        update_progress_artifact(progress_artifact_id, progress=5.0, description="Generating checksum...")
+    
+    checksum_result = generate_checksum_step.with_options(
+        name=f"{label_prefix} | generate_checksum",
+        tags=["generate_checksum_step"]
+    ).submit(data)
+    data.update(checksum_result.result())
+    
+    # Step 2: Duplicate check
+    if progress_artifact_id:
+        update_progress_artifact(progress_artifact_id, progress=10.0, description="Checking for duplicates...")
+    
+    duplicate_result = check_duplicate_step.with_options(
+        name=f"{label_prefix} | check_duplicate",
+        tags=["check_duplicate_step"]
+    ).submit(data, force_reprocess=force_reprocess)
+    data.update(duplicate_result.result())
+    if data.get('pipeline_stopped'):
+        logger.info('Duplicate detected, stopping pipeline.')
+        if progress_artifact_id:
+            update_progress_artifact(progress_artifact_id, progress=100.0, description="Skipped (duplicate)")
+        return None
+
+    # Step 3: Launch all independent steps in parallel
+    if progress_artifact_id:
+        update_progress_artifact(progress_artifact_id, progress=20.0, description="Starting parallel extraction...")
+    
+    compression_task = video_compression_step.with_options(
+        name=f"{label_prefix} | video_compression",
+        tags=["video_compression_step"]
+    )
+    compression_future = compression_task.submit(data, compression_fps=compression_fps, compression_bitrate=compression_bitrate)
+    
+    mediainfo_future = extract_mediainfo_step.with_options(
+        name=f"{label_prefix} | extract_mediainfo",
+        tags=["extract_mediainfo_step"]
+    ).submit(data)
+    
+    ffprobe_future = extract_ffprobe_step.with_options(
+        name=f"{label_prefix} | extract_ffprobe",
+        tags=["extract_ffprobe_step"]
+    ).submit(data)
+    
+    exiftool_future = extract_exiftool_step.with_options(
+        name=f"{label_prefix} | extract_exiftool",
+        tags=["extract_exiftool_step"]
+    ).submit(data)
+    
+    extended_exif_future = extract_extended_exif_step.with_options(
+        name=f"{label_prefix} | extract_extended_exif",
+        tags=["extract_extended_exif_step"]
+    ).submit(data)
+    
+    codec_future = extract_codec_step.with_options(
+        name=f"{label_prefix} | extract_codec",
+        tags=["extract_codec_step"]
+    ).submit(data)
+    
+    hdr_future = extract_hdr_step.with_options(
+        name=f"{label_prefix} | extract_hdr",
+        tags=["extract_hdr_step"]
+    ).submit(data)
+    
+    audio_future = extract_audio_step.with_options(
+        name=f"{label_prefix} | extract_audio",
+        tags=["extract_audio_step"]
+    ).submit(data)
+    
+    subtitle_future = extract_subtitle_step.with_options(
+        name=f"{label_prefix} | extract_subtitle",
+        tags=["extract_subtitle_step"]
+    ).submit(data)
+    
+    thumbnails_task = generate_thumbnails_step.with_options(
+        name=f"{label_prefix} | generate_thumbnails",
+        tags=["generate_thumbnails_step"]
+    )
+    thumbnails_future = thumbnails_task.submit(data, thumbnails_dir=thumbnails_dir)
+
+    # Wait for thumbnails to be generated and update data
+    if progress_artifact_id:
+        update_progress_artifact(progress_artifact_id, progress=40.0, description="Generating thumbnails...")
+    
+    thumbnails_result = thumbnails_future.result()
+    data['thumbnail_paths'] = thumbnails_result
+
+    # Now call focal length detection (after thumbnails are ready)
+    if progress_artifact_id:
+        update_progress_artifact(progress_artifact_id, progress=50.0, description="Detecting focal length...")
+    
+    focal_length_task = detect_focal_length_step.with_options(
+        name=f"{label_prefix} | detect_focal_length",
+        tags=["detect_focal_length_step"]
+    )
+    focal_length_future = focal_length_task.submit(data)
+
+    # Wait for all parallel steps to finish and update data
+    if progress_artifact_id:
+        update_progress_artifact(progress_artifact_id, progress=60.0, description="Completing extractions...")
+    
+    data.update(mediainfo_future.result())
+    data.update(ffprobe_future.result())
+    data.update(exiftool_future.result())
+    data.update(extended_exif_future.result())
+    data.update(codec_future.result())
+    data.update(hdr_future.result())
+    data.update(audio_future.result())
+    data.update(subtitle_future.result())
+    data.update(thumbnails_result)
+    data.update(focal_length_future.result())
+    data.update(compression_future.result())
+
+    # Step 4: AI analysis and downstream steps that depend on compression
+    if progress_artifact_id:
+        update_progress_artifact(progress_artifact_id, progress=70.0, description="Running AI analysis...")
+    
+    if config and config.get('ai_video_analysis_step', False):
+        logger.info(f"Executing AI video analysis step for {file_name}. Config value: {config.get('ai_video_analysis_step')}")
+        ai_analysis_task = ai_video_analysis_step.with_options(
+            name=f"{label_prefix} | ai_video_analysis",
+            tags=["ai_video_analysis_step"]
+        )
+        ai_analysis_result = ai_analysis_task.submit(data)
+        data.update(ai_analysis_result.result())
+
+        # AI Thumbnail selection is often tied to AI analysis
+        if config.get('ai_thumbnail_selection_step', False):
+            logger.info(f"Executing AI thumbnail selection step for {file_name}. Config value: {config.get('ai_thumbnail_selection_step')}")
+            ai_thumbnail_task = ai_thumbnail_selection_step.with_options(
+                name=f"{label_prefix} | ai_thumbnail_selection",
+                tags=["ai_thumbnail_selection_step"]
+            )
+            ai_thumbnail_result = ai_thumbnail_task.submit(data)
+            data.update(ai_thumbnail_result.result())
+        else:
+            logger.info(f"Skipping AI thumbnail selection step for {file_name} based on config.", config_value=config.get('ai_thumbnail_selection_step'))
+    else:
+        logger.info(f"Skipping AI video analysis (and AI thumbnail selection) step for {file_name} based on config.", config_value=config.get('ai_video_analysis_step'))
+    
+    # Step 5: Transcription (not implemented yet)
+    # if progress_artifact_id:
+    #     update_progress_artifact(progress_artifact_id, progress=80.0, description="Running transcription...")
+    
+    # if config and config.get('transcription_step', False):
+    #     logger.info(f"Executing transcription step for {file_name}. Config value: {config.get('transcription_step')}")
+    #     transcription_task = transcription_step.with_options(
+    #         name=f"{label_prefix} | transcription",
+    #         tags=["transcription_step"]
+    #     )
+    #     transcription_result = transcription_task.submit(data)
+    #     data.update(transcription_result.result())
+
+    # Step 6: Embedding Generation (depends on transcription for text, or can use vision models)
+    if progress_artifact_id:
+        update_progress_artifact(progress_artifact_id, progress=90.0, description="Generating embeddings...")
+
+    if config and config.get('embedding_generation_step', False):
+        logger.info(f"Executing embedding generation step for {file_name}. Config value: {config.get('embedding_generation_step')}")
+        embedding_task = generate_embeddings_step.with_options(
+            name=f"{label_prefix} | embedding_generation",
+            tags=["embedding_generation_step"]
+        )
+        embedding_result = embedding_task.submit(data)
+        data.update(embedding_result.result())
+
+    # Step 7: Store data in database
+    if progress_artifact_id:
+        update_progress_artifact(progress_artifact_id, progress=95.0, description="Storing data...")
+
+    if config and config.get('database_storage_step', False):
+        logger.info(f"Executing database storage step for {file_name}. Config value: {config.get('database_storage_step')}")
+        storage_task = database_storage_step.with_options(
+            name=f"{label_prefix} | database_storage",
+            tags=["database_storage_step"]
+        )
+        # Pass only necessary and serializable parts of 'data'
+        storage_result = storage_task.submit(data) 
+        data['database_storage_result'] = storage_result.result()
+
+    # Step 8: Upload thumbnails
+    if progress_artifact_id:
+        update_progress_artifact(progress_artifact_id, progress=98.0, description="Uploading thumbnails...")
+
+    if config and config.get('upload_thumbnails_step', False):
+        logger.info(f"Executing upload_thumbnails step for {file_name}", config_value=config.get('upload_thumbnails_step'))
+        upload_result = upload_thumbnails_step.with_options(
+            name=f"{label_prefix} | upload_thumbnails",
+            tags=["upload_thumbnails_step"]
+        ).submit(data)
+        data.update(upload_result.result())
+    else:
+        logger.info(f"Skipping upload_thumbnails step for {file_name} based on config.", config_value=config.get('upload_thumbnails_step'))
+    
+    # Mark as completed
+    if progress_artifact_id:
+        update_progress_artifact(progress_artifact_id, progress=100.0, description="Completed successfully")
+    
     if 'model' in data and isinstance(data['model'], VideoIngestOutput):
         return data['model']
     logger.error('Pipeline did not produce a valid output model')
@@ -122,14 +288,18 @@ def process_videos_batch_flow(
     force_reprocess: bool = False,
     concurrency_limit: int = 2,
     user_id: Optional[str] = None,
+    batch_uuid: Optional[str] = None,
 ) -> List[Optional[VideoIngestOutput]]:
     """
     Prefect flow to process a batch of video files in parallel (per-file), with steps in order per file.
-    Each file is processed as a subflow, so all step-tasks are visible in the UI.
+    Each file is processed as a mapped task, so all step-tasks are visible in the UI.
+    
+    Progress is tracked via Prefect artifacts instead of callbacks to avoid serialization issues.
     """
-    # Generate a unique batch UUID for this run
-    batch_uuid = str(uuid.uuid4())
-    # Try to get user_id from Supabase if not provided
+    logger = get_run_logger()
+    if batch_uuid is None:
+        batch_uuid = str(uuid.uuid4())
+    
     if user_id is None:
         try:
             from video_ingest_tool.auth import AuthManager
@@ -139,25 +309,71 @@ def process_videos_batch_flow(
                 user_id = "unknown"
         except Exception:
             user_id = "unknown"
-    # Use ThreadPoolExecutor for per-file parallelism
-    results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency_limit) as executor:
-        futures = [
-            executor.submit(
-                process_video_file_flow.with_options(name=f"{user_id} | {batch_uuid} | {os.path.basename(file_path)} | flow"),
-                file_path=file_path,
-                thumbnails_dir=thumbnails_dir,
-                compression_fps=compression_fps,
-                compression_bitrate=compression_bitrate,
-                force_reprocess=force_reprocess,
-                user_id=user_id,
-                batch_uuid=batch_uuid,
-                config=config
+    
+    # Create batch progress artifact
+    batch_progress_artifact_id = create_progress_artifact(
+        progress=0.0,
+        key=f"batch-processing-{batch_uuid}",
+        description=f"Processing batch of {len(file_list)} files"
+    )
+    
+    # Prepare lists for map
+    thumbnails_dirs = [thumbnails_dir] * len(file_list)
+    compression_fps_list = [compression_fps] * len(file_list)
+    compression_bitrate_list = [compression_bitrate] * len(file_list)
+    force_reprocess_list = [force_reprocess] * len(file_list)
+    user_id_list = [user_id] * len(file_list)
+    batch_uuid_list = [batch_uuid] * len(file_list)
+    config_list = [config] * len(file_list)
+    file_indices = list(range(len(file_list)))  # Pass file indices for progress tracking
+    
+    # Map the per-file task
+    futures = process_video_file_task.map(
+        file_list,
+        thumbnails_dirs,
+        compression_fps_list,
+        compression_bitrate_list,
+        force_reprocess_list,
+        user_id_list,
+        batch_uuid_list,
+        config_list,
+        file_indices
+    )
+    
+    # Process results 
+    results = [None] * len(futures)
+    
+    for i, future in enumerate(futures):
+        try:
+            result = future.result()  # This will block until the future is done
+            results[i] = result
+            
+            # Update batch progress
+            completed_count = i + 1
+            batch_progress = (completed_count / len(file_list)) * 100
+            update_progress_artifact(
+                batch_progress_artifact_id, 
+                progress=batch_progress,
+                description=f"Completed {completed_count}/{len(file_list)} files"
             )
-            for file_path in file_list
-        ]
-        for f in as_completed(futures):
-            results.append(f.result())
+            
+        except Exception as e:
+            results[i] = None
+            logger.error(f"Error processing {file_list[i]}: {str(e)}")
+    
+    # Final counts
+    successful_count = sum(1 for r in results if r is not None)
+    failed_count = len(results) - successful_count
+    
+    # Final batch progress update
+    update_progress_artifact(
+        batch_progress_artifact_id,
+        progress=100.0,
+        description=f"Batch completed: {successful_count} successful, {failed_count} failed"
+    )
+    
+    logger.info(f"Batch processing completed: {successful_count} successful, {failed_count} failed")
+    
     return results
 
 @flow
@@ -270,50 +486,87 @@ def process_video_file_flow(
     data.update(compression_future.result())
 
     # Step 4: AI analysis and downstream steps that depend on compression
-    ai_analysis_task = ai_video_analysis_step.with_options(
-        name=f"{label_prefix} | ai_video_analysis",
-        tags=["ai_video_analysis_step"]
-    )
-    ai_analysis_result = ai_analysis_task.submit(data)
-    data.update(ai_analysis_result.result())
-    ai_thumbnails_result = ai_thumbnail_selection_step.with_options(
-        name=f"{label_prefix} | ai_thumbnail_selection",
-        tags=["ai_thumbnail_selection_step"]
-    ).submit(data, thumbnails_dir=thumbnails_dir)
-    data.update(ai_thumbnails_result.result())
-    # Step 5: Consolidate metadata
-    consolidate_result = consolidate_metadata_step.with_options(
-        name=f"{label_prefix} | consolidate_metadata",
-        tags=["consolidate_metadata_step"]
-    ).submit(data)
-    data.update(consolidate_result.result())
-    # Step 6: Model creation
-    model_result = create_model_step.with_options(
-        name=f"{label_prefix} | create_model",
-        tags=["create_model_step"]
-    ).submit(data)
-    data.update(model_result.result())
-    # Step 7: Database storage
-    db_result = database_storage_step.with_options(
-        name=f"{label_prefix} | database_storage",
-        tags=["database_storage_step"]
-    ).submit(data)
-    data.update(db_result.result())
-    # Step 8: Embeddings
-    embeddings_result = generate_embeddings_step.with_options(
-        name=f"{label_prefix} | generate_embeddings",
-        tags=["generate_embeddings_step"]
-    ).submit(data)
-    data.update(embeddings_result.result())
-    # Step 9: Upload thumbnails
-    upload_result = upload_thumbnails_step.with_options(
-        name=f"{label_prefix} | upload_thumbnails",
-        tags=["upload_thumbnails_step"]
-    ).submit(data)
-    data.update(upload_result.result())
+    if progress_artifact_id:
+        update_progress_artifact(progress_artifact_id, progress=70.0, description="Running AI analysis...")
+    
+    if config and config.get('ai_video_analysis_step', False):
+        logger.info(f"Executing AI video analysis step for {file_name}. Config value: {config.get('ai_video_analysis_step')}")
+        ai_analysis_task = ai_video_analysis_step.with_options(
+            name=f"{label_prefix} | ai_video_analysis",
+            tags=["ai_video_analysis_step"]
+        )
+        ai_analysis_result = ai_analysis_task.submit(data)
+        data.update(ai_analysis_result.result())
+
+        # AI Thumbnail selection is often tied to AI analysis
+        if config.get('ai_thumbnail_selection_step', False):
+            logger.info(f"Executing AI thumbnail selection step for {file_name}. Config value: {config.get('ai_thumbnail_selection_step')}")
+            ai_thumbnail_task = ai_thumbnail_selection_step.with_options(
+                name=f"{label_prefix} | ai_thumbnail_selection",
+                tags=["ai_thumbnail_selection_step"]
+            )
+            ai_thumbnail_result = ai_thumbnail_task.submit(data)
+            data.update(ai_thumbnail_result.result())
+
+    # Step 5: Transcription (not implemented yet)
+    # if progress_artifact_id:
+    #     update_progress_artifact(progress_artifact_id, progress=80.0, description="Running transcription...")
+    
+    # if config and config.get('transcription_step', False):
+    #     logger.info(f"Executing transcription step for {file_name}. Config value: {config.get('transcription_step')}")
+    #     transcription_task = transcription_step.with_options(
+    #         name=f"{label_prefix} | transcription",
+    #         tags=["transcription_step"]
+    #     )
+    #     transcription_result = transcription_task.submit(data)
+    #     data.update(transcription_result.result())
+
+    # Step 6: Embedding Generation (depends on transcription for text, or can use vision models)
+    if progress_artifact_id:
+        update_progress_artifact(progress_artifact_id, progress=90.0, description="Generating embeddings...")
+
+    if config and config.get('embedding_generation_step', False):
+        logger.info(f"Executing embedding generation step for {file_name}. Config value: {config.get('embedding_generation_step')}")
+        embedding_task = generate_embeddings_step.with_options(
+            name=f"{label_prefix} | embedding_generation",
+            tags=["embedding_generation_step"]
+        )
+        embedding_result = embedding_task.submit(data)
+        data.update(embedding_result.result())
+
+    # Step 7: Store data in database
+    if progress_artifact_id:
+        update_progress_artifact(progress_artifact_id, progress=95.0, description="Storing data...")
+
+    if config and config.get('database_storage_step', False):
+        logger.info(f"Executing database storage step for {file_name}. Config value: {config.get('database_storage_step')}")
+        storage_task = database_storage_step.with_options(
+            name=f"{label_prefix} | database_storage",
+            tags=["database_storage_step"]
+        )
+        # Pass only necessary and serializable parts of 'data'
+        storage_result = storage_task.submit(data) 
+        data['database_storage_result'] = storage_result.result()
+
+    # Step 8: Upload thumbnails
+    if progress_artifact_id:
+        update_progress_artifact(progress_artifact_id, progress=98.0, description="Uploading thumbnails...")
+
+    if config and config.get('upload_thumbnails_step', False):
+        logger.info(f"Executing upload_thumbnails step for {file_name}", config_value=config.get('upload_thumbnails_step'))
+        upload_result = upload_thumbnails_step.with_options(
+            name=f"{label_prefix} | upload_thumbnails",
+            tags=["upload_thumbnails_step"]
+        ).submit(data)
+        data.update(upload_result.result())
+    else:
+        logger.info(f"Skipping upload_thumbnails step for {file_name} based on config.", config_value=config.get('upload_thumbnails_step'))
+    
+    # Mark as completed
+    if progress_artifact_id:
+        update_progress_artifact(progress_artifact_id, progress=100.0, description="Completed successfully")
+    
     if 'model' in data and isinstance(data['model'], VideoIngestOutput):
         return data['model']
     logger.error('Pipeline did not produce a valid output model')
-    return None
-
-# Next: add a non-AI variant flow for pipelines that skip AI steps 
+    return None 
