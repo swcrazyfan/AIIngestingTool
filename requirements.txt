@@ -28,3 +28,7 @@ openai>=1.0.0
 
 # Prefect dependencies
 prefect>=2.0.0
+
+# Local Database & Testing Dependencies
+duckdb>=1.0.0
+pytest>=7.0.0   # For running tests

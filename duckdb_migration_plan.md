@@ -9,6 +9,8 @@
 
 This document outlines the plan to migrate the AI Ingesting Tool from its current Supabase (PostgreSQL) backend to a local DuckDB database. The goal is to create a fully local setup, removing cloud dependencies and authentication, while retaining core functionalities like video metadata storage, full-text search, and semantic/vector search. This plan also prepares for future Prefect integration by establishing separate schemas.
 
+**Important Environment Note:** All terminal commands related to this project (e.g., running tests, installing dependencies) must be executed within the `video-ingest` Conda environment. Commands should be prefixed with `conda activate video-ingest && `.
+
 This plan references:
 -   The previously generated `supabase_schema_and_functions.md` for the existing PostgreSQL schema and SQL functions.
 -   The user-provided "Complete DuckDB Setup Guide" for general DuckDB implementation ideas.
@@ -216,16 +218,28 @@ The SQL functions from `supabase_schema_and_functions.md` need to be adapted to 
 
 This section breaks down the migration into phases with explicit testing steps.
 
-### Phase 1: Core DuckDB Setup & Schema Definition ⬜
--   ⬜ **Task 1.1:** Create `video_ingest_tool/database/duckdb/` directory structure.
--   ⬜ **Task 1.2:** Implement `video_ingest_tool/database/duckdb/connection.py` (connect, load extensions, set schema).
--   ⬜ **Task 1.3:** Implement `video_ingest_tool/database/duckdb/schema.py` with functions to:
-    -   ⬜ Create `app_data` and `prefect_orchestration` schemas.
-    -   ⬜ Create all application tables (`clips`, `segments`, `analysis`, `transcripts`) in `app_data` schema with DuckDB types and no auth.
-    -   ⬜ Create FTS, HNSW (vector), and B-Tree indexes.
+### Phase 1: Core DuckDB Setup & Schema Definition ✅
+-   ✅ **Task 1.1:** Create `video_ingest_tool/database/duckdb/` directory structure.
+-   ✅ **Task 1.2:** Implement `video_ingest_tool/database/duckdb/connection.py` (connect, load extensions, set schema).
+-   ✅ **Task 1.3:** Implement `video_ingest_tool/database/duckdb/schema.py` with functions to:
+    -   ✅ Create `app_data` and `prefect_orchestration` schemas.
+    -   ✅ Create all application tables (`clips`, `segments`, `analysis`, `transcripts`) in `app_data` schema with DuckDB types and no auth.
+    -   ✅ Create FTS, HNSW (vector), and B-Tree indexes.
 -   🧪 **Testing 1.4:**
-    -   ⬜ Write unit tests for `connection.py` (verify connection, extension loading).
-    -   ⬜ Write tests for `schema.py` to ensure tables and indexes are created correctly in a temporary DuckDB instance. Verify schema structure, column types, and index presence.
+    -   ✅ Write unit tests for `connection.py` (verify connection, extension loading).
+    -   ✅ Write tests for `schema.py` to ensure tables and indexes are created correctly in a temporary DuckDB instance. Verify schema structure, column types, and index presence.
+
+#### Key Findings from FTS Implementation and Testing:
+
+During the implementation and testing of FTS indexes in Phase 1, several important details about using DuckDB's `match_bm25` function were discovered:
+
+1.  **Function Naming:** While initial attempts and some documentation searches might suggest `fts_match_bm25` as the function name, diagnostic queries against `duckdb_functions()` revealed the base function name registered by the FTS extension is `match_bm25`.
+2.  **Qualified Invocation for Schema-Specific Tables:** The crucial insight came from DuckDB's error messages. When an FTS index is created on a schema-qualified table (e.g., `PRAGMA create_fts_index('app_data.clips', ...)`), the `match_bm25` function must be invoked by qualifying it with the FTS virtual table name.
+3.  **Virtual Table Naming Convention:** DuckDB's error message (`Did you mean "fts_app_data_clips.match_bm25, ..."?`) indicated that for a table like `app_data.clips`, the corresponding FTS virtual table is named `fts_app_data_clips`.
+4.  **Correct Invocation:** Therefore, the correct way to query the FTS index on `app_data.clips` is by using `fts_app_data_clips.match_bm25(id_column, query_string, ...)`.
+5.  **Contrast with `fts_main_<table>`:** This naming convention (`fts_<schema>_<table>`) differs from some documentation examples that show `fts_main_<table>.match_bm25(...)`. The `fts_main_<table>` convention likely applies when the table name provided in the `PRAGMA create_fts_index` command is *not* schema-qualified (e.g., `PRAGMA create_fts_index('corpus', ...)`), defaulting to the `main` schema.
+
+These findings were critical for getting the FTS index tests in `test_schema.py` to pass and are important for the subsequent implementation of search logic in `search_logic.py`.
 
 ### Phase 2: CRUD Operations Implementation ⬜
 -   ⬜ **Task 2.1:** Implement basic CRUD functions in `video_ingest_tool/database/duckdb/crud.py` for each table:
