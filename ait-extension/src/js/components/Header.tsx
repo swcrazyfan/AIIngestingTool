@@ -7,7 +7,6 @@ import '../styles/Header.scss';
 const Header: React.FC = () => {
   const { authStatus, logout } = useAuth();
   const [isConnected, setIsConnected] = useState(false);
-  const [currentProject, setCurrentProject] = useState('All Projects');
 
   useEffect(() => {
     const checkConnection = async () => {
@@ -26,17 +25,6 @@ const Header: React.FC = () => {
       <div className="header-content">
         <div className="header-left">
           <h1>AI Video Ingest Tool</h1>
-          <div className="project-selector">
-            <FiFolder />
-            <select 
-              value={currentProject} 
-              onChange={(e) => setCurrentProject(e.target.value)}
-            >
-              <option value="All Projects">All Projects</option>
-              <option value="Wedding 2024">Wedding 2024</option>
-              <option value="Corporate Videos">Corporate Videos</option>
-            </select>
-          </div>
         </div>
         
         <div className="header-actions">

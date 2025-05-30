@@ -172,6 +172,7 @@ export const videosApi = {
     if (options?.offset) params.offset = options.offset;
     if (options?.dateStart) params.date_start = options.dateStart;
     if (options?.dateEnd) params.date_end = options.dateEnd;
+    if (options?.filter) params.filter = options.filter;
 
     // Use /clips endpoint for listing all videos
     const response = await apiClient.get<SearchResults>('/clips', { params });

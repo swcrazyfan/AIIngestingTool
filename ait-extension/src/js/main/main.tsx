@@ -7,8 +7,6 @@ import Login from '../components/Login';
 import VideoLibrary from '../components/VideoLibrary';
 import IngestPanel from '../components/IngestPanel';
 import Dashboard from '../components/Dashboard';
-import ProjectsPanel from '../components/ProjectsPanel';
-import SettingsPanel from '../components/SettingsPanel';
 import ConnectionMonitor from '../components/ConnectionMonitor';
 import '../styles/App.scss';
 
@@ -16,7 +14,7 @@ const queryClient = new QueryClient();
 
 const AppContent: React.FC = () => {
   const { authStatus, loading, isConnected, isGuestMode } = useAuth();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'library' | 'ingest' | 'projects' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'library' | 'ingest'>('dashboard');
 
   if (loading) {
     return (
@@ -70,20 +68,6 @@ const AppContent: React.FC = () => {
           >
             Ingest
           </button>
-          <button
-            className={`tab-button ${activeTab === 'projects' ? 'active' : ''}`}
-            onClick={() => setActiveTab('projects')}
-            disabled={!isConnected && !isGuestMode}
-          >
-            Projects
-          </button>
-          <button
-            className={`tab-button ${activeTab === 'settings' ? 'active' : ''}`}
-            onClick={() => setActiveTab('settings')}
-            disabled={!isConnected && !isGuestMode}
-          >
-            Settings
-          </button>
         </div>
 
         <div className="tab-content">
@@ -96,8 +80,6 @@ const AppContent: React.FC = () => {
               {activeTab === 'dashboard' && <Dashboard />}
               {activeTab === 'library' && <VideoLibrary />}
               {activeTab === 'ingest' && !isGuestMode && <IngestPanel />}
-              {activeTab === 'projects' && <ProjectsPanel />}
-              {activeTab === 'settings' && <SettingsPanel />}
             </>
           )}
         </div>

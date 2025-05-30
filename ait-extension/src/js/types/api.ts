@@ -249,6 +249,7 @@ export interface ListVideoOptions {
   sortOrder?: SortOrder;
   limit?: number;
   offset?: number;
-  dateStart?: string; 
-  dateEnd?: string;   
+  dateStart?: string;
+  dateEnd?: string;
+  filter?: string; // For combined collections/categories
 }

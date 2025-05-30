@@ -1,6 +1,50 @@
 .video-library {
   padding: 16px;
+
+  .search-bar-container {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 16px;
+    align-items: stretch; // Ensure button and search bar have same height
+
+    .search-bar { // Assuming SearchBar component has this class or similar
+      flex-grow: 1;
+    }
+
+    .filter-toggle-button {
+      padding: 8px 12px;
+      background-color: #2a2a2a;
+      border: 1px solid #333;
+      color: #ccc;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+
+      svg {
+        font-size: 16px;
+      }
+
+      &:hover {
+        background-color: #333;
+        border-color: #444;
+        color: #fff;
+      }
+
+      &.active {
+        background-color: #0066cc;
+        border-color: #0052a3;
+        color: #fff;
+      }
+    }
+  }
   
+  .advanced-filters-container {
+    margin-bottom: 16px; // Add some space below the filters when open
+  }
+
   // Dashboard stat cards
   .stat-overview-card {
     background: #2a2a2a;
@@ -268,18 +312,6 @@
     background: #2a2a2a;
     border-radius: 6px;
     border: 1px solid #333;
-
-    .cross-project-toggle {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      
-      label {
-        font-size: 13px;
-        color: #ccc;
-        cursor: pointer;
-      }
-    }
 
     .search-examples {
       flex: 1;

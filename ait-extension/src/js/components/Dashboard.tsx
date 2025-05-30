@@ -27,18 +27,9 @@ interface QuickAction {
   disabled?: boolean;
 }
 
-interface ProjectStat {
-  name: string;
-  totalVideos: number;
-  totalDuration: number;
-  lastIngest: string;
-  status: 'active' | 'idle' | 'processing';
-}
-
 const Dashboard: React.FC = () => {
   const [recentVideos, setRecentVideos] = useState<VideoFile[]>([]);
   const [stats, setStats] = useState<CatalogStats | null>(null);
-  const [projectStats, setProjectStats] = useState<ProjectStat[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,17 +50,6 @@ const Dashboard: React.FC = () => {
         console.warn('Failed to load stats:', statsError);
         // Continue without stats if they fail to load
       }
-
-      // Mock project stats for now - in a real implementation this would come from the API
-      setProjectStats([
-        {
-          name: 'Current Project',
-          totalVideos: recentResponse.results.length,
-          totalDuration: recentResponse.results.reduce((sum, video) => sum + (video.duration_seconds || 0), 0),
-          lastIngest: new Date().toISOString(),
-          status: 'active'
-        }
-      ]);
 
     } catch (err: any) {
       console.error('Failed to load dashboard data:', err);
@@ -112,16 +92,6 @@ const Dashboard: React.FC = () => {
       onClick: () => {
         // Navigate to library with search focus
         console.log('Navigate to search');
-      }
-    },
-    {
-      id: 'settings',
-      label: 'Settings',
-      icon: <FiSettings />,
-      description: 'Configure processing',
-      onClick: () => {
-        // Navigate to settings
-        console.log('Navigate to settings');
       }
     }
   ];
@@ -254,43 +224,6 @@ const Dashboard: React.FC = () => {
           </div>
         )}
 
-        {/* Project Stats (only show when we have project data) */}
-        {projectStats.length > 0 && (
-          <div className="dashboard-section">
-            <h3>Project Activity</h3>
-            <div className="project-stats">
-              {projectStats.map((project, index) => (
-                <div key={index} className="project-card">
-                  <div className="project-header">
-                    <div className="project-info">
-                      <div className="project-name">{project.name}</div>
-                      <div className="project-meta">
-                        {getStatusIcon(project.status)}
-                        <span className="project-status">{project.status}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="project-stats-grid">
-                    <div className="project-stat">
-                      <span className="project-stat-value">{project.totalVideos}</span>
-                      <span className="project-stat-label">Videos</span>
-                    </div>
-                    <div className="project-stat">
-                      <span className="project-stat-value">{formatDuration(project.totalDuration)}</span>
-                      <span className="project-stat-label">Duration</span>
-                    </div>
-                    <div className="project-stat">
-                      <span className="project-stat-value">
-                        {new Date(project.lastIngest).toLocaleDateString()}
-                      </span>
-                      <span className="project-stat-label">Last Ingest</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* Recent Videos */}
         <div className="dashboard-section">

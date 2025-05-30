@@ -14,7 +14,6 @@ A powerful Adobe CEP extension that integrates with the AI Video Ingest Tool API
 - **Find Similar**: Discover videos similar to any clip
 - **Direct Integration**: 
   - Add videos to timeline at playhead position
-  - Import videos to project panel
   - Reveal files in Finder
 - **Video Processing**: 
   - Select directories for batch processing

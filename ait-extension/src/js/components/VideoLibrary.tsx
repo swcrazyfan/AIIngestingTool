@@ -35,10 +35,8 @@ const VideoLibrary: React.FC = () => {
   const [dateEnd, setDateEnd] = useState<string>('');
   const [cardSize, setCardSize] = useState<CardSize>('medium');
   const [viewMode, setViewMode] = useState<ViewMode>('tiles');
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [crossProjectSearch, setCrossProjectSearch] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [selectedCollection, setSelectedCollection] = useState<string>('all');
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false); // New state for filter button
+  const [selectedFilter, setSelectedFilter] = useState<string>('all'); // Combined state
 
   const { search: wsSearch, connected } = useWebSocket();
 
@@ -59,7 +57,7 @@ const VideoLibrary: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [sortBy, sortOrder]);
+  }, [sortBy, sortOrder, selectedFilter]);
 
   // Load data on mount
   useEffect(() => {
@@ -91,130 +89,122 @@ const VideoLibrary: React.FC = () => {
 
   return (
     <div className="video-library">
-      <SearchBar onSearch={handleSearch} />
-
-      {/* Cross-project search toggle */}
-      <div className="search-controls">
-        <label className="cross-project-toggle">
-          <input
-            type="checkbox"
-            checked={crossProjectSearch}
-            onChange={(e) => setCrossProjectSearch(e.target.checked)}
-          />
-          <span>Search all projects</span>
-        </label>
-        <div className="search-examples">
-          <span><strong>Try:</strong> "wedding ceremony" | "4K footage" | "aerial shots"</span>
-        </div>
+      <div className="search-bar-container">
+        <SearchBar onSearch={handleSearch} />
+        <button
+          className={`filter-toggle-button ${showAdvancedFilters ? 'active' : ''}`}
+          onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+          title="Toggle Advanced Filters"
+        >
+          <FiFilter />
+        </button>
       </div>
 
-      {/* Smart Collections */}
-      <AccordionItem title="Smart Collections" startOpen={false}>
+      {/* Advanced Filters - Now toggled by button */}
+      {showAdvancedFilters && (
+        <div className="advanced-filters-container">
+          <div className="filter-controls">
+            <div className="filter-group">
+              <label>Sort By:</label>
+              <select value={sortBy} onChange={(e) => setSortBy(e.target.value as SortField)}>
+                <option value="processed_at">Recently Processed</option>
+                <option value="created_at">Date Created</option>
+                <option value="file_name">File Name</option>
+                <option value="duration_seconds">Duration</option>
+              </select>
+            </div>
+            
+            <div className="filter-group">
+              <label>Order:</label>
+              <select value={sortOrder} onChange={(e) => setSortOrder(e.target.value as SortOrder)}>
+                <option value="descending">Newest First</option>
+                <option value="ascending">Oldest First</option>
+              </select>
+            </div>
+            
+            <div className="filter-group">
+              <label>Date Range:</label>
+              <input
+                type="date"
+                value={dateStart}
+                onChange={(e) => setDateStart(e.target.value)}
+                placeholder="Start Date"
+              />
+              <input
+                type="date"
+                value={dateEnd}
+                onChange={(e) => setDateEnd(e.target.value)}
+                placeholder="End Date"
+              />
+            </div>
+            
+            <button className="apply-filters-button" onClick={loadVideoData}>
+              Apply Filters
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Combined Collections & Categories */}
+      <AccordionItem title="Collections & Categories" startOpen={false}>
         <div className="collections-grid">
-          <button 
-            className={`collection-card ${selectedCollection === 'recent' ? 'active' : ''}`}
-            onClick={() => setSelectedCollection('recent')}
+          {/* Smart Collections */}
+          <button
+            className={`collection-card ${selectedFilter === 'recent' ? 'active' : ''}`}
+            onClick={() => setSelectedFilter('recent')}
           >
             <FiClock />
             <span>Recently Added</span>
           </button>
-          <button 
-            className={`collection-card ${selectedCollection === 'favorites' ? 'active' : ''}`}
-            onClick={() => setSelectedCollection('favorites')}
+          <button
+            className={`collection-card ${selectedFilter === 'favorites' ? 'active' : ''}`}
+            onClick={() => setSelectedFilter('favorites')}
           >
             <FiHeart />
             <span>Favorites</span>
           </button>
-          <button 
-            className={`collection-card ${selectedCollection === 'untagged' ? 'active' : ''}`}
-            onClick={() => setSelectedCollection('untagged')}
+          <button
+            className={`collection-card ${selectedFilter === 'untagged' ? 'active' : ''}`}
+            onClick={() => setSelectedFilter('untagged')}
           >
             <FiTag />
             <span>Untagged</span>
-          </button> 
-          <button 
-            className={`collection-card ${selectedCollection === 'hdr' ? 'active' : ''}`}
-            onClick={() => setSelectedCollection('hdr')}
+          </button>
+          <button
+            className={`collection-card ${selectedFilter === 'hdr' ? 'active' : ''}`}
+            onClick={() => setSelectedFilter('hdr')}
           >
             <FiStar />
             <span>HDR Content</span>
           </button>
-        </div>
-      </AccordionItem>
-
-      {/* Categories */}
-      <AccordionItem title="Categories" startOpen={false}>
-        <div className="collections-grid">
-          <button 
-            className={`collection-card ${selectedCategory === 'all' ? 'active' : ''}`}
-            onClick={() => setSelectedCategory('all')}
+          {/* Categories */}
+          <button
+            className={`collection-card ${selectedFilter === 'all' ? 'active' : ''}`}
+            onClick={() => setSelectedFilter('all')}
           >
             <FiGrid />
             <span>All Videos</span>
           </button>
-          <button 
-            className={`collection-card ${selectedCategory === 'camera' ? 'active' : ''}`}
-            onClick={() => setSelectedCategory('camera')}
+          <button
+            className={`collection-card ${selectedFilter === 'camera' ? 'active' : ''}`}
+            onClick={() => setSelectedFilter('camera')}
           >
             <FiCamera />
             <span>Camera Footage</span>
           </button>
-          <button 
-            className={`collection-card ${selectedCategory === 'screen' ? 'active' : ''}`}
-            onClick={() => setSelectedCategory('screen')}
+          <button
+            className={`collection-card ${selectedFilter === 'screen' ? 'active' : ''}`}
+            onClick={() => setSelectedFilter('screen')}
           >
             <FiActivity />
             <span>Screen Recordings</span>
           </button>
-          <button 
-            className={`collection-card ${selectedCategory === 'ai' ? 'active' : ''}`}
-            onClick={() => setSelectedCategory('ai')}
+          <button
+            className={`collection-card ${selectedFilter === 'ai' ? 'active' : ''}`}
+            onClick={() => setSelectedFilter('ai')}
           >
             <FiTrendingUp />
             <span>AI Generated</span>
-          </button>
-        </div>
-      </AccordionItem>
-
-      {/* Advanced Filters */}
-      <AccordionItem title="Advanced Filters" startOpen={showAdvanced}>
-        <div className="filter-controls">
-          <div className="filter-group">
-            <label>Sort By:</label>
-            <select value={sortBy} onChange={(e) => setSortBy(e.target.value as SortField)}>
-              <option value="processed_at">Recently Processed</option>
-              <option value="created_at">Date Created</option>
-              <option value="file_name">File Name</option>
-              <option value="duration_seconds">Duration</option>
-            </select>
-          </div>
-          
-          <div className="filter-group">
-            <label>Order:</label>
-            <select value={sortOrder} onChange={(e) => setSortOrder(e.target.value as SortOrder)}>
-              <option value="descending">Newest First</option>
-              <option value="ascending">Oldest First</option>
-            </select>
-          </div>
-          
-          <div className="filter-group">
-            <label>Date Range:</label>
-            <input
-              type="date"
-              value={dateStart}
-              onChange={(e) => setDateStart(e.target.value)}
-              placeholder="Start Date"
-            />
-            <input
-              type="date"
-              value={dateEnd}
-              onChange={(e) => setDateEnd(e.target.value)}
-              placeholder="End Date"
-            />
-          </div>
-          
-          <button className="apply-filters-button" onClick={loadVideoData}>
-            Apply Filters
           </button>
         </div>
       </AccordionItem>
@@ -273,18 +263,6 @@ const VideoLibrary: React.FC = () => {
             <FiRefreshCw className={refreshing ? 'refreshing' : ''} />
           </button>
         </div>
-      </div>
-
-      {/* Cross-project search toggle */}
-      <div className="search-controls">
-        <label className="search-toggle">
-          <input
-            type="checkbox"
-            checked={crossProjectSearch}
-            onChange={(e) => setCrossProjectSearch(e.target.checked)}
-          />
-          <span>Search all projects</span>
-        </label>
       </div>
 
       {/* Video Grid/List */}
