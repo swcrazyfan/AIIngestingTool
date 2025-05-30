@@ -118,7 +118,13 @@ def process_video_file_task(
         name=f"{label_prefix} | video_compression",
         tags=["video_compression_step"]
     )
-    compression_future = compression_task.submit(data, compression_fps=compression_fps, compression_bitrate=compression_bitrate)
+    # Pass the flow_run_id (which is the batch_uuid for tracking) to the compression task
+    compression_future = compression_task.submit(
+        data,
+        compression_fps=compression_fps,
+        compression_bitrate=compression_bitrate,
+        tracker_flow_run_id=flow_run_id  # flow_run_id in this scope is the batch_uuid
+    )
     
     mediainfo_future = extract_mediainfo_step.with_options(
         name=f"{label_prefix} | extract_mediainfo",
