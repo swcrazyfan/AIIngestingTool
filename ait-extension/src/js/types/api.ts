@@ -163,7 +163,14 @@ export interface ProcessedFile {
   progress?: number;
   error?: string;
   current_step?: string;
-  progress_percentage?: number;
+  progress_percentage?: number; // Overall progress for this file's current step
+  // New fields for detailed compression progress
+  compression_total_frames?: number;
+  compression_processed_frames?: number;
+  compression_current_rate?: number; // FPS
+  compression_etr_seconds?: number;   // Estimated Time Remaining in seconds
+  compression_speed?: string;        // e.g., "1.5x"
+  compression_error_detail?: string; // Specific error from compression
 }
 
 export interface IngestProgress {

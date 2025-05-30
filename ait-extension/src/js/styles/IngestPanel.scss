@@ -30,41 +30,68 @@
     display: flex;
     flex-direction: column;
     position: relative;
-    overflow: hidden;
+    overflow-y: auto; /* Allow vertical scrolling if content overflows */
   }
   
   .directory-selection {
     margin-bottom: 24px;
     
-    .select-directory-btn {
+    .directory-input-group {
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 12px 20px;
-      background: #333;
-      border: 1px solid #444;
-      border-radius: 4px;
-      color: #fff;
-      font-size: 14px;
-      cursor: pointer;
-      transition: all 0.2s;
-      
-      &:hover {
-        background: #3a3a3a;
-        border-color: #555;
+      width: 100%;
+      gap: 8px; // Gap between input and button
+
+      .selected-path-input {
+        flex-grow: 1; // Input takes up available space
+        padding: 10px 12px; // Consistent padding
+        background: #1a1a1a;
+        border: 1px solid #333;
+        border-radius: 4px;
+        font-size: 13px; // Slightly larger for input
+        color: #ccc; // Lighter color for editable text
+        line-height: 1.5; // Ensure text is vertically centered if padding makes it tall
+        box-sizing: border-box; // Include padding and border in the element's total width and height
+
+        &:focus {
+          outline: none;
+          border-color: #007aff; // Highlight on focus
+          box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.2);
+        }
+      }
+
+      .select-directory-btn {
+        display: flex;
+        align-items: center;
+        gap: 6px; // Smaller gap for icon and text within button
+        padding: 10px 15px; // Adjusted padding
+        background: #333;
+        border: 1px solid #444;
+        border-radius: 4px;
+        color: #fff;
+        font-size: 13px; // Consistent font size
+        cursor: pointer;
+        transition: all 0.2s;
+        white-space: nowrap; // Prevent button text from wrapping
+
+        &:hover {
+          background: #3a3a3a;
+          border-color: #555;
+        }
       }
     }
-    
-    .selected-path {
-      margin-top: 8px;
-      padding: 8px 12px;
-      background: #1a1a1a;
-      border: 1px solid #333;
-      border-radius: 4px;
-      font-size: 12px;
-      color: #999;
-      word-break: break-all;
-    }
+    // Remove old .selected-path if it's no longer used as a separate div
+    // If .selected-path-input replaces .selected-path entirely, this can be deleted:
+    // .selected-path {
+    //   margin-top: 8px;
+    //   padding: 8px 12px;
+    //   background: #1a1a1a;
+    //   border: 1px solid #333;
+    //   border-radius: 4px;
+    //   font-size: 12px;
+    //   color: #999;
+    //   word-break: break-all;
+    // }
   }
   .ingest-options {
     background: #2a2a2a;
@@ -474,6 +501,234 @@
       margin: 0;
       font-size: 13px;
       color: #ccc;
+    }
+  }
+}
+.ingest-log-container {
+  margin-top: 20px;
+  padding: 15px;
+  background-color: #222; // Slightly different background for distinction
+  border-radius: 5px;
+  border: 1px solid #333;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+
+  .log-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+
+    h3 {
+      margin: 0;
+      color: #fff;
+      font-size: 16px;
+    }
+
+    .clear-log-btn {
+      padding: 5px 10px;
+      background-color: #333;
+      border: 1px solid #444;
+      border-radius: 4px;
+      color: #fff;
+      cursor: pointer;
+      font-size: 12px;
+      transition: background-color 0.2s;
+
+      &:hover {
+        background-color: #444;
+      }
+    }
+  }
+
+  .processed-files-log {
+    flex-grow: 1; // Allows the list to take available space if container has fixed height
+min-height: 0; // Crucial for allowing internal scrolling in a flex child
+    display: flex; // Make it a flex container so its child can also use flex properties
+    flex-direction: column; // Stack its children (e.g., the .scrollable-log div)
+    // If the ingest-log-container itself is not meant to scroll,
+    // but only the file-list-inner, this can be removed.
+  }
+
+  .file-list-inner.scrollable-log {
+    max-height: 300px; // Or any desired height for the scrollable area
+    overflow-y: auto;
+    overflow-x: hidden;
+    border: 1px solid #303030;
+    border-radius: 4px;
+    background-color: #1e1e1e; // Darker background for the list itself
+    padding: 5px; // Padding inside the scrollable area
+    
+    // Re-use .file-item styles from .ingest-progress-container if they are identical
+    // or define them here if they need to be different for the log.
+    // Assuming .file-item and its children are styled globally enough or will be copied/adapted:
+    .file-item {
+      // Styles from .ingest-progress-container .file-item can be used
+      // or defined/overridden here. For now, assume they are shared or will be added.
+      // Example:
+      // display: flex;
+      // justify-content: space-between;
+      // padding: 6px 8px;
+      // border-bottom: 1px solid #282828;
+      // font-size: 12px;
+      // &:last-child {
+      //   border-bottom: none;
+      // }
+      // .file-name { color: #bbb; }
+      // .file-status { /* ... */ }
+    }
+  }
+  
+  .empty-log-message {
+    color: #777;
+    font-style: italic;
+    text-align: center;
+    padding: 20px;
+  }
+}
+
+// Adjustments to existing .ingest-progress-container .processed-files if it's being removed from there
+// For example, if the .processed-files div is completely moved to .ingest-log-container,
+// then the styles under .ingest-progress-container > .processed-files might not be needed anymore
+// or might need to be adjusted if some part of it remains.
+// For now, we assume the detailed list is primarily in the new log container.
+
+// Ensure .file-item and its children are styled correctly within .scrollable-log
+// If not already covered by global styles or styles within .ingest-progress-container
+// that also apply here due to class name reuse.
+.ingest-log-container .file-list-inner.scrollable-log {
+  .file-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center; // Vertically align items
+    padding: 8px 10px; // Consistent padding
+    border-bottom: 1px solid #2c2c2c; // Slightly lighter border for log items
+    font-size: 13px; // Consistent font size
+    min-height: 32px; // Ensure items have some height
+
+    &:last-child {
+      border-bottom: none;
+    }
+
+    .file-name {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #ddd; // Lighter text for readability
+      padding-right: 10px;
+    }
+
+    .file-status-container {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
+      min-width: 110px; // Slightly more space for status + potential progress
+    }
+
+    .file-status {
+      // Using existing status styling, ensure it's accessible
+      // or copy/adapt from .ingest-progress-container .file-status
+      margin-left: 10px;
+      font-weight: 500;
+      padding: 2px 6px;
+      border-radius: 3px;
+      text-transform: capitalize;
+      font-size: 11px; // Slightly smaller status badges in log
+
+      &.completed { background-color: rgba(22, 163, 74, 0.2); color: #4ade80; }
+      &.processing { background-color: rgba(37, 99, 235, 0.2); color: #60a5fa; }
+      &.waiting { background-color: rgba(79, 70, 229, 0.2); color: #818cf8; }
+      &.failed { background-color: rgba(220, 38, 38, 0.2); color: #f87171; }
+      &.skipped { background-color: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+    }
+
+    .file-error, .file-skipped-reason {
+      font-size: 10px;
+      color: #f87171; // Error text color
+      max-width: 150px; // Prevent very long error messages from breaking layout
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: right;
+    }
+    .file-skipped-reason {
+      color: #fbbf24; // Skipped reason color
+    }
+
+    .file-step {
+      font-size: 10px;
+      color: #aaa; // Lighter step color
+      font-style: italic;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 150px;
+      text-align: right;
+    }
+    
+    .file-progress {
+      // Using existing file-progress styling or copy/adapt
+      display: flex;
+      align-items: center;
+      gap: 5px; // Smaller gap
+      margin-top: 3px; // Smaller margin
+      width: 100%; // Ensure it takes full width of its container part
+      
+      .file-progress-bar-background {
+        flex: 1;
+        height: 3px; // Thinner bar
+        background-color: #333; // Darker background for bar
+        border-radius: 1.5px;
+        overflow: hidden;
+        min-width: 60px; // Min width for the bar
+      }
+      
+      .file-progress-bar-fill {
+        height: 100%;
+        background-color: #16a34a; // Consistent fill
+        border-radius: 1.5px;
+        transition: width 0.3s ease;
+        &.failed { background-color: #dc2626; }
+      }
+      
+      .file-progress-percentage {
+        font-size: 9px; // Smaller percentage text
+        color: #888;
+        min-width: 25px;
+        text-align: right;
+      }
+    }
+
+    .compression-details {
+      display: flex;
+      flex-direction: column; // Stack details vertically
+      align-items: flex-end; // Align to the right, under status/progress
+      gap: 2px; // Small gap between compression detail lines
+      margin-top: 4px; // Space above compression details block
+      font-size: 10px; // Smaller font for these details
+      color: #aaa; // Lighter grey for less emphasis than main status
+
+      span { // Style individual detail lines
+        white-space: nowrap;
+      }
+
+      .compression-rate,
+      .compression-speed,
+      .compression-etr,
+      .compression-frames {
+        padding: 1px 3px; // Minimal padding
+        border-radius: 2px;
+        background-color: #2c2c2c; // Slightly different background for each detail
+      }
+      .compression-frames {
+        min-width: 80px; // Give frames display a bit more space
+        text-align: center;
+      }
     }
   }
 }

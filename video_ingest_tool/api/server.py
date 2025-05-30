@@ -69,8 +69,8 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
         engineio_logger=debug
     )
     
-    # Initialize progress tracker with socketio
-    progress_tracker = get_progress_tracker(socketio)
+    # Initialize progress tracker with app and socketio
+    progress_tracker = get_progress_tracker(app=app, socketio=socketio)
     
     # Add CORS headers to all responses
     @app.after_request
@@ -276,58 +276,99 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
                                        'STATS_ERROR', 500)
     
     # ========================================================================
-    # CLIPS ENDPOINTS (Individual Resources)
+    # CLIPS ENDPOINTS (RESTful: list, details, transcript, analysis)
     # ========================================================================
-    
+
+    @app.route('/api/clips', methods=['GET'])
+    @log_request()
+    @require_auth
+    @handle_errors
+    def list_clips():
+        """List all clips with filtering, sorting, and pagination."""
+        # Query params
+        sort_by = request.args.get('sort', 'processed_at')
+        sort_order = request.args.get('order', 'descending')
+        limit = request.args.get('limit', 20, type=int)
+        offset = request.args.get('offset', 0, type=int)
+        search = request.args.get('search', '').strip()
+        # Optional: add more filters as needed
+        filters = {}
+        # Example: category, tag, etc.
+        if request.args.get('category'):
+            filters['category'] = request.args['category']
+        if request.args.get('tag'):
+            filters['tag'] = request.args['tag']
+
+        cmd = SearchCommand()
+        if search:
+            # Use search action for text search
+            result = cmd.execute(
+                action='search',
+                query=search,
+                search_type='hybrid',
+                limit=limit,
+                offset=offset,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                filters=filters
+            )
+        else:
+            # Use list action for all clips
+            result = cmd.execute(
+                action='list',
+                sort_by=sort_by,
+                sort_order=sort_order,
+                limit=limit,
+                offset=offset,
+                filters=filters
+            )
+        if result.get('success'):
+            return jsonify(create_success_response(result))
+        else:
+            return create_error_response(result.get('error', 'Failed to list clips'), 'CLIPS_LIST_ERROR', 500)
+
     @app.route('/api/clips/<clip_id>', methods=['GET'])
     @log_request()
     @require_auth
     @handle_errors
-    def get_clip_details(clip_id: str):
-        """Get detailed information about a specific video clip."""
-        show_transcript = request.args.get('transcript', 'false').lower() == 'true'
-        show_analysis = request.args.get('analysis', 'false').lower() == 'true'
-        
+    def get_clip_details_rest(clip_id: str):
+        """Get detailed information about a specific clip."""
+        # Optionally allow ?include=transcript,analysis
+        include = request.args.get('include', '')
+        show_transcript = 'transcript' in include.split(',')
+        show_analysis = 'analysis' in include.split(',')
         cmd = ClipsCommand()
-        result = cmd.execute(action='show', clip_id=clip_id, 
-                           show_transcript=show_transcript, 
-                           show_analysis=show_analysis)
-        
+        result = cmd.execute(action='show', clip_id=clip_id, show_transcript=show_transcript, show_analysis=show_analysis)
         if result.get('success'):
             return jsonify(create_success_response(result.get('data', {})))
         else:
-            return create_error_response(result.get('error', 'Clip not found'), 
-                                       'CLIP_NOT_FOUND', 404)
-    
+            return create_error_response(result.get('error', 'Clip not found'), 'CLIP_NOT_FOUND', 404)
+
     @app.route('/api/clips/<clip_id>/transcript', methods=['GET'])
     @log_request()
     @require_auth
     @handle_errors
-    def get_clip_transcript(clip_id: str):
-        """Get transcript for a specific video clip."""
+    def get_clip_transcript_rest(clip_id: str):
+        """Get transcript for a specific clip."""
         cmd = ClipsCommand()
         result = cmd.execute(action='transcript', clip_id=clip_id)
-        
         if result.get('success'):
             return jsonify(create_success_response(result.get('data', {})))
         else:
-            return create_error_response(result.get('error', 'Transcript not found'), 
-                                       'TRANSCRIPT_NOT_FOUND', 404)
-    
+            return create_error_response(result.get('error', 'Transcript not found'), 'TRANSCRIPT_NOT_FOUND', 404)
+
     @app.route('/api/clips/<clip_id>/analysis', methods=['GET'])
     @log_request()
     @require_auth
     @handle_errors
-    def get_clip_analysis(clip_id: str):
-        """Get AI analysis for a specific video clip."""
+    def get_clip_analysis_rest(clip_id: str):
+        """Get AI analysis for a specific clip."""
         cmd = ClipsCommand()
         result = cmd.execute(action='analysis', clip_id=clip_id)
-        
         if result.get('success'):
             return jsonify(create_success_response(result.get('data', {})))
         else:
-            return create_error_response(result.get('error', 'Analysis not found'), 
-                                       'ANALYSIS_NOT_FOUND', 404)
+            return create_error_response(result.get('error', 'Analysis not found'), 'ANALYSIS_NOT_FOUND', 404)
     
     # ========================================================================
     # INGEST ENDPOINTS (Following Prefect Best Practices)

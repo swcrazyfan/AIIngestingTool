@@ -186,9 +186,6 @@ def process_video_file_task(
     focal_length_future = focal_length_task.submit(data)
 
     # Wait for all parallel steps to finish and update data
-    progress_tracker.update_file_step(flow_run_id, file_path, "completing_extraction", 60, "processing")
-    if progress_artifact_id:
-        update_progress_artifact(progress_artifact_id, progress=60.0, description="Completing extractions...")
     
     data.update(mediainfo_future.result())
     data.update(ffprobe_future.result())

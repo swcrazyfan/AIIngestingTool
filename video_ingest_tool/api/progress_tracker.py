@@ -26,16 +26,18 @@ logger = structlog.get_logger(__name__)
 class ProgressTracker:
     """Tracks ingest progress and provides legacy-compatible progress updates."""
     
-    def __init__(self, socketio=None):
+    def __init__(self, app=None, socketio=None):
         """Initialize the progress tracker.
         
         Args:
+            app: Flask application instance
             socketio: Flask-SocketIO instance for emitting progress updates
         """
+        self.app = app
         self.socketio = socketio
         self.active_ingests: Dict[str, Dict[str, Any]] = {}
     
-    def start_tracking(self, flow_run_id: str, directory: str, total_files: int, 
+    def start_tracking(self, flow_run_id: str, directory: str, total_files: int,
                       user_email: Optional[str] = None) -> None:
         """Start tracking progress for a new ingest.
         
@@ -71,26 +73,29 @@ class ProgressTracker:
         
         logger.info("Progress tracking started", flow_run_id=flow_run_id)
     
-    def update_file_step(self, flow_run_id: str, file_path: str, step_name: str, 
-                        step_progress: int = 0, step_status: str = "processing") -> None:
+    def update_file_step(self, flow_run_id: str, file_path: str, step_name: str,
+                         step_progress: int = 0, step_status: str = "processing",
+                         compression_update: Optional[Dict[str, Any]] = None) -> None:
         """Update the current step for a specific file.
-        
+
         Args:
             flow_run_id: The Prefect flow run ID
             file_path: Full path to the file being processed
             step_name: Name of the current processing step
             step_progress: Progress percentage for this step (0-100)
             step_status: Status of this step (processing, completed, failed, skipped)
+            compression_update: Optional dict with detailed compression progress
+                                (total_frames, processed_frames, current_rate, speed, error_detail)
         """
         try:
             if flow_run_id not in self.active_ingests:
-                logger.warning("Attempted to update file step for unknown flow run", 
+                logger.warning("Attempted to update file step for unknown flow run",
                              flow_run_id=flow_run_id)
                 return
-            
+
             import os
             file_name = os.path.basename(file_path)
-            
+
             # Initialize file details if not exists
             if file_path not in self.active_ingests[flow_run_id]['file_details']:
                 self.active_ingests[flow_run_id]['file_details'][file_path] = {
@@ -102,47 +107,110 @@ class ProgressTracker:
                     'completed_steps': [],
                     'error': None,
                     'started_at': None,
-                    'completed_at': None
+                    'completed_at': None,
+                    'compression_details': None # Initialize compression_details
                 }
-            
+
             # Update file details
-            file_details = self.active_ingests[flow_run_id]['file_details'][file_path]
-            file_details['current_step'] = step_name
-            file_details['step_progress'] = step_progress
-            file_details['status'] = step_status
-            
-            # Track when file processing starts
-            if file_details['started_at'] is None and step_status == "processing":
-                file_details['started_at'] = time.time()
-            
-            # Mark step as completed if status indicates completion
-            if step_status in ["completed", "skipped"] and step_name not in file_details['completed_steps']:
-                file_details['completed_steps'].append(step_name)
+            file_data = self.active_ingests[flow_run_id]['file_details'][file_path]
+            logger.debug("Before update in update_file_step",
+                         file_name=file_name,
+                         incoming_step=step_name,
+                         incoming_progress=step_progress,
+                         incoming_status=step_status,
+                         current_file_step=file_data.get('current_step'),
+                         current_file_status=file_data.get('status'),
+                         current_file_progress=file_data.get('step_progress'))
+
+            is_currently_compressing = file_data.get('current_step') == "video_compression" and \
+                                     file_data.get('status') == "processing"
+
+            if step_name == "video_compression":
+                # If it's a video_compression update, it always takes precedence for step/progress/status
+                file_data['current_step'] = step_name
+                file_data['step_progress'] = step_progress # This will be compression's own progress
+                file_data['status'] = step_status
+                logger.debug("Applied video_compression update", file_name=file_name, step=file_data['current_step'], progress=file_data['step_progress'], status=file_data['status'])
+            elif is_currently_compressing:
+                # If currently compressing and a *different* step update comes in:
+                logger.debug(f"File {file_name} is in active video_compression (step: {file_data.get('current_step')}, status: {file_data.get('status')}). Incoming non-compression step '{step_name}' (status: {step_status}).")
+                # - Don't change current_step (stays "video_compression")
+                # - Don't change step_progress (stays compression's progress)
+                # - Only update overall file status if the incoming step *failed*.
+                if step_status == "failed" and file_data['status'] != "failed": # Avoid multiple failed states if already failed
+                    logger.warning(f"Concurrent step '{step_name}' failed for {file_name} during video compression. Marking file as failed.")
+                    file_data['status'] = "failed"
+                    file_data['error'] = file_data.get('error', '') + f" | Concurrent step '{step_name}' failed."
+                # else, keep current 'processing' status for video_compression
+            else:
+                # Not currently compressing, or the incoming step is not "video_compression"
+                # and compression is not active: update normally.
+                file_data['current_step'] = step_name
+                file_data['step_progress'] = step_progress
+                file_data['status'] = step_status
+                logger.debug("Applied normal update", file_name=file_name, step=file_data['current_step'], progress=file_data['step_progress'], status=file_data['status'])
+
+
+            # Handle compression-specific updates (this should now only effectively run if step_name IS "video_compression")
+            if step_name == "video_compression" and compression_update:
+                if file_data['compression_details'] is None:
+                    file_data['compression_details'] = {}
                 
+                for key in ['total_frames', 'processed_frames', 'current_rate', 'speed', 'error_detail']:
+                    if key in compression_update:
+                        file_data['compression_details'][key] = compression_update[key]
+
+                # Calculate ETR
+                cd = file_data['compression_details']
+                if cd.get('current_rate', 0) > 0 and cd.get('total_frames', 0) > 0:
+                    remaining_frames = cd['total_frames'] - cd.get('processed_frames', 0)
+                    if remaining_frames > 0:
+                        cd['etr_seconds'] = remaining_frames / cd['current_rate']
+                    else:
+                        cd['etr_seconds'] = 0
+                else:
+                    cd['etr_seconds'] = None # Cannot calculate ETR
+
+            # Track when file processing starts
+            if file_data['started_at'] is None and step_status == "processing":
+                file_data['started_at'] = time.time()
+
+            # Mark step as completed if status indicates completion
+            if step_status in ["completed", "skipped"] and step_name not in file_data['completed_steps']:
+                file_data['completed_steps'].append(step_name)
+
             # Mark file as completed when it reaches final status
-            if step_status in ["completed", "failed", "skipped"] and file_details['completed_at'] is None:
-                file_details['completed_at'] = time.time()
-            
+            if step_status in ["completed", "failed", "skipped"] and file_data['completed_at'] is None:
+                file_data['completed_at'] = time.time()
+
             # Update overall progress based on file statuses
             self._update_overall_progress(flow_run_id)
-            
-            logger.debug("File step updated", 
-                        flow_run_id=flow_run_id, 
-                        file_name=file_name, 
-                        step=step_name, 
+
+            logger.debug("File step updated",
+                        flow_run_id=flow_run_id,
+                        file_name=file_name,
+                        step=step_name,
                         progress=step_progress,
-                        status=step_status)
-                        
+                        status=step_status,
+                        compression_update=compression_update)
+
             # Emit WebSocket update
-            if self.socketio:
+            if self.socketio and self.app: # Ensure both app and socketio are available
                 try:
-                    formatted_data = self._format_progress_response(self.active_ingests[flow_run_id])
-                    self.socketio.emit('ingest_progress_update', formatted_data)
+                    # Ensure Flask app context for the emit, especially if called from background threads
+                    with self.app.app_context():
+                        formatted_data = self._format_progress_response(self.active_ingests[flow_run_id])
+                        self.socketio.emit('ingest_progress_update', formatted_data)
                 except Exception as e:
-                    logger.warning("Failed to emit WebSocket update", error=str(e))
-                    
+                    logger.warning("Failed to emit WebSocket update", error=str(e), exc_info=True)
+            elif not self.app:
+                logger.warning("ProgressTracker: Flask app instance not available, cannot emit WebSocket update with app_context.")
+            elif not self.socketio:
+                logger.debug("ProgressTracker: SocketIO instance not available, skipping WebSocket update.")
+
+
         except Exception as e:
-            logger.error("Error updating file step", error=str(e), 
+            logger.error("Error updating file step", error=str(e),
                         flow_run_id=flow_run_id, file_path=file_path)
     
     def _update_overall_progress(self, flow_run_id: str) -> None:
@@ -302,8 +370,29 @@ class ProgressTracker:
                 'started_at': file_info.get('started_at'),
                 'completed_at': file_info.get('completed_at'),
                 'completed_steps': file_info.get('completed_steps', []),
-                'error': file_info.get('error')
+                'error': file_info.get('error'),
             }
+            
+            # Safely add compression details if available
+            compression_details = file_info.get('compression_details') # This might be None
+            if isinstance(compression_details, dict):
+                processed_file.update({
+                    'compression_total_frames': compression_details.get('total_frames'),
+                    'compression_processed_frames': compression_details.get('processed_frames'),
+                    'compression_current_rate': compression_details.get('current_rate'),
+                    'compression_etr_seconds': compression_details.get('etr_seconds'),
+                    'compression_speed': compression_details.get('speed'),
+                    'compression_error_detail': compression_details.get('error_detail')
+                })
+            else: # Ensure keys exist even if None, for frontend type consistency
+                processed_file.update({
+                    'compression_total_frames': None,
+                    'compression_processed_frames': None,
+                    'compression_current_rate': None,
+                    'compression_etr_seconds': None,
+                    'compression_speed': None,
+                    'compression_error_detail': None
+                })
             processed_files.append(processed_file)
         
         # Sort files by status (processing first, then completed/failed)
@@ -384,11 +473,12 @@ class ProgressTracker:
 _progress_tracker = None
 
 
-def get_progress_tracker(socketio=None) -> ProgressTracker:
+def get_progress_tracker(app=None, socketio=None) -> ProgressTracker:
     """Get or create the global progress tracker instance.
     
     Args:
-        socketio: Flask-SocketIO instance (only needed on first call)
+        app: Flask application instance (only needed on first call or if updating)
+        socketio: Flask-SocketIO instance (only needed on first call or if updating)
         
     Returns:
         The global ProgressTracker instance
@@ -396,16 +486,19 @@ def get_progress_tracker(socketio=None) -> ProgressTracker:
     global _progress_tracker
     try:
         if _progress_tracker is None:
-            _progress_tracker = ProgressTracker(socketio)
+            _progress_tracker = ProgressTracker(app=app, socketio=socketio)
             logger.info("Created new progress tracker instance")
-        elif socketio and not _progress_tracker.socketio:
-            # Update socketio if it wasn't set initially
-            _progress_tracker.socketio = socketio
-            logger.info("Updated progress tracker with socketio")
+        else:
+            if app and not _progress_tracker.app:
+                _progress_tracker.app = app
+                logger.info("Updated progress tracker with Flask app instance")
+            if socketio and not _progress_tracker.socketio:
+                _progress_tracker.socketio = socketio
+                logger.info("Updated progress tracker with socketio instance")
         
         return _progress_tracker
         
     except Exception as e:
-        logger.error("Error creating/getting progress tracker", error=str(e))
+        logger.error("Error creating/getting progress tracker", error=str(e), exc_info=True)
         # Return a fallback instance
-        return ProgressTracker(socketio)
+        return ProgressTracker(app=app, socketio=socketio)

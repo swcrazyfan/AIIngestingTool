@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ingestApi } from '../api/client';
 import { IngestProgress } from '../types/api';
-import { evalTS } from '../lib/utils/bolt';
+import { evalTS, evalES } from '../lib/utils/bolt';
 import { FiFolder, FiPlay, FiCheckSquare, FiSquare, FiRefreshCw } from 'react-icons/fi';
 import { useWebSocket } from '../contexts/WebSocketContext';
 import '../styles/IngestPanel.scss';
@@ -21,15 +21,26 @@ const IngestPanel: React.FC = () => {
   
   // Use the global WebSocket connection
   const { ingestProgress, connected, setIngestProgress } = useWebSocket();
+// State to control visibility of the progress log area
+  const [showLog, setShowLog] = useState<boolean>(false);
 
   const selectDirectory = async () => {
     try {
+      // Clear any previous error messages before attempting selection
+      setError(null);
       const directory = await evalTS("selectDirectory");
-      if (directory) {
+      if (directory && typeof directory === 'string') { // Ensure it's a string before setting
         setSelectedDirectory(directory);
+      } else if (directory) { // It returned something, but not a string
+        console.warn("selectDirectory returned a non-string value:", directory);
+        setError("Failed to get a valid directory path."); // User-friendly error
       }
-    } catch (error) {
+      // If directory is null (e.g. user cancelled dialog), do nothing, no error needed.
+    } catch (error: any) {
       console.error('Failed to select directory:', error);
+      // Provide a user-friendly error message
+      const errorMessage = error && error.message ? error.message : "An unknown error occurred.";
+      setError(`Failed to select directory: ${errorMessage}`);
     }
   };
 
@@ -44,6 +55,7 @@ const IngestPanel: React.FC = () => {
       
       // Show progress section and clear any errors
       setShowProgress(true);
+setShowLog(true); // Also show the log area
       setError(null); // Ensure error is cleared on successful start
     } catch (error: any) { // Catch specific error type if known, else 'any'
       console.error('Ingest failed in IngestPanel:', error);
@@ -82,6 +94,7 @@ const IngestPanel: React.FC = () => {
                               progressData.status === 'scanning' || 
                               progressData.status === 'processing')) {
             setShowProgress(true);
+setShowLog(true); // Show log if process is ongoing
           }
         }
       } catch (error) {
@@ -103,17 +116,22 @@ const IngestPanel: React.FC = () => {
       
       // Show progress section if there's an active process
       const activeStatuses = ['starting', 'running', 'scanning', 'processing'];
-      const completeStatuses = ['idle', 'completed', 'failed'];
+      // const completeStatuses = ['idle', 'completed', 'failed']; // No longer needed for auto-hide
       
       if (activeStatuses.includes(ingestProgress.status)) {
         setShowProgress(true);
+setShowLog(true); // Keep log visible if active
       }
       
-      // Hide progress after a delay when process completes
-      if (completeStatuses.includes(ingestProgress.status)) {
-        setTimeout(() => {
-          setShowProgress(false);
-        }, 5000);  // Show completed status for 5 seconds
+      // // // Hide progress after a delay when process completes
+      // //      if (completeStatuses.includes(ingestProgress.status)) {
+        // //        setTimeout(() => {
+          // //          setShowProgress(false);
+        // //        }, 5000);  // Show completed status for 5 seconds
+      // //      }
+// Ensure log stays visible if there's content, even if process completes
+      if (ingestProgress && ((ingestProgress.processed_files && ingestProgress.processed_files.length > 0) || ingestProgress.message || ingestProgress.status)) {
+        setShowLog(true);
       }
     }
   }, [ingestProgress]);
@@ -122,7 +140,7 @@ const IngestPanel: React.FC = () => {
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
     
-    if (!connected && showProgress) {
+    if (!connected && (showProgress || showLog)) { // Poll if either progress or log is shown
       // Poll every 2 seconds when WebSocket is not available
       intervalId = setInterval(async () => {
         try {
@@ -143,14 +161,46 @@ const IngestPanel: React.FC = () => {
         clearInterval(intervalId);
       }
     };
-  }, [connected, showProgress]);
+  }, [connected, showProgress, showLog]);
+const clearLog = () => {
+    setIngestProgress({
+      status: 'idle',
+      progress: 0,
+      message: '',
+      processed_files: [],
+      current_file: undefined,
+      error: undefined,
+      processed_count: 0,
+      results_count: 0,
+      failed_count: 0,
+      total_count: 0
+    });
+    setShowProgress(false);  // Hide the main progress bar section
+    setShowLog(false);       // Hide the log area
+    setError(null);          // Clear any general errors
+  };
+
+  const formatETR = (seconds: number | undefined): string => {
+    if (seconds === undefined || seconds === null || seconds < 0) {
+      return '--';
+    }
+    if (seconds === 0) {
+      return 'Done';
+    }
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.floor(seconds % 60);
+    if (minutes > 0) {
+      return `${minutes}m ${remainingSeconds}s rem.`;
+    }
+    return `${remainingSeconds}s rem.`;
+  };
 
   return (
     <div className="ingest-panel">
       <h2>Video Ingest</h2>
       
       <div className="ingest-panel-content scrollable-content">
-        {isLoading ? (
+        {isLoading && !showProgress && !showLog ? (
           <div className="loading-state">
             <FiRefreshCw className="loading-icon" />
             <p>Checking ingest status...</p>
@@ -162,7 +212,8 @@ const IngestPanel: React.FC = () => {
               setIsLoading(true);
               setError(null);
               // Try to get the latest progress
-              ingestApi.getProgress().then(() => {
+              ingestApi.getProgress().then((progressData) => {
+                setIngestProgress(progressData); // Update progress on retry
                 setIsLoading(false);
               }).catch(() => {
                 setIsLoading(false);
@@ -170,24 +221,30 @@ const IngestPanel: React.FC = () => {
               });
             }}>Retry</button>
           </div>
-        ) : ingestProgress && (ingestProgress.status === 'running' || 
-              ingestProgress.status === 'scanning' || 
-              ingestProgress.status === 'processing') ? (
+        ) : ingestProgress && (ingestProgress.status === 'running' ||
+              ingestProgress.status === 'scanning' ||
+              ingestProgress.status === 'processing') && !showLog ? ( // Only show this if log isn't visible yet
           <div className="ingest-in-progress">
             <h3>Video Processing in Progress</h3>
             {error && <div className="error-message">{error}</div>}
           </div>
         ) : (
-          // Show ingest form when not ingesting
+          // Show ingest form when not ingesting or log is not primary focus
+          (!ingestProgress || !showLog || !['running', 'scanning', 'processing'].includes(ingestProgress.status)) && (
           <>
             <div className="directory-selection">
-              <button onClick={selectDirectory} className="select-directory-btn">
-                <FiFolder /> Select Directory
-              </button>
-              
-              {selectedDirectory && (
-                <div className="selected-path">{selectedDirectory}</div>
-              )}
+              <div className="directory-input-group">
+                <input
+                  type="text"
+                  className="selected-path-input"
+                  value={selectedDirectory}
+                  onChange={(e) => setSelectedDirectory(e.target.value)}
+                  placeholder="Enter or select directory path..."
+                />
+                <button onClick={selectDirectory} className="select-directory-btn">
+                  <FiFolder /> Select
+                </button>
+              </div>
             </div>
 
             <div className="ingest-options">
@@ -234,23 +291,25 @@ const IngestPanel: React.FC = () => {
               </label>
             </div>
 
-            <button 
-              onClick={startIngest} 
+            <button
+              onClick={startIngest}
               className="start-ingest-btn"
-              disabled={!selectedDirectory}
+              disabled={!selectedDirectory || (!!ingestProgress && ['running', 'scanning', 'processing'].includes(ingestProgress.status))}
             >
               <FiPlay /> Start Ingest
             </button>
-            {error && <div className="error-message">{error}</div>}
+            {error && (!ingestProgress || !showLog) && <div className="error-message">{error}</div>}
           </>
+          )
         )}
 
+        {/* Ingest Status Section (Overall Progress) */}
         {ingestProgress && showProgress && (
           <div className="ingest-progress-container">
-            <h3>Ingest Progress</h3>
+            <h3>Ingest Status</h3>
             <div className="progress-bar-container">
               <div className="progress-bar-background">
-                <div 
+                <div
                   className={`progress-bar-fill ${ingestProgress?.status === 'failed' ? 'failed' : ''}`}
                   style={{ width: `${ingestProgress?.progress || 0}%` }}
                 />
@@ -263,59 +322,6 @@ const IngestPanel: React.FC = () => {
             {ingestProgress?.current_file && (
               <div className="current-file">
                 <p><strong>Current file:</strong> {ingestProgress.current_file}</p>
-              </div>
-            )}
-            
-            {ingestProgress?.processed_files && ingestProgress.processed_files.length > 0 && (
-              <div className="processed-files">
-                <h4>Processed Files ({ingestProgress.processed_files.length})</h4>
-                <div className="file-list">
-                  <div className="file-list-inner">
-                    {ingestProgress.processed_files.slice(-10).map((file, index) => (
-                      <div key={index} className="file-item">
-                        <span className="file-name">{file.file_name || file.path || 'Unknown file'}</span>
-                        <div className="file-status-container">
-                          <span className={`file-status ${file.status}`}>
-                            {file.status === 'skipped'
-                              ? 'Already in library'
-                              : file.status === 'failed'
-                                ? 'Failed'
-                                : file.status === 'completed'
-                                  ? 'Completed'
-                                  : file.status.charAt(0).toUpperCase() + file.status.slice(1)}
-                          </span>
-                          {file.status === 'failed' && file.error && (
-                            <span className="file-error">{file.error}</span>
-                          )}
-                          {file.status === 'skipped' && file.error && (
-                            <span className="file-skipped-reason">{file.error}</span>
-                          )}
-                          {file.status === 'processing' && file.current_step && (
-                            <span className="file-step">{file.current_step}</span>
-                          )}
-                          
-                          {/* Individual file progress bar */}
-                          {file.progress_percentage !== undefined && (
-                            <div className="file-progress">
-                              <div className="file-progress-bar-background">
-                                <div 
-                                  className={`file-progress-bar-fill ${file.status === 'failed' ? 'failed' : ''}`}
-                                  style={{ width: `${file.progress_percentage}%` }}
-                                />
-                              </div>
-                              <span className="file-progress-percentage">{file.progress_percentage}%</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  {ingestProgress.processed_files.length > 10 && (
-                    <div className="more-files">
-                      ...and {ingestProgress.processed_files.length - 10} more files
-                    </div>
-                  )}
-                </div>
               </div>
             )}
             
@@ -336,11 +342,87 @@ const IngestPanel: React.FC = () => {
                 </div>
               )}
             </div>
-            
-            {ingestProgress?.status === 'failed' && (
-              <button onClick={() => setShowProgress(false)} className="dismiss-btn">
-                Dismiss
+            {/* Removed old dismiss button */}
+          </div>
+        )}
+
+        {/* Persistent Log Section */}
+        {ingestProgress && showLog && (
+          <div className="ingest-log-container">
+            <div className="log-header">
+              <h3>Ingest Log</h3>
+              <button onClick={clearLog} className="clear-log-btn">
+                Clear Log
               </button>
+            </div>
+            
+            {ingestProgress?.processed_files && ingestProgress.processed_files.length > 0 ? (
+              <div className="processed-files-log">
+                <div className="file-list-inner scrollable-log"> {/* Ensure .scrollable-log is styled for scrolling */}
+                  {ingestProgress.processed_files.map((file, index) => (
+                    <div key={index} className="file-item">
+                      <span className="file-name">{file.file_name || file.path || 'Unknown file'}</span>
+                      <div className="file-status-container">
+                        <span className={`file-status ${file.status}`}>
+                          {file.status === 'skipped'
+                            ? 'Already in library'
+                            : file.status === 'failed'
+                              ? 'Failed'
+                              : file.status === 'completed'
+                                ? 'Completed'
+                                : file.status.charAt(0).toUpperCase() + file.status.slice(1)}
+                        </span>
+                        {file.status === 'failed' && file.error && (
+                          <span className="file-error" title={file.error}>{file.error}</span>
+                        )}
+                        {file.status === 'skipped' && file.error && (
+                          <span className="file-skipped-reason" title={file.error}>{file.error}</span>
+                        )}
+                        {file.status === 'processing' && file.current_step && (
+                          <span className="file-step">{file.current_step}</span>
+                        )}
+                        
+                        {/* Display compression details if available and step is video_compression */}
+                        {file.status === 'processing' && file.current_step === 'video_compression' && (
+                          <div className="compression-details">
+                            {file.compression_current_rate !== undefined && (
+                              <span className="compression-rate">Rate: {file.compression_current_rate.toFixed(2)} FPS</span>
+                            )}
+                            {file.compression_speed && (
+                              <span className="compression-speed">Speed: {file.compression_speed}</span>
+                            )}
+                            {file.compression_etr_seconds !== undefined && (
+                              <span className="compression-etr">ETR: {formatETR(file.compression_etr_seconds)}</span>
+                            )}
+                            {file.compression_processed_frames !== undefined && file.compression_total_frames !== undefined && (
+                                <span className="compression-frames">
+                                    Frames: {file.compression_processed_frames} / {file.compression_total_frames}
+                                </span>
+                            )}
+                          </div>
+                        )}
+                        {file.compression_error_detail && (
+                            <span className="file-error" title={file.compression_error_detail}>Compression Error: {file.compression_error_detail}</span>
+                        )}
+
+                        {file.progress_percentage !== undefined && (
+                          <div className="file-progress">
+                            <div className="file-progress-bar-background">
+                              <div
+                                className={`file-progress-bar-fill ${file.status === 'failed' ? 'failed' : ''}`}
+                                style={{ width: `${file.progress_percentage}%` }}
+                              />
+                            </div>
+                            <span className="file-progress-percentage">{file.progress_percentage}%</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="empty-log-message">Log is empty. Start an ingest to see progress.</p>
             )}
           </div>
         )}

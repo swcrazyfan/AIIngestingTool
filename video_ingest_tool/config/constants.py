@@ -17,12 +17,17 @@ FOCAL_LENGTH_RANGES = {
 DEFAULT_COMPRESSION_CONFIG = {
     'max_dimension': 854,  # Scale longest dimension to this size
     'fps': 5,
-    'video_bitrate': '1000k',
+    'video_bitrate': '1000k', # Target bitrate for hardware encoding (e.g., h264_videotoolbox)
     'audio_bitrate': '32k',
     'audio_channels': 1,
-    'use_hardware_accel': True,
-    'codec_priority': ['hevc_videotoolbox', 'h264_videotoolbox', 'libx265', 'libx264'],
-    'crf_value': '25',
+    'use_hardware_accel': True,  # Enable hardware acceleration
+    # Prioritize VideoToolbox, then software fallbacks
+    'codec_priority': ['h264_videotoolbox', 'hevc_videotoolbox', 'libx265', 'libx264'], 
+    'crf_value': '23',  # Retain for software fallback (libx264/libx265)
+    'preset': 'ultrafast',  # Retain for software fallback (libx264/libx265), may not apply to all HW encoders
+    'audio_copy': True,     # Use -c:a copy
+    # Note: The VideoCompressor class in compression.py already adds '-allow_sw 1' 
+    # for videotoolbox codecs.
 }
 
 # Check if required modules are available
@@ -37,4 +42,4 @@ try:
     import torch
     HAS_TRANSFORMERS = True
 except ImportError:
-    HAS_TRANSFORMERS = False 
+    HAS_TRANSFORMERS = False
