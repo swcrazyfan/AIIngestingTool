@@ -320,43 +320,201 @@ def test_prepare_clip_data_minimal_real_input():
     assert searchable is not None
     assert "video_minimal.mkv" in searchable
 
-def test_prepare_clip_data_missing_file_info_checksum():
-    """Test behavior when essential file_info.file_checksum is missing."""
-    # Create a FileInfo that is invalid (missing checksum)
-    # Note: Pydantic validation might catch this earlier if checksum is not Optional
-    # Assuming checksum can be None for this test to reach mapper's check
-    invalid_file_info = FileInfo(
-        local_path="p", file_name="f", file_checksum=None, file_size_bytes=1, # Was file_path
-        created_at=datetime.utcnow(), processed_at=datetime.utcnow()
-    )
-    # Need to provide non-optional sub-models for VideoDetails and CameraDetails
-    codec = VideoCodecDetails()
-    resolution = VideoResolution()
-    hdr = VideoHDRDetails(is_hdr=False)
-    color = VideoColorDetails(hdr=hdr)
-    exposure = VideoExposureDetails()
-    video = VideoDetails(codec=codec, resolution=resolution, color=color, exposure=exposure)
-    
-    focal = CameraFocalLength()
-    settings = CameraSettings()
-    loc = CameraLocation()
-    camera = CameraDetails(focal_length=focal, settings=settings, location=loc)
-    
-    analysis = AnalysisDetails()
+# Removed test_prepare_clip_data_missing_file_info_checksum because Pydantic model validation
+# for FileInfo.file_checksum (being a non-optional str) prevents this state from reaching the mapper.
 
-    vio_no_checksum = VideoIngestOutput(
+def test_prepare_clip_data_various_none_fields(
+    sample_file_info_model: FileInfo,
+    sample_video_details_model: VideoDetails, # Keep some core parts
+    sample_embeddings: Dict[str, List[float]]
+):
+    """Test mapper when many optional fields or sub-objects are None."""
+    # Create a VideoIngestOutput with many fields set to None or empty
+    vio_with_nones = VideoIngestOutput(
         id=str(uuid.uuid4()),
-        file_info=invalid_file_info,
-        video=video,
-        camera=camera,
-        analysis=analysis
+        file_info=sample_file_info_model, # Essential
+        video=sample_video_details_model,   # Essential
+        audio_tracks=[], # Empty list
+        subtitle_tracks=[], # Empty list
+        camera=CameraDetails( # CameraDetails itself is not optional, but its fields are
+            make=None, model=None, lens_model=None,
+            focal_length=CameraFocalLength(value_mm=None, category=None, source=None),
+            settings=CameraSettings(iso=None, shutter_speed=None, f_stop=None),
+            location=CameraLocation(gps_latitude=None, gps_longitude=None)
+        ),
+        thumbnails=[], # Empty list
+        analysis=AnalysisDetails( # AnalysisDetails itself is not optional
+            content_tags=[],
+            content_summary=None,
+            ai_analysis=ComprehensiveAIAnalysis( # ai_analysis is optional within AnalysisDetails
+                summary=AIAnalysisSummary(overall=None, content_category=None, key_activities=[]),
+                visual_analysis=VisualAnalysis(
+                    shot_types=[],
+                    technical_quality=TechnicalQuality(overall_focus_quality=None, stability_assessment=None, usability_rating=None), # Sub-fields are optional
+                    keyframe_analysis=KeyframeAnalysis(recommended_keyframes=[]) # recommended_keyframes is not Optional
+                ),
+                audio_analysis=AudioAnalysis(
+                    transcript=Transcript(full_text=None, segments=[]), # segments is not Optional
+                    speaker_analysis=SpeakerAnalysis(speaker_count=0, speakers=[]), # speakers is not Optional
+                    sound_events=[], # sound_events is not Optional
+                    audio_quality=AudioQuality(clarity=None, background_noise_level=None, dialogue_intelligibility=None)
+                ),
+                content_analysis=ContentAnalysis( # content_analysis is Optional
+                    entities=Entities(people_count=0, people_details=[], locations=[], objects_of_interest=[]), # sub-fields not Optional
+                    activity_summary=[], # not Optional
+                    content_warnings=[] # not Optional
+                )
+            )
+        )
     )
-    prepared_data = prepare_clip_data_for_db(vio_no_checksum, {}, None) # Pass None for ai_thumb_meta
-    assert prepared_data is None
+
+    prepared_data = prepare_clip_data_for_db(vio_with_nones, sample_embeddings, None) # No AI thumbs
+
+    assert prepared_data is not None
+    assert prepared_data["id"] == vio_with_nones.id
+    assert prepared_data["local_path"] == vio_with_nones.file_info.local_path
+
+    # Check fields that should be None or default
+    assert prepared_data["camera_make"] is None
+    assert prepared_data["camera_model"] is None
+    loaded_camera_details = json.loads(prepared_data["camera_details"])
+    assert loaded_camera_details["make"] is None
+    assert loaded_camera_details["focal_length"]["value_mm"] is None
+
+
+    assert prepared_data["content_category"] is None
+    assert prepared_data["content_summary"] is None # From AnalysisDetails.content_summary
+    assert prepared_data["content_tags"] == [] # Empty list
+
+    assert prepared_data["full_transcript"] is None
+    assert prepared_data["transcript_preview"] is None
+    assert json.loads(prepared_data["transcript_segments_json"]) == []
+
+    assert prepared_data["thumbnails"] == []
+    assert prepared_data["primary_thumbnail_path"] is None
+    assert prepared_data["ai_selected_thumbnails_json"] is None # No AI metadata passed
+    
+    loaded_full_ai_json = json.loads(prepared_data["full_ai_analysis_json"])
+    assert loaded_full_ai_json["summary"]["overall"] is None
+    assert loaded_full_ai_json["visual_analysis"]["shot_types"] == []
+
+    assert prepared_data["audio_tracks"] == "[]" # Expect JSON string for empty list
+    assert json.loads(prepared_data["audio_tracks"]) == []
+    assert prepared_data["subtitle_tracks"] == "[]" # Expect JSON string for empty list
+    assert json.loads(prepared_data["subtitle_tracks"]) == []
+
+    # Embeddings should still be there
+    assert prepared_data["summary_embedding"] == sample_embeddings["summary_embedding"]
+
+def test_generate_searchable_content_minimal_vio():
+    """Test _generate_searchable_content with a VIO having minimal data (e.g. no AI analysis)."""
+    minimal_file_info = FileInfo(local_path="minimal.mp4", file_name="minimal.mp4", file_checksum="min", file_size_bytes=1)
+    minimal_vio = VideoIngestOutput(
+        id=str(uuid.uuid4()),
+        file_info=minimal_file_info,
+        video=VideoDetails(
+            codec=VideoCodecDetails(),
+            resolution=VideoResolution(),
+            color=VideoColorDetails(hdr=VideoHDRDetails(is_hdr=False)),
+            exposure=VideoExposureDetails()
+        ),
+        camera=CameraDetails(
+            focal_length=CameraFocalLength(),
+            settings=CameraSettings(),
+            location=CameraLocation()
+        ),
+        analysis=AnalysisDetails(content_summary="Minimal summary.", content_tags=["minimal_tag"], ai_analysis=None) # No AI analysis
+    )
+    content = _generate_searchable_content(minimal_vio)
+    assert content is not None
+    assert "minimal.mp4" in content
+    assert "Minimal summary." in content
+    assert "minimal_tag" in content
+
+def test_generate_searchable_content_no_text_fields():
+    """Test _generate_searchable_content when all relevant text fields in VIO are None or empty."""
+    no_text_file_info = FileInfo(local_path="no_text.mp4", file_name="", file_checksum="notext", file_size_bytes=1) # Changed file_name=None to file_name=""
+    no_text_vio = VideoIngestOutput(
+        id=str(uuid.uuid4()),
+        file_info=no_text_file_info,
+        video=VideoDetails(codec=VideoCodecDetails(), resolution=VideoResolution(), color=VideoColorDetails(hdr=VideoHDRDetails(is_hdr=False)), exposure=VideoExposureDetails()),
+        camera=CameraDetails(focal_length=CameraFocalLength(), settings=CameraSettings(), location=CameraLocation()),
+        analysis=AnalysisDetails(
+            content_summary=None,
+            content_tags=[],
+            ai_analysis=ComprehensiveAIAnalysis( # AI analysis exists but its text fields are None/empty
+                summary=AIAnalysisSummary(overall=None, content_category=None, key_activities=[]),
+                audio_analysis=AudioAnalysis(transcript=Transcript(full_text=None))
+                # Other AI parts can be default
+            )
+        )
+    )
+    content = _generate_searchable_content(no_text_vio)
+    assert content is None
+
+def test_json_field_structures_and_defaults(
+    sample_file_info_model: FileInfo, # Use a basic FileInfo
+    sample_embeddings: Dict[str, List[float]] # For completeness of prepare_clip_data_for_db call
+):
+    """Test the structure of serialized JSON fields, especially when parts of AI analysis are missing."""
+    # Create VIO with missing AI analysis components
+    vio_partial_ai = VideoIngestOutput(
+        id=str(uuid.uuid4()),
+        file_info=sample_file_info_model,
+        video=VideoDetails( # Simplified VideoDetails
+            codec=VideoCodecDetails(name="h264"),
+            resolution=VideoResolution(width=1280, height=720),
+            color=VideoColorDetails(hdr=VideoHDRDetails(is_hdr=False)),
+            exposure=VideoExposureDetails()
+        ),
+        camera=CameraDetails( # Simplified CameraDetails
+            make="PartialCam",
+            focal_length=CameraFocalLength(),
+            settings=CameraSettings(),
+            location=CameraLocation()
+        ),
+        analysis=AnalysisDetails(
+            content_summary="Partial AI summary.",
+            ai_analysis=ComprehensiveAIAnalysis( # AI object exists
+                summary=AIAnalysisSummary(overall="Overall from partial AI.", content_category="Partial Cat"),
+                visual_analysis=None, # Visual analysis is missing
+                audio_analysis=AudioAnalysis(transcript=None), # Audio analysis exists, but no transcript
+                content_analysis=None # Content analysis missing
+            )
+        ),
+        audio_tracks=[],
+        subtitle_tracks=[],
+        thumbnails=[]
+    )
+
+    prepared_data = prepare_clip_data_for_db(vio_partial_ai, sample_embeddings, None)
+    assert prepared_data is not None
+
+    # CameraDetails (should still serialize fine even if some internal fields are default/None)
+    cam_details = json.loads(prepared_data["camera_details"])
+    assert cam_details["make"] == "PartialCam"
+    assert cam_details["focal_length"]["value_mm"] is None # Default from empty CameraFocalLength
+
+    # TechnicalMetadata (VideoCodecDetails)
+    tech_meta = json.loads(prepared_data["technical_metadata"])
+    assert tech_meta["name"] == "h264"
+
+    # TranscriptSegments should be None as transcript was None
+    assert prepared_data["transcript_segments_json"] is None
+    assert prepared_data["full_transcript"] is None
+    assert prepared_data["transcript_preview"] is None
+
+
+    # AI Selected Thumbnails (None because ai_selected_thumbnail_metadata was None)
+    assert prepared_data["ai_selected_thumbnails_json"] is None
+    assert prepared_data["primary_thumbnail_path"] is None
+
+    # Full AI Analysis (should serialize what's there, with None for missing parts)
+    full_ai = json.loads(prepared_data["full_ai_analysis_json"])
+    assert full_ai["summary"]["overall"] == "Overall from partial AI."
+    assert full_ai["visual_analysis"] is None # Was set to None
+    assert full_ai["audio_analysis"]["transcript"] is None # Was set to None
+    assert full_ai["content_analysis"] is None # Was set to None
 
 # Further tests to consider:
-# - Behavior when VideoIngestOutput itself is None or not the right type.
-# - More granular tests for JSON serialization of each complex field.
-# - Tests for how different optional fields within nested models affect the output.
-# - Test for the `local_path` warning when it's not available on FileInfo.
-# - Test for `primary_thumbnail_path` derivation once its logic is finalized.
+# - Behavior when VideoIngestOutput itself is None or not the right type (e.g. passed to mapper).

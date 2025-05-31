@@ -170,8 +170,8 @@ def prepare_clip_data_for_db(
                 # Populate transcript_preview with full_text if no other source
                 data["transcript_preview"] = tr.full_text
                 
-                if tr.segments:
-                    data["transcript_segments_json"] = json.dumps([s.model_dump() for s in tr.segments])
+                if tr.segments is not None: # Check for None explicitly
+                    data["transcript_segments_json"] = json.dumps([s.model_dump() for s in tr.segments]) # Handles empty list to "[]"
                 else:
                     data["transcript_segments_json"] = None
             
@@ -218,8 +218,15 @@ def prepare_clip_data_for_db(
 
 
         # Top-level audio_tracks and subtitle_tracks from VideoIngestOutput
-        data["audio_tracks"] = json.dumps([track.model_dump() for track in video_output.audio_tracks]) if video_output.audio_tracks else None
-        data["subtitle_tracks"] = json.dumps([track.model_dump() for track in video_output.subtitle_tracks]) if video_output.subtitle_tracks else None
+        if video_output.audio_tracks is not None:
+            data["audio_tracks"] = json.dumps([track.model_dump() for track in video_output.audio_tracks])
+        else:
+            data["audio_tracks"] = None
+        
+        if video_output.subtitle_tracks is not None:
+            data["subtitle_tracks"] = json.dumps([track.model_dump() for track in video_output.subtitle_tracks])
+        else:
+            data["subtitle_tracks"] = None
 
         # Thumbnails (List[str] from VideoIngestOutput.thumbnails)
         data["thumbnails"] = video_output.thumbnails # This is already List[str]

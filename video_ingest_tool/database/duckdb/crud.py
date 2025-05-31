@@ -24,89 +24,94 @@ def upsert_clip_data(
         The clip_id (UUID string) of the inserted or updated record, or None on failure.
     """
     checksum = clip_data.get("file_checksum")
-    clip_id = clip_data.get("id")
+    # The 'id' from clip_data is used for the INSERT part.
+    # If a conflict occurs, the existing row's 'id' is preserved.
+    provided_id = clip_data.get("id")
 
     if not checksum:
-        logger.error("File checksum is missing in clip_data.")
+        logger.error("File checksum is missing in clip_data for upsert.")
         return None
-    if not clip_id: # ID must be provided, either new or existing for upsert logic
-        logger.error("Clip ID is missing in clip_data.")
+    if not provided_id:
+        logger.error("Clip ID is missing in clip_data for upsert.")
         return None
         
-    logger.info(f"Attempting to upsert clip with checksum: {checksum}, ID: {clip_id}")
-
-    # Filter out any keys not part of the actual table schema if necessary,
-    # or assume clip_data is perfectly formed. For now, assume it's well-formed.
-
-    existing_clip_id = None
-    try:
-        # Check if clip exists by checksum to decide on ID for update
-        # This logic might be simplified if the caller guarantees the ID is correct for existing records.
-        # For a true upsert based on checksum, we might fetch existing ID first.
-        res = conn.execute("SELECT id FROM app_data.clips WHERE file_checksum = ?", [checksum]).fetchone()
-        if res:
-            existing_clip_id = str(res[0])
-            logger.info(f"Found existing clip ID {existing_clip_id} for checksum {checksum}.")
-            # If an existing clip is found by checksum, its ID should be used for the update.
-            # The caller should ideally handle this by providing the correct ID in clip_data.
-            # If clip_data['id'] is different, it implies an issue or a specific update strategy.
-            if str(clip_id) != existing_clip_id:
-                logger.warning(f"Provided clip_id {clip_id} differs from existing_clip_id {existing_clip_id} for checksum {checksum}. Using provided ID for upsert.")
-                # This could be an update of a record that previously had a different ID but same checksum (data integrity issue)
-                # Or it's an attempt to change the ID, which is usually not done for PKs.
-                # For simplicity, we'll proceed with the ID given in clip_data for the operation.
-                # A stricter approach might raise an error or force usage of existing_clip_id.
-    except Exception as e:
-        logger.error(f"Error checking for existing clip by checksum {checksum}: {e}", exc_info=True)
-        return None
-
+    logger.info(f"Attempting to upsert clip with checksum: {checksum}, provided ID for insert: {provided_id}")
 
     try:
-        with conn.cursor() as cur:
-            # If existing_clip_id was found and matches clip_data['id'], it's an update.
-            # If no existing_clip_id, or if IDs don't match but we proceed with clip_data['id'],
-            # it could be an insert or an update on a specific ID.
-            # A common upsert pattern is INSERT ... ON CONFLICT (column) DO UPDATE SET ...
-            # DuckDB supports this: INSERT INTO tbl VALUES (1, 'foo') ON CONFLICT (col1) DO UPDATE SET col2 = excluded.col2;
-            # We'll use file_checksum as the conflict target.
-            
-            # Ensure 'updated_at' is set
-            clip_data_final = clip_data.copy() # Avoid modifying the input dict
-            clip_data_final['updated_at'] = duckdb.query("SELECT now()").fetchone()[0]
-            
-            # Remove 'id' from update set if it's the conflict target or PK
-            # For ON CONFLICT (file_checksum), 'id' can be in the insert part.
-            
-            columns = ", ".join([f'"{k}"' for k in clip_data_final.keys()]) # Quote column names
-            placeholders = ", ".join(["?" for _ in clip_data_final])
-            
-            update_set_clauses = []
-            for key in clip_data_final.keys():
-                if key not in ['id', 'file_checksum']: # Don't update PK or conflict key itself
-                    update_set_clauses.append(f'"{key}" = excluded."{key}"')
-            update_clause_str = ", ".join(update_set_clauses)
+        # Ensure 'updated_at' is set for every operation (insert or update)
+        # 'created_at' should be in clip_data from the mapper for new inserts
+        # and should NOT be updated if the record already exists.
+        clip_data_final = clip_data.copy() # Avoid modifying the input dict
+        
+        # DuckDB's now() is suitable. Using conn.execute for consistency if transactions are used.
+        current_timestamp_res = conn.execute("SELECT now()").fetchone()
+        if not current_timestamp_res:
+            logger.error("Failed to fetch current timestamp from DuckDB.")
+            return None
+        current_timestamp_for_updated_at = current_timestamp_res[0] # Use this only for updated_at
+        clip_data_final['updated_at'] = current_timestamp_for_updated_at
 
-            # Using file_checksum for conflict resolution
-            sql_upsert = f"""
-            INSERT INTO app_data.clips ({columns}) VALUES ({placeholders})
-            ON CONFLICT (file_checksum) DO UPDATE SET {update_clause_str}
-            """
-            
-            # The values must be in the same order as `columns`
-            values = [clip_data_final[k] for k in clip_data_final.keys()]
-            
-            cur.execute(sql_upsert, values)
-            
-            # To get the ID of the upserted row, especially if it was an insert where ID was generated
-            # or if we want to confirm the ID. If ID is always provided, this is simpler.
-            # If ID is part of clip_data_final and is the PK, it's the ID.
-            upserted_id = str(clip_data_final['id']) 
-            
-            logger.info(f"Successfully upserted clip data for ID: {upserted_id} (checksum: {checksum})")
+        # If 'created_at' is not in clip_data or is None, set it using Python's UTC now.
+        # The mapper should generally provide a UTC datetime for created_at.
+        if 'created_at' not in clip_data_final or clip_data_final['created_at'] is None:
+            # Import datetime and timezone if not already imported at the top of the file
+            from datetime import datetime, timezone
+            clip_data_final['created_at'] = datetime.now(timezone.utc)
+            logger.info(f"Setting 'created_at' to Python's utcnow for checksum {checksum} as it was not provided or was None.")
+
+        columns = []
+        values = []
+        # Ensure consistent order for columns and values
+        # Sort keys to ensure consistent order for columns and values, important for prepared statements
+        # However, for DuckDB's Python client, named parameters or direct dicts are often better.
+        # Here, we construct based on dict keys, so order from clip_data_final.keys() is used.
+        # It's generally safer if clip_data_final is an OrderedDict or keys are explicitly ordered.
+        # For now, relying on Python 3.7+ dict insertion order preservation.
+        
+        # Explicitly define the order of columns to match the table schema for robustness
+        # This list should match the one in mappers.py `clip_table_columns`
+        # or be dynamically fetched, but for now, let's assume mapper provides all necessary valid keys.
+        
+        # Prepare columns and placeholders
+        # Filter out keys that might not be columns or handle them appropriately
+        # For now, assume clip_data_final contains only valid column keys
+        column_names = list(clip_data_final.keys())
+        columns_sql = ", ".join([f'"{k}"' for k in column_names])
+        placeholders_sql = ", ".join(["?" for _ in column_names])
+        
+        # Prepare values in the same order as column_names
+        param_values = [clip_data_final[k] for k in column_names]
+
+        # Construct the SET clause for the UPDATE part
+        # Exclude 'id', 'file_checksum', and 'created_at' from being updated
+        update_set_clauses = []
+        for key in column_names:
+            if key not in ['id', 'file_checksum', 'created_at']:
+                update_set_clauses.append(f'"{key}" = excluded."{key}"')
+        update_clause_sql = ", ".join(update_set_clauses)
+
+        if not update_clause_sql: # Should not happen if there are updatable fields
+            logger.error(f"No fields available for update for checksum {checksum}. This is unexpected.")
+            return None
+
+        sql_upsert = f"""
+        INSERT INTO app_data.clips ({columns_sql}) VALUES ({placeholders_sql})
+        ON CONFLICT (file_checksum) DO UPDATE SET {update_clause_sql}
+        RETURNING id
+        """
+        
+        result = conn.execute(sql_upsert, param_values).fetchone()
+        
+        if result and result[0]:
+            upserted_id = str(result[0])
+            logger.info(f"Successfully upserted clip data. Resulting ID: {upserted_id} (checksum: {checksum})")
             return upserted_id
+        else:
+            logger.error(f"Upsert operation did not return an ID for checksum {checksum}.")
+            return None
             
     except Exception as e:
-        logger.error(f"Error during upsert_clip_data for checksum {checksum}, ID {clip_id}: {e}", exc_info=True)
+        logger.error(f"Error during upsert_clip_data for checksum {checksum}, provided ID {provided_id}: {e}", exc_info=True)
         return None
 
 def get_clip_details(clip_id: str, conn: duckdb.DuckDBPyConnection) -> Optional[Dict[str, Any]]:
@@ -161,9 +166,25 @@ def delete_clip_by_id(clip_id: str, conn: duckdb.DuckDBPyConnection) -> bool:
     """Deletes a clip by its ID."""
     logger.info(f"Attempting to delete clip ID: {clip_id}")
     try:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM app_data.clips WHERE id = ?", [clip_id])
-            return cur.rowcount > 0 # Returns True if a row was deleted
+        # Import uuid module if not already imported at the top
+        import uuid
+        try:
+            uuid_obj = uuid.UUID(clip_id)
+        except ValueError:
+            logger.error(f"Invalid UUID string provided for deletion: {clip_id}")
+            return False
+
+        # Try passing clip_id as string, relying on DuckDB's coercion for UUID comparison.
+        # Use RETURNING id to confirm if a row was actually deleted.
+        result = conn.execute("DELETE FROM app_data.clips WHERE id = ? RETURNING id", [clip_id]).fetchone()
+        
+        if result and result[0]:
+            logger.info(f"Successfully deleted clip ID: {clip_id}, returned ID: {result[0]}")
+            return True # A row was deleted
+        else:
+            logger.warning(f"No row found to delete for clip ID: {clip_id} (or DELETE did not return ID).")
+            # This will also catch cases where conn.rowcount might have been misleading.
+            return False
     except Exception as e:
         logger.error(f"Error deleting clip ID {clip_id}: {e}", exc_info=True)
         return False

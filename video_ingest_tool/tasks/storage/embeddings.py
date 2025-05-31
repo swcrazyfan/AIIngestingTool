@@ -11,122 +11,112 @@ from prefect import task
 @task
 def generate_embeddings_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
-    Generate and store vector embeddings for semantic search.
+    Generate vector embeddings for semantic search (summary, keyword, images) and return them.
+    This version does not store embeddings directly but returns them for later processing.
     
     Args:
-        data: Pipeline data containing the output model, clip_id, and ai_thumbnail_metadata
+        data: Pipeline data containing the 'model' (VideoIngestOutput)
+              and 'ai_thumbnail_metadata'.
         logger: Optional logger
         
     Returns:
-        Dict with embedding generation results
+        A dictionary containing the generated embeddings:
+        {
+            'summary_embedding': Optional[List[float]],
+            'keyword_embedding': Optional[List[float]],
+            'image_embeddings': Dict[str, List[float]], # thumbnail_path: embedding
+            'metadata': Dict[str, Any] # Token counts, truncation info for summary/keyword
+        }
+        or an error structure if failed.
     """
-    from ...auth import AuthManager
-    from ...embeddings import prepare_embedding_content, generate_embeddings, store_embeddings
-    from ...embeddings_image import batch_generate_thumbnail_embeddings, generate_thumbnail_embedding
+    from ...embeddings import prepare_embedding_content, generate_embeddings
+    from ...embeddings_image import batch_generate_thumbnail_embeddings
     
-    # Check authentication
-    auth_manager = AuthManager()
-    if not auth_manager.get_current_session():
+    output_model = data.get('model')
+    if not output_model:
         if logger:
-            logger.warning("Skipping embedding generation - not authenticated")
-        return {
-            'embeddings_skipped': True,
-            'reason': 'not_authenticated'
-        }
-    
-    # Get clip_id from database storage results
-    clip_id = data.get('clip_id')
-    if not clip_id:
-        if logger:
-            logger.error("No clip_id found for embedding generation")
-        return {
-            'embeddings_failed': True,
-            'reason': 'no_clip_id'
-        }
-    
-    # Get output model
-    output = data.get('model')
-    if not output:
-        if logger:
-            logger.error("No output model found for embedding generation")
+            logger.error("No output model (VideoIngestOutput) found for embedding generation")
         return {
             'embeddings_failed': True,
             'reason': 'no_output_model'
         }
+        
+    ai_thumbnail_metadata = data.get('ai_thumbnail_metadata', [])
+    
+    embeddings_results = {
+        'summary_embedding': None,
+        'keyword_embedding': None,
+        'image_embeddings': {},
+        'metadata': {}
+    }
     
     try:
-        # Prepare embedding content using the existing function
-        summary_content, keyword_content, metadata = prepare_embedding_content(output)
+        # 1. Prepare text content for summary and keyword embeddings
+        summary_content, keyword_content, prep_metadata = prepare_embedding_content(output_model)
+        embeddings_results['metadata'].update(prep_metadata) # prep_metadata contains token counts and truncation for summary/keyword
         
         if logger:
-            logger.info(f"Prepared embedding content - Summary: {metadata['summary_tokens']} tokens, Keywords: {metadata['keyword_tokens']} tokens")
+            logger.info(
+                f"Prepared embedding content - Summary: {prep_metadata.get('summary_tokens')} tokens, "
+                f"Keywords: {prep_metadata.get('keyword_tokens')} tokens"
+            )
+
+        # 2. Generate summary and keyword embeddings
+        # Ensure content is not empty before passing to generate_embeddings,
+        # as the reverted generate_embeddings expects non-optional strings.
+        s_emb, k_emb = None, None
+        if summary_content and keyword_content:
+            s_emb, k_emb = generate_embeddings(
+                summary_content,
+                keyword_content,
+                logger=logger
+            )
+        elif summary_content: # Only summary content available
+             s_emb, _ = generate_embeddings(summary_content, "", logger=logger) # Pass empty string for keyword
+             if logger: logger.warning("Keyword content was empty, generated keyword embedding from empty string.")
+        elif keyword_content: # Only keyword content available
+             _, k_emb = generate_embeddings("", keyword_content, logger=logger) # Pass empty string for summary
+             if logger: logger.warning("Summary content was empty, generated summary embedding from empty string.")
+        else:
+            if logger:
+                logger.warning("Both summary and keyword content are empty. Skipping text embedding generation.")
+
+        embeddings_results['summary_embedding'] = s_emb
+        embeddings_results['keyword_embedding'] = k_emb
         
-        # Generate embeddings
-        summary_embedding, keyword_embedding = generate_embeddings(
-            summary_content, keyword_content, logger
-        )
-        
-        # Process AI thumbnail embeddings if available
-        ai_thumbnail_metadata = data.get('ai_thumbnail_metadata', [])
-        thumbnail_embeddings = {}
-        thumbnail_descriptions = {}
-        thumbnail_reasons = {}
-        
+        # 3. Generate AI thumbnail/image embeddings
+        # batch_generate_thumbnail_embeddings returns Dict[str, List[float]]
+        # where key is thumbnail_path
         if ai_thumbnail_metadata:
             if logger:
                 logger.info(f"Processing embeddings for {len(ai_thumbnail_metadata)} AI thumbnails")
-                
-            # Generate embeddings for all thumbnails
-            thumbnail_embeddings = batch_generate_thumbnail_embeddings(
-                ai_thumbnail_metadata,
+            
+            image_embeddings_dict = batch_generate_thumbnail_embeddings(
+                ai_thumbnail_metadata, # expects list of dicts with 'thumbnail_path'
                 logger=logger
             )
-            
-            # Extract descriptions and reasons
-            for thumbnail in ai_thumbnail_metadata:
-                rank = thumbnail.get('rank')
-                description = thumbnail.get('description')
-                reason = thumbnail.get('reason')
-                
-                if rank and description:
-                    thumbnail_descriptions[rank] = description
-                
-                if rank and reason:
-                    thumbnail_reasons[rank] = reason
-        
-        # Store embeddings in database
-        original_content = f"Summary: {summary_content}\nKeywords: {keyword_content}"
-        store_embeddings(
-            clip_id=clip_id,
-            summary_embedding=summary_embedding,
-            keyword_embedding=keyword_embedding,
-            summary_content=summary_content,
-            original_content=original_content,
-            metadata=metadata,
-            thumbnail_embeddings=thumbnail_embeddings,
-            thumbnail_descriptions=thumbnail_descriptions,
-            thumbnail_reasons=thumbnail_reasons,
-            logger=logger
-        )
-        
+            embeddings_results['image_embeddings'] = image_embeddings_dict
+            embeddings_results['metadata']['thumbnail_embeddings_count'] = len(image_embeddings_dict)
+            if logger:
+                logger.info(f"Generated embeddings for {len(image_embeddings_dict)} AI thumbnails")
+        else:
+            embeddings_results['metadata']['thumbnail_embeddings_count'] = 0
+            if logger:
+                logger.info("No AI thumbnail metadata provided for embedding generation.")
+
         if logger:
-            logger.info(f"Successfully generated and stored embeddings for clip: {clip_id}")
-            if thumbnail_embeddings:
-                logger.info(f"Generated and stored embeddings for {len(thumbnail_embeddings)} AI thumbnails")
+            logger.info("Successfully generated requested embeddings (summary, keyword, images).")
         
         return {
             'embeddings_generated': True,
-            'clip_id': clip_id,
-            'summary_tokens': metadata['summary_tokens'],
-            'keyword_tokens': metadata['keyword_tokens'],
-            'thumbnail_embeddings_count': len(thumbnail_embeddings),
-            'truncation_applied': metadata['summary_truncation'] != 'none' or metadata['keyword_truncation'] != 'none'
+            'data': embeddings_results
         }
         
     except Exception as e:
         if logger:
-            logger.error(f"Embedding generation failed: {str(e)}")
+            logger.error(f"Embedding generation failed: {str(e)}", exc_info=True)
         return {
             'embeddings_failed': True,
-            'error': str(e)
-        } 
+            'error': str(e),
+            'details': embeddings_results # return any partial results
+        }
