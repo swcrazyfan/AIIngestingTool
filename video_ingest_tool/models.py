@@ -33,7 +33,7 @@ class SubtitleTrack(BaseModel):
     embedded: Optional[bool] = None
 
 class FileInfo(BaseModel):
-    file_path: str
+    local_path: str # Renamed from file_path
     file_name: str
     file_checksum: str
     file_size_bytes: int
