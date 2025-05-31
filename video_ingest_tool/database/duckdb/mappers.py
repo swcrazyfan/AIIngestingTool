@@ -96,16 +96,16 @@ def _generate_searchable_content(video_output: VideoIngestOutput) -> Optional[st
 
 def prepare_clip_data_for_db(
     video_output: VideoIngestOutput,
-    embeddings: Dict[str, List[float]],
+    # embeddings: Dict[str, List[float]], # Removed: Embeddings are now in video_output.embeddings
     ai_selected_thumbnail_metadata: Optional[List[Dict[str, Any]]] = None
 ) -> Optional[Dict[str, Any]]:
     """
-    Maps data from VideoIngestOutput, embeddings, and AI selected thumbnail metadata
+    Maps data from VideoIngestOutput and AI selected thumbnail metadata
     to a dictionary suitable for insertion into the 'app_data.clips' table.
+    Embeddings are sourced from video_output.embeddings.
 
     Args:
-        video_output: The VideoIngestOutput object.
-        embeddings: A dictionary of embedding vectors.
+        video_output: The VideoIngestOutput object (which includes an .embeddings attribute).
         ai_selected_thumbnail_metadata: Optional list of dictionaries, where each dict
                                          contains metadata for an AI-selected thumbnail,
                                          including 'path' and 'rank'. This comes from
@@ -234,14 +234,14 @@ def prepare_clip_data_for_db(
         # Searchable content
         data["searchable_content"] = _generate_searchable_content(video_output)
 
-        # Embeddings
-        if embeddings:
-            data["summary_embedding"] = embeddings.get("summary_embedding")
-            data["keyword_embedding"] = embeddings.get("keyword_embedding")
-            data["thumbnail_1_embedding"] = embeddings.get("thumbnail_1_embedding")
-            data["thumbnail_2_embedding"] = embeddings.get("thumbnail_2_embedding")
-            data["thumbnail_3_embedding"] = embeddings.get("thumbnail_3_embedding")
-        else: # Ensure keys exist even if no embeddings provided
+        # Embeddings - Sourced from video_output.embeddings model
+        if video_output.embeddings:
+            data["summary_embedding"] = video_output.embeddings.summary_embedding
+            data["keyword_embedding"] = video_output.embeddings.keyword_embedding
+            data["thumbnail_1_embedding"] = video_output.embeddings.thumbnail_1_embedding
+            data["thumbnail_2_embedding"] = video_output.embeddings.thumbnail_2_embedding
+            data["thumbnail_3_embedding"] = video_output.embeddings.thumbnail_3_embedding
+        else: # Ensure keys exist even if video_output.embeddings is None
             data["summary_embedding"] = None
             data["keyword_embedding"] = None
             data["thumbnail_1_embedding"] = None

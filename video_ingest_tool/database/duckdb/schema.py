@@ -68,25 +68,33 @@ def create_clips_table(con: "duckdb.DuckDBPyConnection"):
         logger.error(f"Failed to create table '{table_name}'", error=str(e))
         raise
 
-def create_indexes(con: "duckdb.DuckDBPyConnection"):
-    """Creates FTS, HNSW, and other necessary indexes for the clips table."""
-    logger.info("Attempting to create indexes for the clips table...")
+def create_fts_index_for_clips(con: "duckdb.DuckDBPyConnection"):
+    """Creates or recreates the FTS index for the app_data.clips table."""
+    logger.info("Attempting to create/recreate FTS index for app_data.clips...")
     clips_table_fqn = f"{APP_DATA_SCHEMA}.clips"
     try:
-        # FTS Index for clips table
         # Note: 'id' is the rowid column for FTS.
         # searchable_content, file_name, content_summary, transcript_preview, content_tags are indexed.
         con.execute(f"PRAGMA create_fts_index('{clips_table_fqn}', 'id', 'searchable_content', 'file_name', 'content_summary', 'transcript_preview', 'content_tags', overwrite=1);")
-        logger.info(f"FTS index created for {clips_table_fqn}.")
+        logger.info(f"FTS index created/recreated for {clips_table_fqn}.")
+    except Exception as e:
+        logger.error(f"Failed to create FTS index for {clips_table_fqn}", error=str(e))
+        raise
 
+def create_non_fts_indexes(con: "duckdb.DuckDBPyConnection"):
+    """Creates HNSW and other non-FTS necessary indexes for the clips table."""
+    logger.info("Attempting to create non-FTS indexes for the clips table...")
+    clips_table_fqn = f"{APP_DATA_SCHEMA}.clips"
+    try:
         # HNSW (Vector) Indexes for clips table
         vector_columns_clips = [
             "summary_embedding", "keyword_embedding",
             "thumbnail_1_embedding", "thumbnail_2_embedding", "thumbnail_3_embedding"
         ]
         for col_name in vector_columns_clips:
-            con.execute(f"CREATE INDEX IF NOT EXISTS idx_clips_{col_name.replace('_embedding','_vec')} ON {clips_table_fqn} USING HNSW ({col_name});")
-            logger.info(f"HNSW index created for {clips_table_fqn}.{col_name}.")
+            # Use cosine metric for HNSW indexes on embedding columns
+            con.execute(f"CREATE INDEX IF NOT EXISTS idx_clips_{col_name.replace('_embedding','_vec')} ON {clips_table_fqn} USING HNSW ({col_name}) WITH (metric = 'cosine');")
+            logger.info(f"HNSW index (cosine metric) created for {clips_table_fqn}.{col_name}.")
 
         # Standard B-Tree Indexes for clips table
         con.execute(f"CREATE INDEX IF NOT EXISTS idx_clips_file_checksum ON {clips_table_fqn} (file_checksum);")
@@ -98,8 +106,11 @@ def create_indexes(con: "duckdb.DuckDBPyConnection"):
         logger.error("Failed to create indexes for clips table", error=str(e))
         raise
 
-def initialize_schema(con: "duckdb.DuckDBPyConnection"):
-    """Initializes the full database schema: creates schemas, the clips table, and indexes."""
+def initialize_schema(con: "duckdb.DuckDBPyConnection", create_fts: bool = True):
+    """
+    Initializes the full database schema: creates schemas, the clips table,
+    and HNSW/B-Tree indexes. Optionally creates FTS index.
+    """
     logger.info("Initializing database schema...")
     logger.info("Creating core schemas and the clips table...")
     con.begin()
@@ -113,15 +124,24 @@ def initialize_schema(con: "duckdb.DuckDBPyConnection"):
         logger.error("Core schema/clips table creation failed. Rolled back changes.", error=str(e))
         raise
 
-    logger.info("Creating indexes for the clips table...")
+    logger.info("Creating non-FTS indexes for the clips table...")
     try:
-        create_indexes(con) # Indexes are typically auto-committed or in their own transactions
-        logger.info("Indexes for clips table created successfully.")
+        create_non_fts_indexes(con) # Call the renamed function for HNSW and B-Tree
+        logger.info("Non-FTS indexes for clips table created successfully.")
     except Exception as e:
-        logger.error("Index creation for clips table failed.", error=str(e))
-        # Depending on requirements, this might or might not be a critical failure.
-        # For now, re-raise as tests might expect indexes.
+        logger.error("Non-FTS index creation for clips table failed.", error=str(e))
         raise
+    
+    if create_fts:
+        logger.info("Creating FTS index for the clips table...")
+        try:
+            create_fts_index_for_clips(con)
+            logger.info("FTS index for clips table created successfully.")
+        except Exception as e:
+            logger.error("FTS index creation for clips table failed.", error=str(e))
+            # Depending on requirements, this might or might not be a critical failure.
+            # For now, re-raise as tests might expect FTS index.
+            raise
     
     logger.info("Database schema initialization successfully completed.")
 

@@ -7,7 +7,8 @@ from video_ingest_tool.database.duckdb.schema import initialize_schema, APP_DATA
 def db_connection():
     """Fixture to provide an initialized in-memory DuckDB connection for schema tests."""
     con = get_db_connection(db_path=":memory:")
-    initialize_schema(con) # Initialize the schema for each test function
+    # For schema tests, we want to ensure FTS index creation is also tested as part of initialize_schema's default behavior.
+    initialize_schema(con, create_fts=True)
     yield con
     con.close()
 

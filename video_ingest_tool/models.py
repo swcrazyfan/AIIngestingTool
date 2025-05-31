@@ -285,6 +285,15 @@ class AnalysisDetails(BaseModel):
     content_summary: Optional[str] = None
     ai_analysis: Optional[ComprehensiveAIAnalysis] = None  # New comprehensive AI analysis
 
+class Embeddings(BaseModel):
+    """Stores various embedding vectors for a clip."""
+    summary_embedding: Optional[List[float]] = None
+    keyword_embedding: Optional[List[float]] = None
+    thumbnail_1_embedding: Optional[List[float]] = None
+    thumbnail_2_embedding: Optional[List[float]] = None
+    thumbnail_3_embedding: Optional[List[float]] = None
+    # Add other potential future embeddings here, e.g., audio_embedding
+
 class VideoIngestOutput(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     file_info: FileInfo
@@ -292,5 +301,6 @@ class VideoIngestOutput(BaseModel):
     audio_tracks: List[AudioTrack] = Field(default_factory=list)
     subtitle_tracks: List[SubtitleTrack] = Field(default_factory=list)
     camera: CameraDetails
-    thumbnails: List[str] = Field(default_factory=list)
+    thumbnails: List[str] = Field(default_factory=list) # Paths to generated thumbnail images
     analysis: AnalysisDetails
+    embeddings: Optional[Embeddings] = None # Stores all generated embeddings

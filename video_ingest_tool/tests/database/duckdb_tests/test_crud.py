@@ -76,7 +76,7 @@ def db_conn():
     conn = get_db_connection(db_path=':memory:')
     try:
         conn.execute("SET TimeZone = 'UTC';") # Configure session timezone to UTC
-        initialize_schema(conn)
+        initialize_schema(conn, create_fts=True) # CRUD tests don't rely on FTS, but setup full schema.
         yield conn
     finally:
         conn.close()
