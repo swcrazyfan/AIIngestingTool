@@ -6,7 +6,11 @@ from typing import List, Dict, Any, Optional
 from unittest.mock import patch, MagicMock # For mocking
 
 from video_ingest_tool.database.duckdb.crud import upsert_clip_data
-from video_ingest_tool.database.duckdb.search_logic import fulltext_search_clips_duckdb, semantic_search_clips_duckdb
+from video_ingest_tool.database.duckdb.search_logic import (
+    fulltext_search_clips_duckdb,
+    semantic_search_clips_duckdb,
+    find_similar_clips_duckdb # Import the new function
+)
 from video_ingest_tool.database.duckdb.schema import initialize_schema
 from video_ingest_tool.database.duckdb.mappers import prepare_clip_data_for_db
 from video_ingest_tool.database.duckdb.connection import get_db_connection
@@ -29,7 +33,10 @@ def get_search_sample_vio(
     file_name_override: Optional[str] = None,
     transcript_text: Optional[str] = None,
     summary_embedding_list: Optional[List[float]] = None,
-    keyword_embedding_list: Optional[List[float]] = None
+    keyword_embedding_list: Optional[List[float]] = None,
+    thumb_1_embedding_list: Optional[List[float]] = None, # Add thumbnail embeddings
+    thumb_2_embedding_list: Optional[List[float]] = None,
+    thumb_3_embedding_list: Optional[List[float]] = None
 ) -> VideoIngestOutput:
     now = datetime.now(timezone.utc)
     file_name = file_name_override or f"{checksum_val}.mp4"
@@ -71,8 +78,11 @@ def get_search_sample_vio(
         thumbnails=[],
         embeddings=Embeddings(
             summary_embedding=summary_embedding_list,
-            keyword_embedding=keyword_embedding_list
-        ) if summary_embedding_list or keyword_embedding_list else None
+            keyword_embedding=keyword_embedding_list,
+            thumbnail_1_embedding=thumb_1_embedding_list,
+            thumbnail_2_embedding=thumb_2_embedding_list,
+            thumbnail_3_embedding=thumb_3_embedding_list
+        ) if any([summary_embedding_list, keyword_embedding_list, thumb_1_embedding_list, thumb_2_embedding_list, thumb_3_embedding_list]) else None
     )
 
 @pytest.fixture(scope="function")
@@ -89,61 +99,60 @@ def db_conn_search():
 def setup_search_data(db_conn_search: duckdb.DuckDBPyConnection, mocker: MagicMock) -> Dict[str, Any]:
     conn = db_conn_search
     inserted_data_info = {"ids": [], "embeddings_map": {}}
-    embedding_dim = 1024
+    text_embedding_dim = 1024
+    image_embedding_dim = 768 # For thumbnails
 
     # Create more distinct base vectors
-    base_vectors = {
-        "s_dogs":    [0.1, 0.11, 0.12, 0.13, 0.14],
-        "k_dogs":    [0.15, 0.16, 0.17, 0.18, 0.19],
-        "s_pasta":   [0.2, 0.21, 0.22, 0.23, 0.24],
-        "k_pasta":   [0.25, 0.26, 0.27, 0.28, 0.29], # Target for pasta_query_keyword_text
-        "s_mount":   [0.3, 0.31, 0.32, 0.33, 0.34],
-        "k_mount":   [0.35, 0.36, 0.37, 0.38, 0.39],
-        "s_duckdb":  [0.4, 0.41, 0.42, 0.43, 0.44],
-        "k_duckdb":  [0.45, 0.46, 0.47, 0.48, 0.49],
-        "s_cats":    [0.5, 0.51, 0.52, 0.53, 0.54], # Target for cats_query_summary_text
-        "k_cats":    [0.55, 0.56, 0.57, 0.58, 0.59],
-        "default":   [0.0, -0.1, 0.05, -0.05, 0.0]
+    base_vectors_text = {
+        "s_dogs":    [0.1, 0.11, 0.12, 0.13, 0.14], "k_dogs":    [0.15, 0.16, 0.17, 0.18, 0.19],
+        "s_pasta":   [0.2, 0.21, 0.22, 0.23, 0.24], "k_pasta":   [0.25, 0.26, 0.27, 0.28, 0.29],
+        "s_mount":   [0.3, 0.31, 0.32, 0.33, 0.34], "k_mount":   [0.35, 0.36, 0.37, 0.38, 0.39],
+        "s_duckdb":  [0.4, 0.41, 0.42, 0.43, 0.44], "k_duckdb":  [0.45, 0.46, 0.47, 0.48, 0.49],
+        "s_cats":    [0.5, 0.51, 0.52, 0.53, 0.54], "k_cats":    [0.55, 0.56, 0.57, 0.58, 0.59],
+        "default_text": [0.0, -0.1, 0.05, -0.05, 0.0]
+    }
+    base_vectors_image = {
+        "t1_dogs": [0.6, 0.61], "t2_dogs": [0.62, 0.63], "t3_dogs": [0.64, 0.65],
+        "t1_pasta": [0.7, 0.71], "t2_pasta": [0.72, 0.73], "t3_pasta": [0.74, 0.75],
+        "t1_mount": [0.8, 0.81], "t2_mount": [0.82, 0.83], "t3_mount": [0.84, 0.85],
+        "t1_duckdb": [0.9, 0.91], "t2_duckdb": [0.92, 0.93], "t3_duckdb": [0.94, 0.95],
+        "t1_cats": [0.01, 0.02], "t2_cats": [0.03, 0.04], "t3_cats": [0.05, 0.06],
+        "default_image": [-0.1, -0.2]
     }
 
-    # Pad vectors to embedding_dim
-    for key in base_vectors:
-        base_vec = base_vectors[key]
-        padding_value = base_vec[-1] # Pad with the last value of the distinct part
-        if len(base_vec) < embedding_dim:
-            base_vectors[key].extend([padding_value] * (embedding_dim - len(base_vec)))
-        elif len(base_vec) > embedding_dim: # Should not happen with embedding_dim=1024
-             base_vectors[key] = base_vectors[key][:embedding_dim]
-
+    # Pad vectors
+    for key, base_vec in base_vectors_text.items():
+        padding_value = base_vec[-1]
+        if len(base_vec) < text_embedding_dim:
+            base_vectors_text[key].extend([padding_value] * (text_embedding_dim - len(base_vec)))
+        elif len(base_vec) > text_embedding_dim:
+             base_vectors_text[key] = base_vectors_text[key][:text_embedding_dim]
+    
+    for key, base_vec in base_vectors_image.items():
+        padding_value = base_vec[-1]
+        if len(base_vec) < image_embedding_dim:
+            base_vectors_image[key].extend([padding_value] * (image_embedding_dim - len(base_vec)))
+        elif len(base_vec) > image_embedding_dim:
+             base_vectors_image[key] = base_vectors_image[key][:image_embedding_dim]
 
     mock_vector_map = {
-        # search_001 ("dogs")
-        "summary_for_dogs_video": base_vectors["s_dogs"],    # Target for dogs_query_summary_text
-        "keywords_for_dogs_video": base_vectors["k_dogs"],
-
-        # search_002 ("pasta")
-        "summary_for_pasta_video": base_vectors["s_pasta"],
-        "keywords_for_pasta_video": base_vectors["k_pasta"],  # Target for pasta_query_keyword_text
-
-        # search_003 ("mountains")
-        "summary_for_mountains_video": base_vectors["s_mount"],
-        "keywords_for_mountains_video": base_vectors["k_mount"],
-
-        # search_004 ("duckdb")
-        "summary_for_duckdb_video": base_vectors["s_duckdb"],
-        "keywords_for_duckdb_video": base_vectors["k_duckdb"],
-
-        # search_005 ("cats")
-        "summary_for_cats_video": base_vectors["s_cats"],     # Target for cats_query_summary_text
-        "keywords_for_cats_video": base_vectors["k_cats"],
-        
-        # Query texts mapping to target vectors for exact matches in tests
-        "pasta_query_summary_text": base_vectors["s_pasta"],   # Matches search_002 summary
-        "pasta_query_keyword_text": base_vectors["k_pasta"],   # Matches search_002 keyword
-        "dogs_query_summary_text": base_vectors["s_dogs"],    # Matches search_001 summary
-        "cats_query_summary_text": base_vectors["s_cats"],     # Matches search_005 summary
-        
-        "default_mismatched_query_text": base_vectors["default"]
+        # Text content keys
+        "summary_for_dogs_video": base_vectors_text["s_dogs"], "keywords_for_dogs_video": base_vectors_text["k_dogs"],
+        "summary_for_pasta_video": base_vectors_text["s_pasta"], "keywords_for_pasta_video": base_vectors_text["k_pasta"],
+        "summary_for_mountains_video": base_vectors_text["s_mount"], "keywords_for_mountains_video": base_vectors_text["k_mount"],
+        "summary_for_duckdb_video": base_vectors_text["s_duckdb"], "keywords_for_duckdb_video": base_vectors_text["k_duckdb"],
+        "summary_for_cats_video": base_vectors_text["s_cats"], "keywords_for_cats_video": base_vectors_text["k_cats"],
+        # Image content keys (representing thumbnail file paths or identifiers)
+        "thumb_1_dogs.jpg": base_vectors_image["t1_dogs"], "thumb_2_dogs.jpg": base_vectors_image["t2_dogs"], "thumb_3_dogs.jpg": base_vectors_image["t3_dogs"],
+        "thumb_1_pasta.jpg": base_vectors_image["t1_pasta"], "thumb_2_pasta.jpg": base_vectors_image["t2_pasta"], "thumb_3_pasta.jpg": base_vectors_image["t3_pasta"],
+        "thumb_1_mount.jpg": base_vectors_image["t1_mount"], "thumb_2_mount.jpg": base_vectors_image["t2_mount"], "thumb_3_mount.jpg": base_vectors_image["t3_mount"],
+        "thumb_1_duckdb.jpg": base_vectors_image["t1_duckdb"], "thumb_2_duckdb.jpg": base_vectors_image["t2_duckdb"], "thumb_3_duckdb.jpg": base_vectors_image["t3_duckdb"],
+        "thumb_1_cats.jpg": base_vectors_image["t1_cats"], "thumb_2_cats.jpg": base_vectors_image["t2_cats"], "thumb_3_cats.jpg": base_vectors_image["t3_cats"],
+        # Query text keys
+        "pasta_query_summary_text": base_vectors_text["s_pasta"], "pasta_query_keyword_text": base_vectors_text["k_pasta"],
+        "dogs_query_summary_text": base_vectors_text["s_dogs"], "cats_query_summary_text": base_vectors_text["s_cats"],
+        "default_mismatched_query_text": base_vectors_text["default_text"],
+        "default_mismatched_query_image": base_vectors_image["default_image"]
     }
 
     # Mock the response structure of openai.OpenAI().embeddings.create
@@ -157,37 +166,45 @@ def setup_search_data(db_conn_search: duckdb.DuckDBPyConnection, mocker: MagicMo
 
     # This side_effect function will be called by the actual generate_embeddings function
     # when client.embeddings.create is invoked.
-    def mock_openai_embeddings_create_side_effect(input, model, encoding_format="float"):
-        # 'input' here is the text content for embedding (e.g., "summary_for_dogs_video")
-        vector = mock_vector_map.get(input, mock_vector_map["default_mismatched_query_text"])
+    def mock_openai_embeddings_create_side_effect(input, model, encoding_format="float", dimensions=None):
+        # 'input' here is the text content or image identifier for embedding
+        # Determine if it's an image key by simple heuristic (e.g., ends with .jpg)
+        is_image_key = isinstance(input, str) and input.lower().endswith(('.jpg', '.png', '.jpeg'))
+        
+        if is_image_key:
+            vector = mock_vector_map.get(input, mock_vector_map["default_mismatched_query_image"])
+        else:
+            vector = mock_vector_map.get(input, mock_vector_map["default_mismatched_query_text"])
         return MockEmbeddingResponse(vector)
 
-    mock_openai_client = mocker.MagicMock(spec=openai.OpenAI) # Use spec for better mocking
+    mock_openai_client = mocker.MagicMock(spec=openai.OpenAI)
     mock_openai_client.embeddings.create.side_effect = mock_openai_embeddings_create_side_effect
     mocker.patch('video_ingest_tool.embeddings.get_embedding_client', return_value=mock_openai_client)
 
     sample_data_defs = [
-        {"id": uuid.uuid4(), "checksum": "search_001", "summary_text_key": "summary_for_dogs_video", "keyword_text_key": "keywords_for_dogs_video", "content_summary": "A video about happy dogs playing fetch.", "transcript": "The quick brown fox jumps over the lazy dog."},
-        {"id": uuid.uuid4(), "checksum": "search_002", "summary_text_key": "summary_for_pasta_video", "keyword_text_key": "keywords_for_pasta_video", "content_summary": "Cooking tutorial for delicious pasta.", "transcript": "First, boil the water. Then add salt and pasta. Dogs are not involved."},
-        {"id": uuid.uuid4(), "checksum": "search_003", "summary_text_key": "summary_for_mountains_video", "keyword_text_key": "keywords_for_mountains_video", "content_summary": "Exploring scenic mountains and happy trails.", "transcript": "The trail was long and winding, a beautiful dog accompanied us."},
-        {"id": uuid.uuid4(), "checksum": "search_004", "summary_text_key": "summary_for_duckdb_video", "keyword_text_key": "keywords_for_duckdb_video", "content_summary": "Advanced DuckDB FTS features explained.", "transcript": "Full-text search in DuckDB is powerful for text analysis."},
-        {"id": uuid.uuid4(), "checksum": "search_005", "summary_text_key": "summary_for_cats_video", "keyword_text_key": "keywords_for_cats_video", "content_summary": "A documentary about cats, not dogs.", "transcript": "Cats are independent creatures, unlike some other pets."}
+        {"id": uuid.uuid4(), "checksum": "search_001", "summary_text_key": "summary_for_dogs_video", "keyword_text_key": "keywords_for_dogs_video", "thumb_keys": ["thumb_1_dogs.jpg", "thumb_2_dogs.jpg", "thumb_3_dogs.jpg"], "content_summary": "A video about happy dogs playing fetch.", "transcript": "The quick brown fox jumps over the lazy dog."},
+        {"id": uuid.uuid4(), "checksum": "search_002", "summary_text_key": "summary_for_pasta_video", "keyword_text_key": "keywords_for_pasta_video", "thumb_keys": ["thumb_1_pasta.jpg", "thumb_2_pasta.jpg", "thumb_3_pasta.jpg"], "content_summary": "Cooking tutorial for delicious pasta.", "transcript": "First, boil the water. Then add salt and pasta. Dogs are not involved."},
+        {"id": uuid.uuid4(), "checksum": "search_003", "summary_text_key": "summary_for_mountains_video", "keyword_text_key": "keywords_for_mountains_video", "thumb_keys": ["thumb_1_mount.jpg", "thumb_2_mount.jpg", "thumb_3_mount.jpg"], "content_summary": "Exploring scenic mountains and happy trails.", "transcript": "The trail was long and winding, a beautiful dog accompanied us."},
+        {"id": uuid.uuid4(), "checksum": "search_004", "summary_text_key": "summary_for_duckdb_video", "keyword_text_key": "keywords_for_duckdb_video", "thumb_keys": ["thumb_1_duckdb.jpg", "thumb_2_duckdb.jpg", "thumb_3_duckdb.jpg"], "content_summary": "Advanced DuckDB FTS features explained.", "transcript": "Full-text search in DuckDB is powerful for text analysis."},
+        {"id": uuid.uuid4(), "checksum": "search_005", "summary_text_key": "summary_for_cats_video", "keyword_text_key": "keywords_for_cats_video", "thumb_keys": ["thumb_1_cats.jpg", "thumb_2_cats.jpg", "thumb_3_cats.jpg"], "content_summary": "A documentary about cats, not dogs.", "transcript": "Cats are independent creatures, unlike some other pets."}
     ]
 
     for data_def in sample_data_defs:
         summary_content_for_embedding = data_def["summary_text_key"]
         keyword_content_for_embedding = data_def["keyword_text_key"]
+        # For generate_embeddings, image_paths are expected. We use keys here that map to vectors.
+        image_paths_for_embedding = data_def["thumb_keys"]
 
-        # Call the actual generate_embeddings function from video_ingest_tool.embeddings
-        # This function will internally use the mocked get_embedding_client -> mocked client.embeddings.create
-        summary_emb, keyword_emb = generate_embeddings(
-            summary_content=summary_content_for_embedding, 
-            keyword_content=keyword_content_for_embedding
+
+        summary_emb, keyword_emb, thumb_1_emb, thumb_2_emb, thumb_3_emb = generate_embeddings(
+            summary_content=summary_content_for_embedding,
+            keyword_content=keyword_content_for_embedding,
+            image_paths=image_paths_for_embedding # Pass image keys
         )
         
         inserted_data_info["embeddings_map"][data_def["checksum"]] = {
-            "summary_emb": summary_emb,
-            "keyword_emb": keyword_emb
+            "summary_emb": summary_emb, "keyword_emb": keyword_emb,
+            "thumb_1_emb": thumb_1_emb, "thumb_2_emb": thumb_2_emb, "thumb_3_emb": thumb_3_emb
         }
 
         vio = get_search_sample_vio(
@@ -196,9 +213,16 @@ def setup_search_data(db_conn_search: duckdb.DuckDBPyConnection, mocker: MagicMo
             content_summary=data_def["content_summary"],
             transcript_text=data_def["transcript"],
             summary_embedding_list=summary_emb,
-            keyword_embedding_list=keyword_emb
+            keyword_embedding_list=keyword_emb,
+            thumb_1_embedding_list=thumb_1_emb,
+            thumb_2_embedding_list=thumb_2_emb,
+            thumb_3_embedding_list=thumb_3_emb
         )
         
+        # The second argument to prepare_clip_data_for_db (ai_selected_thumbnail_metadata) is Optional
+        # and not strictly needed for these search logic tests if we directly populate embeddings in VIO.
+        # For full integration, this would come from the AI thumbnail selection step.
+        # Here, we are focusing on testing search logic with pre-defined embeddings.
         prepared_data = prepare_clip_data_for_db(vio, None)
         assert prepared_data is not None, f"Failed to prepare data for {data_def['checksum']}"
         
@@ -404,3 +428,148 @@ def test_hybrid_search_fts_and_summary_semantic(db_conn_search: duckdb.DuckDBPyC
     if len(results) > 1:
         for i in range(len(results) - 1):
             assert results[i]["rrf_score"] >= results[i+1]["rrf_score"]
+
+# --- Tests for find_similar_clips_duckdb ---
+
+def test_find_similar_clips_text_mode(db_conn_search: duckdb.DuckDBPyConnection, setup_search_data: Dict[str, Any]):
+    conn = db_conn_search
+    embeddings_map = setup_search_data["embeddings_map"]
+    source_clip_checksum = "search_001" # Dogs video
+    source_clip_id = ""
+    # Find the ID for search_001
+    for vio_id_str in setup_search_data["ids"]:
+        # A bit hacky, assuming checksum is in the file_name or can be queried
+        # For a robust test, the fixture should return a map of checksum to ID
+        # Let's assume we can get it by querying the DB for now
+        res = conn.execute("SELECT id FROM app_data.clips WHERE file_checksum = ?", [source_clip_checksum]).fetchone()
+        if res:
+            source_clip_id = str(res[0])
+            break
+    assert source_clip_id, f"Could not find ID for checksum {source_clip_checksum}"
+
+
+    with patch('video_ingest_tool.database.duckdb.search_logic.semantic_search_clips_duckdb') as mock_semantic_search:
+        mock_semantic_search.return_value = [
+            {"id": uuid.uuid4(), "file_checksum": "search_003", "combined_similarity_score": 0.8}, # A mock similar item
+        ]
+        
+        results = find_similar_clips_duckdb(
+            source_clip_id=source_clip_id,
+            conn=conn,
+            mode="text",
+            match_count=1
+        )
+        
+        mock_semantic_search.assert_called_once()
+        call_args = mock_semantic_search.call_args[1]
+        
+        assert call_args['query_summary_embedding'] == embeddings_map[source_clip_checksum]["summary_emb"]
+        assert call_args['query_keyword_embedding'] == embeddings_map[source_clip_checksum]["keyword_emb"]
+        assert call_args['query_thumbnail_1_embedding'] is None
+        assert call_args['summary_weight'] > 0
+        assert call_args['keyword_weight'] > 0
+        assert call_args['thumbnail_1_weight'] == 0
+        assert call_args['match_count'] == 1 + 1 # match_count + 1 for filtering source
+
+        assert len(results) == 1
+        assert results[0]["file_checksum"] == "search_003"
+
+def test_find_similar_clips_visual_mode(db_conn_search: duckdb.DuckDBPyConnection, setup_search_data: Dict[str, Any]):
+    conn = db_conn_search
+    embeddings_map = setup_search_data["embeddings_map"]
+    source_clip_checksum = "search_002" # Pasta video
+    source_clip_id = ""
+    res = conn.execute("SELECT id FROM app_data.clips WHERE file_checksum = ?", [source_clip_checksum]).fetchone()
+    assert res is not None
+    source_clip_id = str(res[0])
+
+    with patch('video_ingest_tool.database.duckdb.search_logic.semantic_search_clips_duckdb') as mock_semantic_search:
+        mock_semantic_search.return_value = [
+             {"id": uuid.uuid4(), "file_checksum": "search_004", "combined_similarity_score": 0.75},
+        ]
+        results = find_similar_clips_duckdb(
+            source_clip_id=source_clip_id,
+            conn=conn,
+            mode="visual",
+            match_count=1
+        )
+        mock_semantic_search.assert_called_once()
+        call_args = mock_semantic_search.call_args[1]
+
+        assert call_args['query_summary_embedding'] is None
+        assert call_args['query_keyword_embedding'] is None
+        assert call_args['query_thumbnail_1_embedding'] == embeddings_map[source_clip_checksum]["thumb_1_emb"]
+        assert call_args['query_thumbnail_2_embedding'] == embeddings_map[source_clip_checksum]["thumb_2_emb"]
+        assert call_args['query_thumbnail_3_embedding'] == embeddings_map[source_clip_checksum]["thumb_3_emb"]
+        assert call_args['summary_weight'] == 0
+        assert call_args['keyword_weight'] == 0
+        assert call_args['thumbnail_1_weight'] > 0 # Assuming default visual weights are positive
+
+        assert len(results) == 1
+        assert results[0]["file_checksum"] == "search_004"
+
+def test_find_similar_clips_combined_mode(db_conn_search: duckdb.DuckDBPyConnection, setup_search_data: Dict[str, Any]):
+    conn = db_conn_search
+    embeddings_map = setup_search_data["embeddings_map"]
+    source_clip_checksum = "search_005" # Cats video
+    source_clip_id = ""
+    res = conn.execute("SELECT id FROM app_data.clips WHERE file_checksum = ?", [source_clip_checksum]).fetchone()
+    assert res is not None
+    source_clip_id = str(res[0])
+
+    with patch('video_ingest_tool.database.duckdb.search_logic.semantic_search_clips_duckdb') as mock_semantic_search:
+        # Simulate that the source clip itself might be returned by semantic search
+        mock_semantic_search.return_value = [
+            {"id": uuid.UUID(source_clip_id), "file_checksum": source_clip_checksum, "combined_similarity_score": 1.0}, # Source clip
+            {"id": uuid.uuid4(), "file_checksum": "search_001", "combined_similarity_score": 0.88}, # A different clip
+        ]
+        results = find_similar_clips_duckdb(
+            source_clip_id=source_clip_id,
+            conn=conn,
+            mode="combined",
+            match_count=1 # We want 1 *other* similar clip
+        )
+        mock_semantic_search.assert_called_once()
+        call_args = mock_semantic_search.call_args[1]
+
+        assert call_args['query_summary_embedding'] == embeddings_map[source_clip_checksum]["summary_emb"]
+        assert call_args['query_keyword_embedding'] == embeddings_map[source_clip_checksum]["keyword_emb"]
+        assert call_args['query_thumbnail_1_embedding'] == embeddings_map[source_clip_checksum]["thumb_1_emb"]
+        assert call_args['summary_weight'] > 0
+        assert call_args['thumbnail_1_weight'] > 0
+        assert call_args['match_count'] == 1 + 1 # match_count + 1 for filtering
+
+        assert len(results) == 1
+        assert results[0]["file_checksum"] == "search_001" # Ensure source clip was filtered
+
+def test_find_similar_clips_source_not_found(db_conn_search: duckdb.DuckDBPyConnection, setup_search_data: Dict[str, Any]):
+    conn = db_conn_search
+    non_existent_id = str(uuid.uuid4())
+    results = find_similar_clips_duckdb(source_clip_id=non_existent_id, conn=conn)
+    assert len(results) == 0
+
+def test_find_similar_clips_source_has_no_relevant_embeddings(db_conn_search: duckdb.DuckDBPyConnection, setup_search_data: Dict[str, Any]):
+    conn = db_conn_search
+    # Create a clip with no text embeddings
+    no_text_emb_id = uuid.uuid4()
+    vio_no_text = get_search_sample_vio(
+        "no_text_emb_clip", no_text_emb_id, "summary",
+        thumb_1_embedding_list=setup_search_data["embeddings_map"]["search_001"]["thumb_1_emb"] # Has visual
+    )
+    upsert_clip_data(prepare_clip_data_for_db(vio_no_text, None), conn)
+    conn.commit()
+
+    results_text_mode = find_similar_clips_duckdb(str(no_text_emb_id), conn, mode="text")
+    assert len(results_text_mode) == 0
+
+    # Create a clip with no visual embeddings
+    no_visual_emb_id = uuid.uuid4()
+    vio_no_visual = get_search_sample_vio(
+        "no_visual_emb_clip", no_visual_emb_id, "summary",
+        summary_embedding_list=setup_search_data["embeddings_map"]["search_001"]["summary_emb"] # Has text
+    )
+    upsert_clip_data(prepare_clip_data_for_db(vio_no_visual, None), conn)
+    conn.commit()
+    
+    results_visual_mode = find_similar_clips_duckdb(str(no_visual_emb_id), conn, mode="visual")
+    assert len(results_visual_mode) == 0

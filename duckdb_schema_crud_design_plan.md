@@ -176,8 +176,10 @@ The Prefect flow `process_video_file_task` (`video_ingest_tool/flows/prefect_flo
 
 ## 7. Search Functionality Adaptation
 
-*   Logic from existing Supabase SQL search functions (e.g., `hybrid_search_clips`) will be re-implemented in Python within `video_ingest_tool/database/duckdb/search_logic.py`.
-*   These functions will use DuckDB's FTS on `clips.searchable_content` and vector search (HNSW) on embedding columns in the `clips` table, as invoked by functions in `search_logic.py`.
+*   Logic from existing Supabase SQL search functions (e.g., `hybrid_search_clips`) will be re-implemented in Python within `video_ingest_tool/database/duckdb/search_logic.py`. This includes functions for full-text search, semantic search (by query embedding, supporting text and visual features), hybrid search, and a new function to find clips similar to a given clip ID (`find_similar_clips_duckdb`).
+*   The `semantic_search_clips_duckdb` function will be enhanced to accept query embeddings for summary, keywords, and multiple thumbnails, along with respective weights, allowing for flexible semantic comparisons.
+*   The `find_similar_clips_duckdb` function will leverage the enhanced `semantic_search_clips_duckdb` to find similar items based on text, visual, or combined features of a source clip.
+*   These functions will use DuckDB's FTS on `clips.searchable_content` and vector search (HNSW with `array_cosine_similarity`) on embedding columns in the `clips` table.
 *   Hybrid search, combining FTS and semantic scores, will be orchestrated by functions in `search_logic.py`.
 
 ## 8. Testing Strategy

@@ -82,43 +82,53 @@ def semantic_search_clips_duckdb(
     query_summary_embedding: Optional[List[float]] = None,
     query_keyword_embedding: Optional[List[float]] = None,
     match_count: int = 10,
-    summary_weight: float = 0.5,
-    keyword_weight: float = 0.5,
-    similarity_threshold: float = 0.1 
+    summary_weight: float = 0.5, # Default weight for summary embedding
+    keyword_weight: float = 0.5, # Default weight for keyword embedding
+    similarity_threshold: float = 0.1
 ) -> List[Dict[str, Any]]:
     """
     Performs a semantic search on the 'app_data.clips' table using cosine similarity
-    on HNSW indexed embedding columns.
+    on HNSW indexed TEXT embedding columns (summary_embedding, keyword_embedding).
+    This function is intended for querying with externally generated text embeddings.
     """
-    if not any([query_summary_embedding, query_keyword_embedding]): 
-        logger.warning("No query embeddings provided for semantic search.")
+    if not query_summary_embedding and not query_keyword_embedding:
+        logger.warning("No query embeddings (summary or keyword) provided for semantic_search_clips_duckdb.")
         return []
 
-    logger.info(f"Performing semantic search, match_count={match_count}, threshold={similarity_threshold}")
+    logger.info(
+        "Performing text-based semantic search.",
+        match_count=match_count,
+        threshold=similarity_threshold,
+        summary_weight=summary_weight,
+        keyword_weight=keyword_weight
+    )
 
     select_columns = [
         "c.id", "c.file_name", "c.file_checksum", "c.content_summary",
         "c.transcript_preview", "c.created_at", "c.duration_seconds",
-        "c.primary_thumbnail_path", "c.keyword_embedding" 
+        "c.primary_thumbnail_path"
     ]
     select_columns_str = ", ".join(select_columns)
-    
-    base_params = [] 
+
+    base_params = []
     score_calculations = []
-    
-    if query_summary_embedding:
+
+    if query_summary_embedding and summary_weight > 0:
         score_calculations.append(f"{summary_weight} * array_cosine_similarity(c.summary_embedding, ?::FLOAT[1024])")
         base_params.append(query_summary_embedding)
-        
-    if query_keyword_embedding:
+
+    if query_keyword_embedding and keyword_weight > 0:
         score_calculations.append(f"{keyword_weight} * array_cosine_similarity(c.keyword_embedding, ?::FLOAT[1024])")
         base_params.append(query_keyword_embedding)
 
-    if not score_calculations: 
+    if not score_calculations: # Should not happen if initial check passed, but good for safety
+        logger.warning("No active score calculations for text semantic search.")
         return []
 
     combined_score_expr = " + ".join(score_calculations)
     
+    params_for_score_expr = list(base_params)
+
     sql_query = f"""
     WITH semantic_scores AS (
         SELECT
@@ -127,8 +137,7 @@ def semantic_search_clips_duckdb(
         FROM
             app_data.clips AS c
         WHERE
-            ({combined_score_expr}) IS NOT NULL
-            AND ({combined_score_expr}) >= ?
+            ({combined_score_expr}) IS NOT NULL AND ({combined_score_expr}) >= ?
     )
     SELECT
         {select_columns_str},
@@ -142,7 +151,11 @@ def semantic_search_clips_duckdb(
     LIMIT
         ?;
     """
-    final_params = base_params * 3 
+
+    final_params = []
+    final_params.extend(params_for_score_expr) # For SELECT in CTE
+    final_params.extend(params_for_score_expr) # For IS NOT NULL in WHERE
+    final_params.extend(params_for_score_expr) # For >= ? in WHERE
     final_params.append(similarity_threshold)
     final_params.append(match_count)
 
@@ -150,17 +163,17 @@ def semantic_search_clips_duckdb(
         results = conn.execute(sql_query, final_params).fetchall()
         
         if not results:
-            logger.info("No semantic search results found.")
+            logger.info("No text semantic search results found.")
             return []
 
         column_names = [desc[0] for desc in conn.description]
         clips = [dict(zip(column_names, row)) for row in results]
         
-        logger.info(f"Found {len(clips)} semantic search results.")
+        logger.info(f"Found {len(clips)} text semantic search results.")
         return clips
 
     except Exception as e:
-        logger.error(f"Error during semantic_search_clips_duckdb: {e}", exc_info=True)
+        logger.error(f"Error during text-only semantic_search_clips_duckdb: {e}", exc_info=True)
         return []
 
 def hybrid_search_clips_duckdb(
@@ -313,6 +326,166 @@ def hybrid_search_clips_duckdb(
         logger.error("Error during final fetch for hybrid search.", error=str(e), exc_info=True)
         return []
 
+
+def find_similar_clips_duckdb(
+    source_clip_id: str,
+    conn: duckdb.DuckDBPyConnection,
+    mode: str = "combined",
+    match_count: int = 5,
+    text_summary_weight: float = 0.5,    # Weight for summary_embedding in "text" or "combined"
+    text_keyword_weight: float = 0.5,    # Weight for keyword_embedding in "text" or "combined"
+    visual_thumb1_weight: float = 0.4,   # Weight for thumbnail_1_embedding in "visual" or "combined"
+    visual_thumb2_weight: float = 0.3,   # Weight for thumbnail_2_embedding in "visual" or "combined"
+    visual_thumb3_weight: float = 0.3,   # Weight for thumbnail_3_embedding in "visual" or "combined"
+    combined_mode_text_factor: float = 0.6, # Overall factor for text features in "combined" mode
+    combined_mode_visual_factor: float = 0.4, # Overall factor for visual features in "combined" mode
+    similarity_threshold: float = 0.1
+) -> List[Dict[str, Any]]:
+    """
+    Finds clips similar to a given source clip ID based on their embeddings,
+    supporting different modes: "text", "visual", or "combined".
+    """
+    logger.info("Finding similar clips.", source_clip_id=source_clip_id, mode=mode, match_count=match_count)
+
+    if mode not in ["text", "visual", "combined"]:
+        logger.error("Invalid mode for find_similar_clips_duckdb.", mode=mode)
+        return []
+
+    try:
+        source_clip_query = """
+        SELECT summary_embedding, keyword_embedding,
+               thumbnail_1_embedding, thumbnail_2_embedding, thumbnail_3_embedding
+        FROM app_data.clips WHERE id = ?;
+        """
+        source_embeddings_row = conn.execute(source_clip_query, [source_clip_id]).fetchone()
+
+        if not source_embeddings_row:
+            logger.warning("Source clip not found for similarity search.", source_clip_id=source_clip_id)
+            return []
+
+        source_summary_emb, source_keyword_emb, source_thumb1_emb, source_thumb2_emb, source_thumb3_emb = source_embeddings_row
+
+        score_calculations = []
+        base_params = []
+        
+        # --- Text Mode ---
+        if mode == "text":
+            if source_summary_emb:
+                score_calculations.append(f"{text_summary_weight} * array_cosine_similarity(c.summary_embedding, ?::FLOAT[1024])")
+                base_params.append(source_summary_emb)
+            if source_keyword_emb:
+                score_calculations.append(f"{text_keyword_weight} * array_cosine_similarity(c.keyword_embedding, ?::FLOAT[1024])")
+                base_params.append(source_keyword_emb)
+            if not score_calculations:
+                logger.warning("Source clip has no text embeddings for 'text' mode similarity search.", source_clip_id=source_clip_id)
+                return []
+
+        # --- Visual Mode ---
+        elif mode == "visual":
+            if source_thumb1_emb:
+                score_calculations.append(f"{visual_thumb1_weight} * array_cosine_similarity(c.thumbnail_1_embedding, ?::FLOAT[768])")
+                base_params.append(source_thumb1_emb)
+            if source_thumb2_emb:
+                score_calculations.append(f"{visual_thumb2_weight} * array_cosine_similarity(c.thumbnail_2_embedding, ?::FLOAT[768])")
+                base_params.append(source_thumb2_emb)
+            if source_thumb3_emb:
+                score_calculations.append(f"{visual_thumb3_weight} * array_cosine_similarity(c.thumbnail_3_embedding, ?::FLOAT[768])")
+                base_params.append(source_thumb3_emb)
+            if not score_calculations:
+                logger.warning("Source clip has no visual embeddings for 'visual' mode similarity search.", source_clip_id=source_clip_id)
+                return []
+
+        # --- Combined Mode ---
+        elif mode == "combined":
+            text_scores_parts = []
+            visual_scores_parts = []
+            
+            # Text part
+            if source_summary_emb:
+                text_scores_parts.append(f"{text_summary_weight} * array_cosine_similarity(c.summary_embedding, ?::FLOAT[1024])")
+                base_params.append(source_summary_emb)
+            if source_keyword_emb:
+                text_scores_parts.append(f"{text_keyword_weight} * array_cosine_similarity(c.keyword_embedding, ?::FLOAT[1024])")
+                base_params.append(source_keyword_emb)
+            
+            # Visual part
+            if source_thumb1_emb:
+                visual_scores_parts.append(f"{visual_thumb1_weight} * array_cosine_similarity(c.thumbnail_1_embedding, ?::FLOAT[768])")
+                base_params.append(source_thumb1_emb)
+            if source_thumb2_emb:
+                visual_scores_parts.append(f"{visual_thumb2_weight} * array_cosine_similarity(c.thumbnail_2_embedding, ?::FLOAT[768])")
+                base_params.append(source_thumb2_emb)
+            if source_thumb3_emb:
+                visual_scores_parts.append(f"{visual_thumb3_weight} * array_cosine_similarity(c.thumbnail_3_embedding, ?::FLOAT[768])")
+                base_params.append(source_thumb3_emb)
+
+            if text_scores_parts:
+                score_calculations.append(f"{combined_mode_text_factor} * ({' + '.join(text_scores_parts)})")
+            if visual_scores_parts:
+                score_calculations.append(f"{combined_mode_visual_factor} * ({' + '.join(visual_scores_parts)})")
+            
+            if not score_calculations:
+                logger.warning("Source clip has no text or visual embeddings for 'combined' mode similarity search.", source_clip_id=source_clip_id)
+                return []
+        
+        # --- Build and Execute Query ---
+        combined_score_expr = " + ".join(score_calculations)
+        params_for_score_expr = list(base_params)
+
+        select_columns_list = [
+            "c.id", "c.file_name", "c.file_checksum", "c.content_summary",
+            "c.transcript_preview", "c.created_at", "c.duration_seconds",
+            "c.primary_thumbnail_path"
+        ]
+        select_columns_str = ", ".join(select_columns_list)
+
+        sql_query = f"""
+        WITH semantic_scores AS (
+            SELECT
+                c.id as clip_id,
+                ({combined_score_expr}) AS combined_similarity_score
+            FROM
+                app_data.clips AS c
+            WHERE
+                c.id != ? AND -- Exclude source clip ID early
+                ({combined_score_expr}) IS NOT NULL AND ({combined_score_expr}) >= ?
+        )
+        SELECT
+            {select_columns_str},
+            ss.combined_similarity_score
+        FROM
+            app_data.clips AS c
+        JOIN
+            semantic_scores ss ON c.id = ss.clip_id
+        ORDER BY
+            ss.combined_similarity_score DESC
+        LIMIT
+            ?; -- Limit to the desired match_count directly
+        """
+        
+        final_params = []
+        final_params.extend(params_for_score_expr)  # For SELECT in CTE
+        final_params.append(source_clip_id)         # For c.id != ?
+        final_params.extend(params_for_score_expr)  # For IS NOT NULL in WHERE
+        final_params.extend(params_for_score_expr)  # For >= threshold in WHERE
+        final_params.append(similarity_threshold)
+        final_params.append(match_count)           # SQL LIMIT is now match_count
+
+        results = conn.execute(sql_query, final_params).fetchall()
+        
+        if not results:
+            logger.info("No similar clips found.", source_clip_id=source_clip_id, mode=mode)
+            return []
+
+        column_names = [desc[0] for desc in conn.description]
+        similar_clips = [dict(zip(column_names, row)) for row in results] # No Python slicing needed
+        
+        logger.info("Found similar clips.", count=len(similar_clips), source_clip_id=source_clip_id, mode=mode)
+        return similar_clips
+
+    except Exception as e:
+        logger.error("Error during find_similar_clips_duckdb.", source_clip_id=source_clip_id, mode=mode, error=str(e), exc_info=True)
+        return []
 
 # Placeholder for search_transcripts_duckdb (will be similar to fulltext_search_clips_duckdb but might focus on transcript field or have different scoring)
 def search_transcripts_duckdb(

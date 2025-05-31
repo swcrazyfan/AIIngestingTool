@@ -129,13 +129,25 @@ The SQL functions from `supabase_schema_and_functions.md` need to be adapted to 
     *   Logic: Use `fts_main_app_data_clips.match_bm25(id, query_text)` on the FTS index of the `clips` table.
     *   Order by rank, limit by `match_count`.
 
-*   **`semantic_search_clips`:**
-    *   Input: `query_summary_embedding (FLOAT[1024])`, `query_keyword_embedding (FLOAT[1024])`, `match_count`, weights, threshold.
+*   **`semantic_search_clips`:** (Enhanced to support text and thumbnail embeddings)
+    *   Input: `query_summary_embedding (FLOAT[1024])`, `query_keyword_embedding (FLOAT[1024])`, `query_thumbnail_1_embedding (FLOAT[768])`, etc., `match_count`, weights for each embedding type, threshold.
     *   Logic:
-        *   Calculate similarity using `1 - array_distance(summary_embedding, query_summary_embedding)` and for keywords. (Note: `array_distance` in DuckDB is L2, ensure this is the desired metric or find/implement cosine distance if needed, e.g. `1 - (col <=> query_vec)` if VSS extension provides cosine directly or use formula). For now, assume `array_distance` is acceptable or a UDF for cosine similarity will be created if necessary.
-        *   Filter by `similarity_threshold`.
-        *   Combine scores using weights.
+        *   Calculate cosine similarity for each provided query embedding against its corresponding column in `app_data.clips` (e.g., `summary_embedding`, `keyword_embedding`, `thumbnail_1_embedding`, `thumbnail_2_embedding`, `thumbnail_3_embedding`). DuckDB's `array_cosine_similarity` function from the `vss` extension will be used.
+        *   Filter by `similarity_threshold` on the combined weighted score.
+        *   Combine scores using provided weights for each embedding type.
         *   Order by combined similarity, limit by `match_count`.
+
+*   **`find_similar_clips`:**
+    *   Input: `source_clip_id (UUID)`, `mode ('text' | 'visual' | 'combined')`, `match_count`, weights, threshold.
+    *   Logic:
+        1.  Fetch the embeddings of the `source_clip_id` from `app_data.clips` table (summary, keyword, and thumbnail_1/2/3 embeddings).
+        2.  Based on the `mode`:
+            *   'text': Use `summary_embedding` and `keyword_embedding` of the source clip as query embeddings.
+            *   'visual': Use `thumbnail_1_embedding`, `thumbnail_2_embedding`, `thumbnail_3_embedding` of the source clip as query embeddings.
+            *   'combined': Use all fetched text and visual embeddings as query embeddings.
+        3.  Call the enhanced `semantic_search_clips` function with the selected query embeddings and appropriate weights for the chosen mode.
+        4.  Ensure the `source_clip_id` itself is excluded from the results.
+        5.  Order by similarity, limit by `match_count`.
 
 *   **`hybrid_search_clips`:**
     *   Input: `query_text`, `query_summary_embedding`, `query_keyword_embedding`, weights, thresholds, `rrf_k`, `match_count`.
