@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 from flask import jsonify, request, current_app
 import structlog
 
-from ..auth import AuthManager
+# from ..auth import AuthManager  # Removed - authentication disabled
 
 logger = structlog.get_logger(__name__)
 
@@ -19,35 +19,13 @@ logger = structlog.get_logger(__name__)
 def require_auth(f):
     """Decorator to require authentication for API endpoints.
     
-    Checks for valid authentication session and returns 401 if not authenticated.
+    DEPRECATED: Authentication has been removed for local DuckDB setup.
+    This decorator now does nothing and just passes through to the original function.
     """
     @wraps(f)
     def decorated(*args, **kwargs):
-        try:
-            auth_manager = AuthManager()
-            session = auth_manager.get_current_session()
-            
-            if not session:
-                logger.warning("Authentication required - no valid session found")
-                return jsonify({
-                    "success": False,
-                    "error": "Authentication required",
-                    "code": "AUTH_REQUIRED"
-                }), 401
-                
-            # Add user info to request context for logging
-            request.user_email = session.get('email', 'unknown')
-            
-            return f(*args, **kwargs)
-            
-        except Exception as e:
-            logger.error(f"Authentication check failed: {str(e)}")
-            return jsonify({
-                "success": False,
-                "error": "Authentication system error",
-                "code": "AUTH_ERROR"
-            }), 500
-            
+        # Authentication disabled - just execute the function directly
+        return f(*args, **kwargs)
     return decorated
 
 

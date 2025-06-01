@@ -151,10 +151,8 @@ def ingest(
         error_msg = result.get('error', '').lower()
         if 'directory' in error_msg:
             console.print("[yellow]💡 Check that the directory path exists and is accessible[/yellow]")
-        elif 'authentication' in error_msg:
-            console.print("[yellow]💡 Try running 'auth login' first[/yellow]")
         elif 'database' in error_msg:
-            console.print("[yellow]💡 Check database connection with 'auth status'[/yellow]")
+            console.print("[yellow]💡 Check database connection or DuckDB file permissions[/yellow]")
             
         raise typer.Exit(1)
 

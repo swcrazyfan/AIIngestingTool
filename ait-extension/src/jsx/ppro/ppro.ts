@@ -3,21 +3,14 @@
 export const selectDirectory = (): string | null => {
   try {
     const folder = Folder.selectDialog("Select video directory");
-    if (folder && folder.exists) { // Check .exists as good practice
+    if (folder) {
       return folder.fsName;
     }
   } catch (e: any) {
-    // Log to ExtendScript console, but don't alert to avoid disrupting user
-    // if they cancel the dialog (which can sometimes be caught as an error).
-    $.writeln("Error or cancellation in selectDirectory dialog: " + e.toString());
+    // Silently log the error but don't show alerts
+    $.writeln("Error in selectDirectory: " + e.toString());
   }
   return null;
-};
-
-// Keep pingExtendScript for future basic testing if needed, or remove if confident.
-export const pingExtendScript = (): string => {
-  $.writeln("pingExtendScript called from ExtendScript.");
-  return "ExtendScript ping successful!";
 };
 
 export const addVideoToTimeline = (filePath: string): boolean => {

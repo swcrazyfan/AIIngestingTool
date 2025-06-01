@@ -118,25 +118,6 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
     # SEARCH ENDPOINTS (Multiple Results)
     # ========================================================================
     
-    @app.route('/api/search/recent', methods=['GET'])
-    @log_request()
-    # @require_auth # Removed
-    @handle_errors
-    def search_recent():
-        """Get recently processed videos."""
-        limit = request.args.get('limit', 10, type=int)
-        format_type = request.args.get('format', 'json')
-        
-        from ..cli_commands import SearchCommand
-        cmd = SearchCommand()
-        result = cmd.execute(action='recent', limit=limit, format_type=format_type)
-        
-        if result.get('success'):
-            return jsonify(create_success_response(result.get('data', {})))
-        else:
-            return create_error_response(result.get('error', 'Search failed'), 
-                                       'SEARCH_ERROR', 500)
-    
     @app.route('/api/search', methods=['GET'])
     @log_request()
     # @require_auth # Removed
@@ -165,7 +146,20 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
         )
         
         if result.get('success'):
-            return jsonify(create_success_response(result.get('data', {})))
+            # Standardize response structure for RESTful consistency
+            search_data = result.get('data', {})
+            standardized_response = {
+                "data": search_data.get('results', []),  # Move results to data array
+                "pagination": {
+                    "limit": limit,
+                    "offset": 0,  # Search doesn't use offset, but keeping consistent structure
+                    "total": search_data.get('total', len(search_data.get('results', [])))
+                },
+                "query": search_data.get('query', query),
+                "search_type": search_data.get('search_type', search_type),
+                "match_count": search_data.get('match_count', len(search_data.get('results', [])))
+            }
+            return jsonify(create_success_response(standardized_response))
         else:
             return create_error_response(result.get('error', 'Search failed'), 
                                        'SEARCH_ERROR', 500)
@@ -188,7 +182,19 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
         result = cmd.execute(action='similar', clip_id=clip_id, limit=limit)
         
         if result.get('success'):
-            return jsonify(create_success_response(result.get('data', {})))
+            # Standardize response structure for RESTful consistency
+            similar_data = result.get('data', {})
+            standardized_response = {
+                "data": similar_data.get('results', []),  # Move results to data array
+                "pagination": {
+                    "limit": limit,
+                    "offset": 0,
+                    "total": similar_data.get('total', len(similar_data.get('results', [])))
+                },
+                "clip_id": clip_id,
+                "match_count": similar_data.get('match_count', len(similar_data.get('results', [])))
+            }
+            return jsonify(create_success_response(standardized_response))
         else:
             return create_error_response(result.get('error', 'Similar search failed'), 
                                        'SIMILAR_SEARCH_ERROR', 500)
@@ -246,9 +252,18 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
         )
         
         if result.get('success'):
-            # The ClipsCommand 'list' action returns data structured as {"clips": [...], "limit": ..., ...}
-            # We want to return this directly under the 'data' key of our standard success response.
-            return jsonify(create_success_response(result.get('data', {})))
+            # Standardize response structure for RESTful consistency
+            clips_data = result.get('data', {})
+            standardized_response = {
+                "data": clips_data.get('clips', []),  # Move clips to data array
+                "pagination": {
+                    "limit": clips_data.get('limit', limit),
+                    "offset": clips_data.get('offset', offset),
+                    "total": len(clips_data.get('clips', []))  # Add total count
+                },
+                "filters": clips_data.get('filters')
+            }
+            return jsonify(create_success_response(standardized_response))
         else:
             return create_error_response(result.get('error', 'Failed to list clips'),
                                        'CLIPS_LIST_ERROR', 500)
@@ -267,7 +282,9 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
         cmd = ClipsCommand()
         result = cmd.execute(action='show', clip_id=clip_id, show_transcript=show_transcript, show_analysis=show_analysis)
         if result.get('success'):
-            return jsonify(create_success_response(result.get('data', {})))
+            # Return the clip data directly (RESTful: individual resource without wrapper)
+            clip_data = result.get('data', {}).get('clip', {})
+            return jsonify(create_success_response(clip_data))
         else:
             return create_error_response(result.get('error', 'Clip not found'), 'CLIP_NOT_FOUND', 404)
 
@@ -295,15 +312,15 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
             'recursive': data.get('recursive', True),
             'limit': data.get('limit', 0),
             'output_dir': data.get('output_dir', 'output'),
-            'store_database': data.get('store_database', False),
+            'database_storage': data.get('store_database', False),
             'generate_embeddings': data.get('generate_embeddings', False),
             'force_reprocess': data.get('force_reprocess', False),
-            'ai_analysis': data.get('ai_analysis', False),
+            'ai_analysis_enabled': data.get('ai_analysis', False),
             'compression_fps': data.get('compression_fps', 30),
             'compression_bitrate': data.get('compression_bitrate', '1000k')
         }
 
-        logger.info(f"Ingest request received by /api/ingest", directory=directory, options=options, user=user_email)
+        logger.info(f"Ingest request received by /api/ingest", directory=directory, options=options)
 
         from ..cli_commands import IngestCommand
         cmd = IngestCommand()
