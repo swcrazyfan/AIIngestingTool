@@ -445,7 +445,7 @@ def create_model_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     )
 
     output = VideoIngestOutput(
-        id=str(uuid.uuid4()),
+        id=data.get('clip_id') or str(uuid.uuid4()),  # Use existing clip_id if available
         file_info=file_info_obj,
         video=video_details_obj,
         audio_tracks=audio_track_models,

@@ -327,6 +327,34 @@ class ServicesCommand(BaseCommand):
         except Exception as e:
             return {"success": False, "error": f"Failed to start API server: {str(e)}"}
     
+    def _write_port_config(self, prefect_port: int, api_port: int):
+        """Write port configuration to files for front-end consumption."""
+        config_dir = Path("config")
+        config_dir.mkdir(exist_ok=True)
+        
+        # Write to JSON for programmatic access
+        config_file = config_dir / "ports.json"
+        port_config = {
+            "prefect_port": prefect_port,
+            "api_port": api_port,
+            "prefect_url": f"http://127.0.0.1:{prefect_port}/api",
+            "api_url": f"http://localhost:{api_port}/api"
+        }
+        
+        with open(config_file, 'w') as f:
+            import json
+            json.dump(port_config, f, indent=2)
+        
+        # Write shell export statements for manual sourcing
+        env_file = config_dir / "ports.env"
+        with open(env_file, 'w') as f:
+            f.write(f"export PREFECT_PORT={prefect_port}\n")
+            f.write(f"export API_PORT={api_port}\n")
+            f.write(f"export PREFECT_API_URL=http://127.0.0.1:{prefect_port}/api\n")
+            f.write(f"export API_BASE_URL=http://localhost:{api_port}/api\n")
+        
+        logger.info(f"Port configuration written to {config_file} and {env_file}")
+    
     def _start_services(self, service: str = 'all', port: Optional[int] = None, 
                        debug: bool = False, foreground: bool = False) -> Dict[str, Any]:
         """Start one or more services."""
@@ -335,6 +363,9 @@ class ServicesCommand(BaseCommand):
         # Determine ports
         prefect_port = port if service == 'prefect-server' and port else self._find_available_port(self.prefect_port)
         api_port = port if service == 'api-server' and port else self._find_available_port(self.api_port)
+        
+        # Write port configuration for front-end consumption
+        self._write_port_config(prefect_port, api_port)
         
         if service in ['prefect-server', 'all']:
             result = self._start_prefect_server(prefect_port)
@@ -354,12 +385,20 @@ class ServicesCommand(BaseCommand):
             if not result['success'] and service == 'api-server':
                 return result
         
-        # Return combined results
+        # Return combined results with port info
         all_success = all(r['success'] for r in results)
         return {
             "success": all_success,
             "data": {
                 "services": [r['data'] for r in results if r['success']],
+                "ports": {
+                    "prefect_port": prefect_port,
+                    "api_port": api_port
+                },
+                "config_files": {
+                    "json": "config/ports.json",
+                    "env": "config/ports.env"
+                },
                 "message": f"Started {len([r for r in results if r['success']])} service(s)"
             }
         }

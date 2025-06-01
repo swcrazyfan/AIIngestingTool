@@ -32,12 +32,13 @@ export interface VideoFile {
   thumbnail_url?: string | null;
   all_thumbnail_urls?: Array<{
     url: string;
-    filename: string;
+    filename?: string;
     is_ai_selected: boolean;
-    rank?: string | number;
-    timestamp?: string;
-    description?: string;
-    reason?: string;
+    rank?: string | number | null;
+    timestamp?: string | null;
+    description?: string | null;
+    reason?: string | null;
+    index?: number;
   }>;
   width?: number | null;
   height?: number | null;
@@ -154,6 +155,11 @@ export interface VideoFile {
   technical_bit_depth?: string | null;
   technical_profile?: string | null;
   technical_level?: string | null;
+
+  // Thumbnail-related fields from API response
+  thumbnails?: string[]; // Array of thumbnail file paths
+  ai_selected_thumbnails_json?: string | any[]; // JSON string or parsed array
+  primary_thumbnail_path?: string | null;
 }
 
 export interface ProcessedFile {

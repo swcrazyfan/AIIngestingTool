@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { searchApi, statsApi } from '../api/client';
+import { searchApi, statsApi, videosApi } from '../api/client';
 import { VideoFile, CatalogStats } from '../types/api';
 import VideoCard from './VideoCard';
 import { formatDuration } from '../utils/format';
@@ -38,8 +38,8 @@ const Dashboard: React.FC = () => {
       setLoading(true);
       setError(null);
 
-      // Load recent videos
-      const recentResponse = await searchApi.search('', 'hybrid', 6);
+      // Load recent videos using the correct API
+      const recentResponse = await videosApi.list({ sortBy: 'processed_at', sortOrder: 'descending', limit: 6 });
       setRecentVideos(recentResponse.results);
 
       // Load catalog stats

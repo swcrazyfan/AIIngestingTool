@@ -1,24 +1,21 @@
-import React, { useEffect, useState } from 'react';
-import { useAuth } from '../contexts/AuthContext';
-import { healthApi } from '../api/client';
-import { FiWifi, FiWifiOff, FiLogOut, FiUser, FiFolder } from 'react-icons/fi';
+import React from 'react';
+import { connectionApi } from '../api/client';
+import { FiWifi, FiWifiOff, FiRefreshCw } from 'react-icons/fi';
 import '../styles/Header.scss';
 
-const Header: React.FC = () => {
-  const { authStatus, logout } = useAuth();
-  const [isConnected, setIsConnected] = useState(false);
+interface HeaderProps {
+  isConnected: boolean;
+}
 
-  useEffect(() => {
-    const checkConnection = async () => {
-      const result = await healthApi.check();
-      setIsConnected(result.connected);
-    };
-
-    checkConnection();
-    const interval = setInterval(checkConnection, 10000); // Check every 10 seconds
-
-    return () => clearInterval(interval);
-  }, []);
+const Header: React.FC<HeaderProps> = ({ isConnected }) => {
+  // Debug function to refresh port config
+  const handleRefreshConfig = () => {
+    console.log('🔄 Manual port configuration refresh...');
+    connectionApi.refreshPortConfiguration();
+    const config = connectionApi.getCurrentConfig();
+    console.log('📊 Updated configuration:', config);
+    alert(`Port Config:\nPort: ${config.port}\nBase URL: ${config.baseUrl}\nLoaded: ${config.loaded}`);
+  };
 
   return (
     <header className="app-header">
@@ -33,18 +30,28 @@ const Header: React.FC = () => {
             <span>{isConnected ? 'Connected' : 'Disconnected'}</span>
           </div>
 
-          {authStatus?.authenticated && (
-            <>
-              <div className="user-info">
-                <FiUser />
-                <span>{authStatus.user?.email}</span>
-              </div>
-              
-              <button onClick={logout} className="logout-button">
-                <FiLogOut />
-              </button>
-            </>
-          )}
+          {/* Debug button for port configuration */}
+          <button 
+            onClick={handleRefreshConfig} 
+            className="debug-button" 
+            title="Refresh Port Configuration"
+            aria-label="Refresh Port Configuration"
+            style={{ 
+              background: 'none', 
+              border: '1px solid #666', 
+              color: '#fff', 
+              padding: '4px 8px', 
+              borderRadius: '4px',
+              cursor: 'pointer',
+              marginRight: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+          >
+            <FiRefreshCw size={14} />
+            <span style={{ fontSize: '12px' }}>Port</span>
+          </button>
         </div>
       </div>
     </header>

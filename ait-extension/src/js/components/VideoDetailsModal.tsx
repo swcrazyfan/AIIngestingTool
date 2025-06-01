@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { PlayCircle, Camera, Volume2, FileText, Settings, X, Image } from 'lucide-react';
 import { FiPlay, FiFolder, FiSearch, FiInfo } from 'react-icons/fi';
-import { VideoFile } from '../types/api';
+import { VideoFile, TranscriptData, AnalysisData } from '../types/api';
+import { clipsApi } from '../api/client';
 import { formatDuration } from '../utils/format';
 import AccordionItem from './AccordionItem';
 import '../styles/Modal.scss';
@@ -19,17 +20,8 @@ interface VideoDetailsCardProps {
 
 interface ClipDetailsResponse {
   clip: VideoFile;
-  transcript?: {
-    id?: number;
-    clip_id?: string;
-    full_text?: string;
-  } | null;
-  analysis?: {
-    id?: number;
-    clip_id?: string;
-    summary?: string;
-    tags?: string[];
-  } | null;
+  transcript?: TranscriptData | null;
+  analysis?: AnalysisData | null;
 }
 
 const parseCameraDetails = (clipData: any) => {
@@ -68,47 +60,103 @@ const parseCameraDetails = (clipData: any) => {
 
 const fetchClipDetails = async (clipId: string | number): Promise<ClipDetailsResponse> => {
   try {
-    // Fetch the clip info from the clips endpoint
-    const clipResponse = await fetch(`http://localhost:8000/api/clips/${clipId}`);
-    if (!clipResponse.ok) {
-      const errorData = await clipResponse.json().catch(() => ({ message: 'Failed to fetch clip data' }));
-      throw new Error(errorData.message || 'Failed to fetch clip data');
-    }
-    const clipData = await clipResponse.json();
+    // Use the API client instead of direct fetch
+    const result = await clipsApi.getDetails(String(clipId));
     
-    if (!clipData.clip) {
+    if (!result.clip) {
       throw new Error('Clip not found');
     }
     
     // Log the raw API response for debugging
-    console.log("Raw API Response for clip:", JSON.stringify(clipData.clip, null, 2));
+    console.log("Raw API Response for clip:", JSON.stringify(result.clip, null, 2));
     
     // Get the clip object and ensure all properties are preserved
-    const rawClip = clipData.clip;
+    const rawClip = result.clip;
+    
+    // Parse AI-selected thumbnails JSON if it exists
+    let aiThumbnails = [];
+    if (rawClip.ai_selected_thumbnails_json) {
+      try {
+        aiThumbnails = typeof rawClip.ai_selected_thumbnails_json === 'string' 
+          ? JSON.parse(rawClip.ai_selected_thumbnails_json)
+          : rawClip.ai_selected_thumbnails_json;
+      } catch (e) {
+        console.error('Failed to parse AI thumbnails JSON:', e);
+        aiThumbnails = [];
+      }
+    }
+    
+    // Combine regular thumbnails and AI thumbnails into a unified structure
+    const allThumbnailUrls: Array<{
+      url: string;
+      filename?: string;
+      is_ai_selected: boolean;
+      rank?: string | number | null;
+      timestamp?: string | null;
+      description?: string | null;
+      reason?: string | null;
+      index?: number;
+    }> = [];
+    
+    // Add regular thumbnails (non-AI)
+    if (rawClip.thumbnails && Array.isArray(rawClip.thumbnails)) {
+      rawClip.thumbnails.forEach((thumbPath: string, index: number) => {
+        // Skip AI thumbnails (they start with "AI_")
+        const filename = thumbPath.split('/').pop() || '';
+        if (!filename.startsWith('AI_')) {
+          allThumbnailUrls.push({
+            url: thumbPath,
+            is_ai_selected: false,
+            timestamp: null,
+            rank: null,
+            description: null,
+            reason: null,
+            index: index
+          });
+        }
+      });
+    }
+    
+    // Add AI-selected thumbnails
+    if (aiThumbnails && Array.isArray(aiThumbnails)) {
+      aiThumbnails.forEach((aiThumb: any, index: number) => {
+        allThumbnailUrls.push({
+          url: aiThumb.path,
+          is_ai_selected: true,
+          timestamp: aiThumb.timestamp,
+          rank: aiThumb.rank,
+          description: aiThumb.description,
+          reason: aiThumb.reason,
+          index: index
+        });
+      });
+    }
     
     // Create a structured clip object preserving nested properties
     const clip: VideoFile = {
       ...rawClip,
+      // Add the unified thumbnail structure
+      all_thumbnail_urls: allThumbnailUrls,
       // Explicitly copy nested objects to ensure they're present
       camera_details: rawClip.camera_details,
       technical_metadata: rawClip.technical_metadata,
-      audio_tracks: rawClip.audio_tracks,
-      all_thumbnail_urls: rawClip.all_thumbnail_urls
+      audio_tracks: rawClip.audio_tracks
     };
     
-    // Extract transcript and analysis for component structure
-    const transcript = clipData.transcript || (clip.full_transcript ? {
+    // Extract transcript and analysis from the API response
+    const transcript = result.transcript || (clip.full_transcript ? {
       clip_id: String(clip.id),
-      full_text: clip.full_transcript
+      text: clip.full_transcript
     } : null);
     
-    const analysis = clipData.analysis || {
+    const analysis = result.analysis || {
       clip_id: String(clip.id),
       summary: clip.content_summary || undefined,
       tags: clip.content_tags || undefined
     };
     
     // Log the processed data for debugging
+    console.log("Processed all_thumbnail_urls:", clip.all_thumbnail_urls);
     console.log("Processed camera_details:", clip.camera_details);
     console.log("Processed technical_metadata:", clip.technical_metadata);
     
@@ -181,7 +229,7 @@ const VideoDetailsModal: React.FC<VideoDetailsCardProps> = ({
         }
         
         // Load main thumbnail via API proxy
-        const apiUrl = `http://localhost:8001/api/thumbnail/${clipId}`;
+        const apiUrl = `http://localhost:8002/api/thumbnail/${clipId}`;
         
         const response = await fetch(apiUrl);
         if (!response.ok) throw new Error('Failed to load thumbnail');
@@ -226,7 +274,7 @@ const VideoDetailsModal: React.FC<VideoDetailsCardProps> = ({
     }
     
     // Otherwise, route through our thumbnail proxy
-    return `http://localhost:8001/api/thumbnail/${originalId}`;
+    return `http://localhost:8002/api/thumbnail/${originalId}`;
   };
 
   // Add this near the beginning of the component function, after the useQuery hook
@@ -445,10 +493,10 @@ const VideoDetailsModal: React.FC<VideoDetailsCardProps> = ({
                   </AccordionItem>
                 ) : null}
 
-                {data?.transcript?.full_text || displayClip.full_transcript ? (
+                {data?.transcript?.text || displayClip.full_transcript ? (
                   <AccordionItem title="Full Transcript" startOpen={false}>
                     <div className="full-transcript-text">
-                      {data?.transcript?.full_text || displayClip.full_transcript}
+                      {data?.transcript?.text || displayClip.full_transcript}
                     </div>
                   </AccordionItem>
                 ) : null}

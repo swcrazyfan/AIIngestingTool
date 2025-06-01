@@ -4,7 +4,7 @@ A powerful Adobe CEP extension that integrates with the AI Video Ingest Tool API
 
 ## Features
 
-- **Local Mode**: Works directly with local DuckDB database (no authentication required)
+- **Local DuckDB Integration**: Works directly with local DuckDB database (no authentication required)
 - **Video Library**: Browse and search your processed videos
 - **Advanced Search**: 
   - Hybrid search combining semantic and full-text
@@ -53,10 +53,11 @@ The extension requires the Python API server to be running:
 
 ```bash
 cd /Users/developer/Development/GitHub/AIIngestingTool
+conda activate video-ingest
 python -m video_ingest_tool.api.server --port 8001
 ```
 
-**Note**: Authentication has been removed. The extension now works directly with a local DuckDB database without requiring user accounts or login.
+**Note**: Authentication has been completely removed. The extension now works directly with a local DuckDB database without requiring user accounts, login, or internet connectivity for core functionality.
 
 ### Scripts
 
@@ -72,7 +73,7 @@ python -m video_ingest_tool.api.server --port 8001
 - **React Query** for data fetching
 - **SCSS** for styling
 - **ExtendScript** for Premiere Pro integration
-- **Local Mode**: Uses DuckDB for local data storage
+- **Local DuckDB**: Uses DuckDB for local data storage (no cloud/remote database required)
 
 ## Configuration
 
@@ -81,6 +82,27 @@ Edit `cep.config.ts` to modify:
 - Panel dimensions
 - Host application versions
 - Debug settings
+
+## API Endpoints
+
+The extension communicates with these local API endpoints:
+
+- `GET /api/health` - Health check
+- `GET /api/clips` - List videos with filtering and pagination
+- `GET /api/clips/{id}` - Get detailed video information
+- `GET /api/search` - Search videos by query
+- `GET /api/search/similar` - Find similar videos
+- `POST /api/ingest` - Start video processing
+- `GET /api/progress` - Get processing progress
+- `GET /api/thumbnail/{id}` - Get video thumbnails
+
+## Guest Mode
+
+The extension supports a "Guest Mode" for demonstrations:
+- Read-only access to the interface
+- Limited functionality
+- No video processing capabilities
+- Useful for showcasing features without a full setup
 
 ## License
 

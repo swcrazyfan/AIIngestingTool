@@ -15,8 +15,8 @@ def generate_thumbnails_step(data: Dict[str, Any], thumbnails_dir=None, logger=N
     Generate thumbnails for a video file.
     
     Args:
-        data: Pipeline data containing file_path and checksum
-        thumbnails_dir: Directory to save thumbnails
+        data: Pipeline data containing file_path, checksum, and clip_id
+        thumbnails_dir: Base directory for thumbnails (should be data/clips)
         logger: Optional logger
         
     Returns:
@@ -24,17 +24,23 @@ def generate_thumbnails_step(data: Dict[str, Any], thumbnails_dir=None, logger=N
     """
     file_path = data.get('file_path')
     checksum = data.get('checksum')
+    clip_id = data.get('clip_id')
     
     if not file_path or not checksum:
         raise ValueError("Missing file_path or checksum in data")
         
     if not thumbnails_dir:
         raise ValueError("Missing thumbnails_dir parameter")
-        
-    # Create thumbnail directory with filename first, then checksum
-    base_name = os.path.splitext(os.path.basename(file_path))[0]
-    thumbnail_dir_name = f"{base_name}_{checksum}"
-    thumbnail_dir_for_file = os.path.join(thumbnails_dir, thumbnail_dir_name)
+    
+    # Use clip_id if available, otherwise fall back to filename_checksum pattern
+    if clip_id:
+        thumbnail_dir_for_file = os.path.join(thumbnails_dir, str(clip_id))
+    else:
+        # Fallback to old pattern if clip_id not available yet
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+        thumbnail_dir_name = f"{base_name}_{checksum}"
+        thumbnail_dir_for_file = os.path.join(thumbnails_dir, thumbnail_dir_name)
+    
     thumbnail_paths = generate_thumbnails(file_path, thumbnail_dir_for_file, logger=logger)
     
     return {

@@ -148,8 +148,10 @@ class IngestCommand(BaseCommand):
                 logger.info("No video files found.", directory=directory)
                 return {"success": True, "data": {"message": "No video files found to process", "status": "completed", "total_files": 0}}
 
-            # Determine thumbnails_dir based on output_dir
-            thumbnails_dir = os.path.join(output_dir, "thumbnails")
+            # Determine thumbnails_dir to use data/clips instead of output/thumbnails
+            # This ensures thumbnails are stored alongside the database in the data directory
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
+            thumbnails_dir = os.path.join(project_root, "data", "clips")
             os.makedirs(thumbnails_dir, exist_ok=True)
             logger.info(f"Thumbnails will be stored in: {thumbnails_dir}")
 

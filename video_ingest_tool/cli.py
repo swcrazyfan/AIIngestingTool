@@ -15,6 +15,7 @@ import json
 import uuid # Import uuid
 from datetime import datetime, date # Import datetime and date
 from dotenv import load_dotenv
+from pathlib import Path
 
 # Load environment variables from .env file
 load_dotenv()
@@ -709,6 +710,50 @@ def restart_services(
     else:
         console.print(f"\n[red]❌ Failed to restart services: {result.get('error')}[/red]")
         raise typer.Exit(1)
+
+
+@app.command("ports")
+def show_ports(
+    format_type: str = typer.Option("table", "--format", "-f", help="Output format (table or json)")
+):
+    """Show current service port configuration."""
+    
+    config_file = Path("config/ports.json")
+    env_file = Path("config/ports.env")
+    
+    if config_file.exists():
+        with open(config_file) as f:
+            config = json.load(f)
+        
+        if format_type == "json":
+            # Output raw JSON for programmatic consumption
+            print(json.dumps(config, indent=2))
+            return
+        
+        table = Table(title="Service Port Configuration", show_header=True, header_style="bold magenta")
+        table.add_column("Service", style="cyan")
+        table.add_column("Port", justify="center")
+        table.add_column("URL", style="dim")
+        
+        table.add_row("Prefect Server", str(config['prefect_port']), config['prefect_url'])
+        table.add_row("API Server", str(config['api_port']), config['api_url'])
+        
+        console.print(table)
+        console.print(f"\n[dim]Configuration files:[/dim]")
+        console.print(f"  JSON: {config_file}")
+        console.print(f"  ENV:  {env_file}")
+        
+        if env_file.exists():
+            console.print(f"\n[dim]To export in current shell:[/dim]")
+            console.print(f"  source {env_file}")
+    else:
+        if format_type == "json":
+            # Output empty config for JSON format
+            print(json.dumps({"error": "No port configuration found"}, indent=2))
+            return
+            
+        console.print("[yellow]No port configuration found. Start services first:[/yellow]")
+        console.print("  python -m video_ingest_tool.cli start-services all")
 
 
 if __name__ == "__main__":

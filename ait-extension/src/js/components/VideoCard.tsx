@@ -64,24 +64,17 @@ const VideoCard: React.FC<VideoCardProps> = ({
   useEffect(() => {
     const loadThumbnail = async () => {
       if (!video.id) return;
-      
       try {
         const clipId = video.id.toString();
         const now = Date.now();
-        
         // Check if we have a valid cached version
         if (thumbnailCache[clipId]) {
           const cache = thumbnailCache[clipId];
-          
-          // Check if cache is still valid (not expired)
           if (now - cache.timestamp < CACHE_EXPIRATION) {
-            // If we have a blob object URL, use it
             if (cache.objectUrl) {
               setImgSrc(cache.objectUrl);
               return;
             }
-            
-            // If we have a blob but no object URL, create one
             if (cache.blob) {
               const objectUrl = URL.createObjectURL(cache.blob);
               thumbnailCache[clipId].objectUrl = objectUrl;
@@ -89,52 +82,51 @@ const VideoCard: React.FC<VideoCardProps> = ({
               return;
             }
           } else {
-            // Clean up expired cache
             cleanupCacheEntry(clipId);
           }
         }
-        
-        // If no valid cache exists, load from API
-        const apiUrl = `http://localhost:8001/api/thumbnail/${clipId}`;
-        
+        // --- New logic: choose best thumbnail URL ---
+        let apiUrl: string | null = null;
+        if (video.thumbnail_url) {
+          apiUrl = video.thumbnail_url;
+        } else if (video.all_thumbnail_urls && video.all_thumbnail_urls.length > 0) {
+          const aiThumb = video.all_thumbnail_urls.find(t => t.is_ai_selected);
+          apiUrl = aiThumb?.url || video.all_thumbnail_urls[0].url;
+        } else {
+          apiUrl = `http://localhost:8002/api/thumbnail/${clipId}`;
+        }
+        // If the URL is a local file path, proxy through the API
+        if (apiUrl && !apiUrl.startsWith('http')) {
+          apiUrl = `http://localhost:8002/api/thumbnail/${clipId}`;
+        }
         // Fetch the image as a blob
-        const response = await fetch(apiUrl);
+        const response = await fetch(apiUrl!);
         if (!response.ok) throw new Error('Failed to load thumbnail');
-        
         const blob = await response.blob();
         const objectUrl = URL.createObjectURL(blob);
-        
-        // Cache the blob and object URL
         thumbnailCache[clipId] = {
-          url: apiUrl,
+          url: apiUrl!,
           timestamp: now,
           blob: blob,
           objectUrl: objectUrl
         };
-        
         setImgSrc(objectUrl);
       } catch (error) {
         console.error('Error loading thumbnail:', error);
         setThumbnailError(true);
       }
     };
-    
     loadThumbnail();
-    
-    // Cleanup function to revoke object URLs
     return () => {
       if (video.id) {
-        // Only cleanup this component's specific object URL on unmount
         const clipId = video.id.toString();
         if (thumbnailCache[clipId]?.objectUrl) {
           URL.revokeObjectURL(thumbnailCache[clipId].objectUrl!);
-          // Note: We don't delete from cache here to keep it for future use
-          // Just revoke the URL to free memory
           thumbnailCache[clipId].objectUrl = undefined;
         }
       }
     };
-  }, [video.id]);
+  }, [video.id, video.thumbnail_url, video.all_thumbnail_urls]);
 
   const addToTimeline = async () => {
     try {

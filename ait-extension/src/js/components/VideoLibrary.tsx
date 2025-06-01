@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { searchApi, videosApi } from '../api/client';
 import { VideoFile, SearchType, SortField, SortOrder } from '../types/api';
-import { useAuth } from '../contexts/AuthContext';
 import VideoCard from './VideoCard';
 import SearchBar from './SearchBar';
 import AccordionItem from './AccordionItem';
@@ -9,10 +8,9 @@ import {
   FiSearch, FiGrid, FiList, FiFilter, FiTag, FiMapPin, FiCamera, FiStar, 
   FiEye, FiShuffle, FiGlobe, FiInfo, FiMic, FiChevronDown, FiChevronUp, 
   FiBookmark, FiPlus, FiSettings, FiClock, FiVideo, FiRefreshCw, FiFilm,
-  FiFolder, FiTrendingUp, FiActivity, FiHeart, FiPlay
+  FiFolder, FiTrendingUp, FiActivity, FiHeart, FiPlay, FiSquare
 } from 'react-icons/fi';
-import { BsGrid3X3, BsGrid3X2, BsGrid1X2 } from 'react-icons/bs';
-import { useWebSocket } from '../contexts/WebSocketContext';
+import { BsGrid3X3, BsGrid3X2, BsGrid1X2, BsGrid } from 'react-icons/bs';
 import '../styles/VideoLibrary.scss';
 
 // Define card size type and view mode
@@ -20,13 +18,11 @@ export type CardSize = 'small' | 'medium' | 'large';
 export type ViewMode = 'tiles' | 'rows';
 
 const VideoLibrary: React.FC = () => {
-  const { authStatus } = useAuth();
-  const isGuestMode = !authStatus?.authenticated;
-  
   const [videos, setVideos] = useState<VideoFile[]>([]);
   const [originalFetchedVideos, setOriginalFetchedVideos] = useState<VideoFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [currentSearchTerm, setCurrentSearchTerm] = useState('');
   const [activeSearchType, setActiveSearchType] = useState<SearchType>('hybrid');
   const [sortBy, setSortBy] = useState<SortField>('processed_at');
@@ -35,29 +31,66 @@ const VideoLibrary: React.FC = () => {
   const [dateEnd, setDateEnd] = useState<string>('');
   const [cardSize, setCardSize] = useState<CardSize>('medium');
   const [viewMode, setViewMode] = useState<ViewMode>('tiles');
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false); // New state for filter button
-  const [selectedFilter, setSelectedFilter] = useState<string>('all'); // Combined state
-
-  const { search: wsSearch, connected } = useWebSocket();
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [selectedFilter, setSelectedFilter] = useState<string>('all');
 
   // Load videos function
   const loadVideoData = useCallback(async () => {
     try {
       setLoading(true);
+      setError(null);
+      
       const result = await videosApi.list({ 
         sortBy, 
         sortOrder, 
         limit: 50 
       });
-      setVideos(result.results || []);
+      
+      let filteredVideos = result.results || [];
+      
+      // Apply client-side filtering based on selectedFilter
+      if (selectedFilter === 'recent') {
+        // Show videos from the last 7 days
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        
+        filteredVideos = filteredVideos.filter(video => {
+          const videoDate = new Date(video.processed_at || video.created_at_timestamp || '');
+          return videoDate >= sevenDaysAgo;
+        });
+      }
+      
+      // Apply date range filtering if dates are set
+      if (dateStart || dateEnd) {
+        filteredVideos = filteredVideos.filter(video => {
+          const videoDate = new Date(video.processed_at || video.created_at_timestamp || '');
+          
+          if (dateStart && videoDate < new Date(dateStart)) {
+            return false;
+          }
+          
+          if (dateEnd) {
+            const endDate = new Date(dateEnd);
+            endDate.setHours(23, 59, 59, 999); // Include the entire end date
+            if (videoDate > endDate) {
+              return false;
+            }
+          }
+          
+          return true;
+        });
+      }
+      
+      setVideos(filteredVideos);
       setOriginalFetchedVideos(result.results || []);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load videos:', error);
+      setError(error.message || 'Failed to load videos');
       setVideos([]);
     } finally {
       setLoading(false);
     }
-  }, [sortBy, sortOrder, selectedFilter]);
+  }, [sortBy, sortOrder, selectedFilter, dateStart, dateEnd]);
 
   // Load data on mount
   useEffect(() => {
@@ -65,14 +98,27 @@ const VideoLibrary: React.FC = () => {
   }, [loadVideoData]);
 
   // Handle search
-  const handleSearch = (query: string, type: SearchType) => {
+  const handleSearch = async (query: string, type: SearchType) => {
     setCurrentSearchTerm(query);
     setActiveSearchType(type);
     
     if (query.trim()) {
-      // Perform search logic here
-      console.log('Searching for:', query, 'with type:', type);
+      try {
+        setLoading(true);
+        setError(null);
+        
+        // Perform actual search using the API
+        const searchResult = await searchApi.search(query, type, 50);
+        setVideos(searchResult.results || []);
+      } catch (error: any) {
+        console.error('Search failed:', error);
+        setError(error.message || 'Search failed');
+        setVideos([]);
+      } finally {
+        setLoading(false);
+      }
     } else {
+      // If query is empty, reload all videos
       loadVideoData();
     }
   };
@@ -81,10 +127,18 @@ const VideoLibrary: React.FC = () => {
   const handleRefresh = () => {
     if (refreshing) return;
     setRefreshing(true);
-    setTimeout(() => {
-      loadVideoData();
-      setRefreshing(false);
-    }, 1000);
+    
+    // If there's an active search, re-run the search
+    if (currentSearchTerm.trim()) {
+      handleSearch(currentSearchTerm, activeSearchType).finally(() => {
+        setRefreshing(false);
+      });
+    } else {
+      // Otherwise reload all videos
+      loadVideoData().finally(() => {
+        setRefreshing(false);
+      });
+    }
   };
 
   return (
@@ -100,13 +154,92 @@ const VideoLibrary: React.FC = () => {
         </button>
       </div>
 
+      {/* View Controls */}
+      <div className="view-controls">
+        <div className="view-mode-controls">
+          <button
+            className={`view-mode-button ${viewMode === 'tiles' ? 'active' : ''}`}
+            onClick={() => setViewMode('tiles')}
+            title="Grid View"
+          >
+            <FiGrid />
+          </button>
+          <button
+            className={`view-mode-button ${viewMode === 'rows' ? 'active' : ''}`}
+            onClick={() => setViewMode('rows')}
+            title="List View"
+          >
+            <FiList />
+          </button>
+        </div>
+        
+        {viewMode === 'tiles' && (
+          <div className="size-controls">
+            <button
+              className={`size-button ${cardSize === 'small' ? 'active' : ''}`}
+              onClick={() => setCardSize('small')}
+              data-size="S"
+              title="Small cards"
+            >
+              <BsGrid3X3 />
+            </button>
+            <button
+              className={`size-button ${cardSize === 'medium' ? 'active' : ''}`}
+              onClick={() => setCardSize('medium')}
+              data-size="M"
+              title="Medium cards"
+            >
+              <BsGrid />
+            </button>
+            <button
+              className={`size-button ${cardSize === 'large' ? 'active' : ''}`}
+              onClick={() => setCardSize('large')}
+              data-size="L"
+              title="Large cards"
+            >
+              <FiSquare />
+            </button>
+          </div>
+        )}
+        
+        <button
+          className={`refresh-button ${refreshing ? 'refreshing' : ''}`}
+          onClick={handleRefresh}
+          disabled={refreshing}
+          title="Refresh Library"
+        >
+          <FiRefreshCw />
+        </button>
+      </div>
+
+      {/* Error display */}
+      {error && (
+        <div className="error-message">
+          <p>{error}</p>
+          <button onClick={() => {
+            setError(null);
+            if (currentSearchTerm.trim()) {
+              handleSearch(currentSearchTerm, activeSearchType);
+            } else {
+              loadVideoData();
+            }
+          }}>
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Advanced Filters - Now toggled by button */}
       {showAdvancedFilters && (
         <div className="advanced-filters-container">
           <div className="filter-controls">
             <div className="filter-group">
               <label>Sort By:</label>
-              <select value={sortBy} onChange={(e) => setSortBy(e.target.value as SortField)}>
+              <select 
+                value={sortBy} 
+                onChange={(e) => setSortBy(e.target.value as SortField)}
+                title="Select sort criteria"
+              >
                 <option value="processed_at">Recently Processed</option>
                 <option value="created_at">Date Created</option>
                 <option value="file_name">File Name</option>
@@ -116,7 +249,11 @@ const VideoLibrary: React.FC = () => {
             
             <div className="filter-group">
               <label>Order:</label>
-              <select value={sortOrder} onChange={(e) => setSortOrder(e.target.value as SortOrder)}>
+              <select 
+                value={sortOrder} 
+                onChange={(e) => setSortOrder(e.target.value as SortOrder)}
+                title="Select sort order"
+              >
                 <option value="descending">Newest First</option>
                 <option value="ascending">Oldest First</option>
               </select>
@@ -138,7 +275,11 @@ const VideoLibrary: React.FC = () => {
               />
             </div>
             
-            <button className="apply-filters-button" onClick={loadVideoData}>
+            <button className="apply-filters-button" onClick={() => {
+              // Clear search term when applying filters
+              setCurrentSearchTerm('');
+              loadVideoData();
+            }}>
               Apply Filters
             </button>
           </div>
@@ -157,113 +298,14 @@ const VideoLibrary: React.FC = () => {
             <span>Recently Added</span>
           </button>
           <button
-            className={`collection-card ${selectedFilter === 'favorites' ? 'active' : ''}`}
-            onClick={() => setSelectedFilter('favorites')}
-          >
-            <FiHeart />
-            <span>Favorites</span>
-          </button>
-          <button
-            className={`collection-card ${selectedFilter === 'untagged' ? 'active' : ''}`}
-            onClick={() => setSelectedFilter('untagged')}
-          >
-            <FiTag />
-            <span>Untagged</span>
-          </button>
-          <button
-            className={`collection-card ${selectedFilter === 'hdr' ? 'active' : ''}`}
-            onClick={() => setSelectedFilter('hdr')}
-          >
-            <FiStar />
-            <span>HDR Content</span>
-          </button>
-          {/* Categories */}
-          <button
             className={`collection-card ${selectedFilter === 'all' ? 'active' : ''}`}
             onClick={() => setSelectedFilter('all')}
           >
             <FiGrid />
             <span>All Videos</span>
           </button>
-          <button
-            className={`collection-card ${selectedFilter === 'camera' ? 'active' : ''}`}
-            onClick={() => setSelectedFilter('camera')}
-          >
-            <FiCamera />
-            <span>Camera Footage</span>
-          </button>
-          <button
-            className={`collection-card ${selectedFilter === 'screen' ? 'active' : ''}`}
-            onClick={() => setSelectedFilter('screen')}
-          >
-            <FiActivity />
-            <span>Screen Recordings</span>
-          </button>
-          <button
-            className={`collection-card ${selectedFilter === 'ai' ? 'active' : ''}`}
-            onClick={() => setSelectedFilter('ai')}
-          >
-            <FiTrendingUp />
-            <span>AI Generated</span>
-          </button>
         </div>
       </AccordionItem>
-
-      {/* Controls */}
-      <div className="library-header">
-        <h3>Videos ({videos.length})</h3>
-        <div className="library-controls">
-          {/* View Mode Toggle */}
-          <div className="view-toggle">
-            <button
-              className={`view-button ${viewMode === 'tiles' ? 'active' : ''}`}
-              onClick={() => setViewMode('tiles')}
-              title="Tiles View"
-            >
-              <BsGrid3X3 />
-            </button>
-            <button
-              className={`view-button ${viewMode === 'rows' ? 'active' : ''}`}
-              onClick={() => setViewMode('rows')}
-              title="Rows View"
-            >
-              <FiList />
-            </button>
-          </div>
-
-          {/* Card Size Selector (only for tiles) */}
-          {viewMode === 'tiles' && (
-            <div className="card-size-selector">
-              <button
-                className={`size-button ${cardSize === 'small' ? 'active' : ''}`}
-                onClick={() => setCardSize('small')}
-                data-size="S"
-              >
-                <BsGrid3X3 />
-              </button>
-              <button
-                className={`size-button ${cardSize === 'medium' ? 'active' : ''}`}
-                onClick={() => setCardSize('medium')}
-                data-size="M"
-              >
-                <BsGrid3X2 />
-              </button>
-              <button
-                className={`size-button ${cardSize === 'large' ? 'active' : ''}`}
-                onClick={() => setCardSize('large')}
-                data-size="L"
-              >
-                <BsGrid1X2 />
-              </button>
-            </div>
-          )}
-
-          {/* Refresh Button */}
-          <button className="refresh-button" onClick={handleRefresh} disabled={refreshing}>
-            <FiRefreshCw className={refreshing ? 'refreshing' : ''} />
-          </button>
-        </div>
-      </div>
 
       {/* Video Grid/List */}
       {loading ? (

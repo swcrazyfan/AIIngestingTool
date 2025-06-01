@@ -1,20 +1,51 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { WebSocketProvider } from '../contexts/WebSocketContext';
 import Header from '../components/Header';
-import Login from '../components/Login';
 import VideoLibrary from '../components/VideoLibrary';
 import IngestPanel from '../components/IngestPanel';
 import Dashboard from '../components/Dashboard';
 import ConnectionMonitor from '../components/ConnectionMonitor';
+import { connectionApi } from '../api/client';
 import '../styles/App.scss';
 
 const queryClient = new QueryClient();
 
 const AppContent: React.FC = () => {
-  const { authStatus, loading, isConnected, isGuestMode } = useAuth();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'library' | 'ingest'>('dashboard');
+  const [isConnected, setIsConnected] = useState(true);
+  const [loading, setLoading] = useState(true);
+
+  // Handle connection status changes
+  useEffect(() => {
+    const handleConnectionChange = (connected: boolean) => {
+      setIsConnected(connected);
+    };
+
+    // Add connection listener
+    connectionApi.addConnectionListener(handleConnectionChange);
+
+    // Initial setup
+    const initializeApp = async () => {
+      console.log('🔄 App loading - refreshing port configuration...');
+      connectionApi.refreshPortConfiguration();
+      
+      // Log current config for debugging
+      const config = connectionApi.getCurrentConfig();
+      console.log('📊 Current API configuration:', config);
+      
+      // Check initial connection
+      const connected = await connectionApi.checkConnection();
+      setIsConnected(connected);
+      setLoading(false);
+    };
+
+    initializeApp();
+
+    return () => {
+      connectionApi.removeConnectionListener(handleConnectionChange);
+    };
+  }, []);
 
   if (loading) {
     return (
@@ -25,59 +56,40 @@ const AppContent: React.FC = () => {
     );
   }
 
-  // Since authentication is disabled, always show the main app
-  const isLocalMode = authStatus?.user?.profile_type === 'local';
-
   return (
     <div className="app">
       {/* Connection status monitor */}
-      <ConnectionMonitor />
+      <ConnectionMonitor isConnected={isConnected} />
       
-      {/* Local mode banner */}
-      {isLocalMode && !isGuestMode && (
-        <div className="guest-mode-banner local-mode-banner">
-          <span>🏠 Local Mode - Using local DuckDB database</span>
-        </div>
-      )}
-      
-      {/* Guest mode banner */}
-      {isGuestMode && (
-        <div className="guest-mode-banner">
-          <span>👁️ Guest Mode - Read-only preview (some features disabled)</span>
-          <button onClick={() => window.location.reload()}>Exit Guest Mode</button>
-        </div>
-      )}
-      
-      <Header />
+      <Header isConnected={isConnected} />
       
       <div className="app-content">
         <div className="tab-navigation">
           <button
             className={`tab-button ${activeTab === 'dashboard' ? 'active' : ''}`}
             onClick={() => setActiveTab('dashboard')}
-            disabled={!isConnected && !isGuestMode}
+            disabled={!isConnected}
           >
             Dashboard
           </button>
           <button
             className={`tab-button ${activeTab === 'library' ? 'active' : ''}`}
             onClick={() => setActiveTab('library')}
-            disabled={!isConnected && !isGuestMode}
+            disabled={!isConnected}
           >
             Library
           </button>
           <button
-            className={`tab-button ${activeTab === 'ingest' ? 'active' : ''} ${isGuestMode ? 'disabled-guest' : ''}`}
-            onClick={() => !isGuestMode && setActiveTab('ingest')}
-            disabled={(!isConnected && !isGuestMode) || isGuestMode}
-            title={isGuestMode ? 'Not available in guest mode' : ''}
+            className={`tab-button ${activeTab === 'ingest' ? 'active' : ''}`}
+            onClick={() => setActiveTab('ingest')}
+            disabled={!isConnected}
           >
             Ingest
           </button>
         </div>
 
         <div className="tab-content">
-          {!isConnected && !isGuestMode ? (
+          {!isConnected ? (
             <div className="connection-lost-message">
               <p>Connection to the server has been lost. Attempting to reconnect...</p>
             </div>
@@ -85,7 +97,7 @@ const AppContent: React.FC = () => {
             <>
               {activeTab === 'dashboard' && <Dashboard />}
               {activeTab === 'library' && <VideoLibrary />}
-              {activeTab === 'ingest' && !isGuestMode && <IngestPanel />}
+              {activeTab === 'ingest' && <IngestPanel />}
             </>
           )}
         </div>
@@ -97,11 +109,9 @@ const AppContent: React.FC = () => {
 const Main: React.FC = () => {
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <WebSocketProvider>
-          <AppContent />
-        </WebSocketProvider>
-      </AuthProvider>
+      <WebSocketProvider>
+        <AppContent />
+      </WebSocketProvider>
     </QueryClientProvider>
   );
 };

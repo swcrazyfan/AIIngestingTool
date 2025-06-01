@@ -657,20 +657,23 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
 
             # Security check: Ensure the path is within an expected base directory if necessary
             # For now, assuming paths stored in DB are safe and absolute or resolvable
+            logger.info(f"__file__ = {__file__}")
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+            logger.info(f"Calculated project_root = {project_root}")
+            logger.info(f"Original thumbnail_path = {thumbnail_path}")
             if not os.path.isabs(thumbnail_path):
-                 # Attempt to resolve relative to a known base, e.g., project root or a configured media dir
-                 # This part is crucial and depends on how paths are stored and where the app runs.
-                 # For now, let's assume if it's not absolute, it might be relative to project root.
-                 # A better solution would be to store absolute paths or have a configured base media path.
-                 # current_app.root_path could be an option if paths are relative to app root.
-                 # For simplicity, if not absolute, we'll try to serve it as is,
-                 # but this might need adjustment based on actual path storage strategy.
-                 logger.warning(f"Thumbnail path {thumbnail_path} is not absolute. Attempting to serve as is.")
-
+                thumbnail_path = os.path.normpath(os.path.join(project_root, thumbnail_path))
+                logger.info(f"Resolved relative thumbnail path to absolute: {thumbnail_path}")
+            else:
+                logger.info(f"Thumbnail path is already absolute: {thumbnail_path}")
 
             if not os.path.exists(thumbnail_path):
                 logger.error(f"Thumbnail file not found at path: {thumbnail_path} for clip {clip_id}")
-                return create_error_response("Thumbnail file not found on server", 'FILE_NOT_FOUND_SERVER', 404)
+                return create_error_response(
+                    f"Thumbnail file not found on server (resolved path: {thumbnail_path})",
+                    'FILE_NOT_FOUND_SERVER',
+                    404
+                )
             
             if not os.path.isfile(thumbnail_path):
                 logger.error(f"Thumbnail path is not a file: {thumbnail_path} for clip {clip_id}")

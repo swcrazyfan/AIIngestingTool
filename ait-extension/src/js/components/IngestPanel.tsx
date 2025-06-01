@@ -20,7 +20,7 @@ const IngestPanel: React.FC = () => {
   const [showProgress, setShowProgress] = useState<boolean>(false);
   
   // Use the global WebSocket connection
-  const { ingestProgress, connected, setIngestProgress } = useWebSocket();
+  const { progress, isConnected } = useWebSocket();
 // State to control visibility of the progress log area
   const [showLog, setShowLog] = useState<boolean>(false);
 
@@ -81,7 +81,7 @@ setShowLog(true); // Also show the log area
       
       try {
         // Only make an API call if WebSocket is not connected yet
-        if (!connected) {
+        if (!isConnected) {
           const progressData = await ingestApi.getProgress();
           
           // Clear errors if we successfully got progress data
@@ -106,11 +106,11 @@ setShowLog(true); // Show log if process is ongoing
     };
     
     checkIngestProgress();
-  }, [connected]);
+  }, [isConnected]);
   
   // Update UI based on ingest progress from WebSocket
   useEffect(() => {
-    if (ingestProgress) {
+    if (progress) {
       // Clear any connection errors when we receive valid progress data
       setError(null);
       
@@ -118,36 +118,35 @@ setShowLog(true); // Show log if process is ongoing
       const activeStatuses = ['starting', 'running', 'scanning', 'processing'];
       // const completeStatuses = ['idle', 'completed', 'failed']; // No longer needed for auto-hide
       
-      if (activeStatuses.includes(ingestProgress.status)) {
+      if (activeStatuses.includes(progress.status)) {
         setShowProgress(true);
 setShowLog(true); // Keep log visible if active
       }
       
       // // // Hide progress after a delay when process completes
-      // //      if (completeStatuses.includes(ingestProgress.status)) {
+      // //      if (completeStatuses.includes(progress.status)) {
         // //        setTimeout(() => {
           // //          setShowProgress(false);
         // //        }, 5000);  // Show completed status for 5 seconds
       // //      }
 // Ensure log stays visible if there's content, even if process completes
-      if (ingestProgress && ((ingestProgress.processed_files && ingestProgress.processed_files.length > 0) || ingestProgress.message || ingestProgress.status)) {
+      if (progress && ((progress.processed_files && progress.processed_files.length > 0) || progress.message || progress.status)) {
         setShowLog(true);
       }
     }
-  }, [ingestProgress]);
+  }, [progress]);
 
   // Poll for progress updates when WebSocket is not connected
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
     
-    if (!connected && (showProgress || showLog)) { // Poll if either progress or log is shown
+    if (!isConnected && (showProgress || showLog)) { // Poll if either progress or log is shown
       // Poll every 2 seconds when WebSocket is not available
       intervalId = setInterval(async () => {
         try {
           const progress = await ingestApi.getProgress();
           // If we got progress data, update UI and clear any connection errors
           if (progress) {
-            setIngestProgress(progress);
             setError(null); // Clear connection errors when API is responsive
           }
         } catch (error) {
@@ -161,22 +160,8 @@ setShowLog(true); // Keep log visible if active
         clearInterval(intervalId);
       }
     };
-  }, [connected, showProgress, showLog]);
+  }, [isConnected, showProgress, showLog]);
 const clearLog = () => {
-    setIngestProgress({
-      status: 'idle',
-      progress: 0,
-      message: '',
-      processed_files: [],
-      current_file: undefined,
-      error: undefined,
-      processed_count: 0,
-      results_count: 0,
-      failed_count: 0,
-      total_count: 0
-    });
-    setShowProgress(false);  // Hide the main progress bar section
-    setShowLog(false);       // Hide the log area
     setError(null);          // Clear any general errors
   };
 
@@ -213,24 +198,23 @@ const clearLog = () => {
               setError(null);
               // Try to get the latest progress
               ingestApi.getProgress().then((progressData) => {
-                setIngestProgress(progressData); // Update progress on retry
-                setIsLoading(false);
+                setError(null);
               }).catch(() => {
                 setIsLoading(false);
                 setError('Failed to connect to server');
               });
             }}>Retry</button>
           </div>
-        ) : ingestProgress && (ingestProgress.status === 'running' ||
-              ingestProgress.status === 'scanning' ||
-              ingestProgress.status === 'processing') && !showLog ? ( // Only show this if log isn't visible yet
+        ) : progress && (progress.status === 'running' ||
+              progress.status === 'scanning' ||
+              progress.status === 'processing') && !showLog ? ( // Only show this if log isn't visible yet
           <div className="ingest-in-progress">
             <h3>Video Processing in Progress</h3>
             {error && <div className="error-message">{error}</div>}
           </div>
         ) : (
           // Show ingest form when not ingesting or log is not primary focus
-          (!ingestProgress || !showLog || !['running', 'scanning', 'processing'].includes(ingestProgress.status)) && (
+          (!progress || !showLog || !['running', 'scanning', 'processing'].includes(progress.status)) && (
           <>
             <div className="directory-selection">
               <div className="directory-input-group">
@@ -294,51 +278,51 @@ const clearLog = () => {
             <button
               onClick={startIngest}
               className="start-ingest-btn"
-              disabled={!selectedDirectory || (!!ingestProgress && ['running', 'scanning', 'processing'].includes(ingestProgress.status))}
+              disabled={!selectedDirectory || (!!progress && ['running', 'scanning', 'processing'].includes(progress.status))}
             >
               <FiPlay /> Start Ingest
             </button>
-            {error && (!ingestProgress || !showLog) && <div className="error-message">{error}</div>}
+            {error && (!progress || !showLog) && <div className="error-message">{error}</div>}
           </>
           )
         )}
 
         {/* Ingest Status Section (Overall Progress) */}
-        {ingestProgress && showProgress && (
+        {progress && showProgress && (
           <div className="ingest-progress-container">
             <h3>Ingest Status</h3>
             <div className="progress-bar-container">
               <div className="progress-bar-background">
                 <div
-                  className={`progress-bar-fill ${ingestProgress?.status === 'failed' ? 'failed' : ''}`}
-                  style={{ width: `${ingestProgress?.progress || 0}%` }}
+                  className={`progress-bar-fill ${progress?.status === 'failed' ? 'failed' : ''}`}
+                  style={{ width: `${progress?.progress || 0}%` }}
                 />
               </div>
-              <span className="progress-percentage">{ingestProgress?.progress || 0}%</span>
+              <span className="progress-percentage">{progress?.progress || 0}%</span>
             </div>
-            <p><strong>Status:</strong> {ingestProgress?.status}</p>
-            <p><strong>Message:</strong> {ingestProgress?.message || 'No message'}</p>
+            <p><strong>Status:</strong> {progress?.status}</p>
+            <p><strong>Message:</strong> {progress?.message || 'No message'}</p>
             
-            {ingestProgress?.current_file && (
+            {progress?.current_file && (
               <div className="current-file">
-                <p><strong>Current file:</strong> {ingestProgress.current_file}</p>
+                <p><strong>Current file:</strong> {progress.current_file}</p>
               </div>
             )}
             
             <div className="progress-stats">
-              {ingestProgress?.processed_count !== undefined && (
+              {progress?.processed_count !== undefined && (
                 <div className="stat-item">
-                  <strong>Processed:</strong> {ingestProgress.processed_count} files
+                  <strong>Processed:</strong> {progress.processed_count} files
                 </div>
               )}
-              {ingestProgress?.failed_count !== undefined && (
+              {progress?.failed_count !== undefined && (
                 <div className="stat-item">
-                  <strong>Failed:</strong> {ingestProgress.failed_count} files
+                  <strong>Failed:</strong> {progress.failed_count} files
                 </div>
               )}
-              {ingestProgress?.total_count !== undefined && (
+              {progress?.total_count !== undefined && (
                 <div className="stat-item">
-                  <strong>Total:</strong> {ingestProgress.total_count} files
+                  <strong>Total:</strong> {progress.total_count} files
                 </div>
               )}
             </div>
@@ -347,7 +331,7 @@ const clearLog = () => {
         )}
 
         {/* Persistent Log Section */}
-        {ingestProgress && showLog && (
+        {progress && showLog && (
           <div className="ingest-log-container">
             <div className="log-header">
               <h3>Ingest Log</h3>
@@ -356,10 +340,10 @@ const clearLog = () => {
               </button>
             </div>
             
-            {ingestProgress?.processed_files && ingestProgress.processed_files.length > 0 ? (
+            {progress?.processed_files && progress.processed_files.length > 0 ? (
               <div className="processed-files-log">
                 <div className="file-list-inner scrollable-log"> {/* Ensure .scrollable-log is styled for scrolling */}
-                  {ingestProgress.processed_files.map((file, index) => (
+                  {progress.processed_files.map((file: any, index: number) => (
                     <div key={index} className="file-item">
                       <span className="file-name">{file.file_name || file.path || 'Unknown file'}</span>
                       <div className="file-status-container">

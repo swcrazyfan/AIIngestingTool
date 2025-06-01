@@ -132,8 +132,8 @@ def ai_thumbnail_selection_step(data: Dict[str, Any], thumbnails_dir=None, logge
     Extract frames from the video at timestamps recommended by AI analysis.
     
     Args:
-        data: Pipeline data containing file_path, checksum, and full_ai_analysis_data
-        thumbnails_dir: Directory to save thumbnails
+        data: Pipeline data containing file_path, checksum, clip_id, and full_ai_analysis_data
+        thumbnails_dir: Base directory for thumbnails (should be data/clips)
         logger: Optional logger
         
     Returns:
@@ -141,6 +141,7 @@ def ai_thumbnail_selection_step(data: Dict[str, Any], thumbnails_dir=None, logge
     """
     file_path = data.get('file_path')
     checksum = data.get('checksum')
+    clip_id = data.get('clip_id')
     analysis_results = data.get('full_ai_analysis_data', {})
     
     if not file_path or not checksum:
@@ -165,10 +166,14 @@ def ai_thumbnail_selection_step(data: Dict[str, Any], thumbnails_dir=None, logge
         logger.warning("No recommended thumbnails in analysis results")
         return {"ai_thumbnail_paths": [], "ai_thumbnail_metadata": []}
     
-    # Create thumbnail directory with filename first, then checksum
+    # Use clip_id if available, otherwise fall back to filename_checksum pattern
     base_name = os.path.splitext(os.path.basename(file_path))[0]
-    thumbnail_dir_name = f"{base_name}_{checksum}"
-    thumbnail_dir_for_file = os.path.join(thumbnails_dir, thumbnail_dir_name)
+    if clip_id:
+        thumbnail_dir_for_file = os.path.join(thumbnails_dir, str(clip_id))
+    else:
+        # Fallback to old pattern if clip_id not available yet
+        thumbnail_dir_name = f"{base_name}_{checksum}"
+        thumbnail_dir_for_file = os.path.join(thumbnails_dir, thumbnail_dir_name)
     
     # Extract frames for each recommended thumbnail
     ai_thumbnail_paths = []
