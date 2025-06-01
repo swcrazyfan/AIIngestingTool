@@ -95,7 +95,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
         }
         
         // If no valid cache exists, load from API
-        const apiUrl = `http://localhost:8000/api/thumbnail/${clipId}`;
+        const apiUrl = `http://localhost:8001/api/thumbnail/${clipId}`;
         
         // Fetch the image as a blob
         const response = await fetch(apiUrl);

@@ -180,10 +180,9 @@ const VideoDetailsModal: React.FC<VideoDetailsCardProps> = ({
           }
         }
         
-        // If no valid cache exists, load from API
-        const apiUrl = `http://localhost:8000/api/thumbnail/${clipId}`;
+        // Load main thumbnail via API proxy
+        const apiUrl = `http://localhost:8001/api/thumbnail/${clipId}`;
         
-        // Fetch the image as a blob
         const response = await fetch(apiUrl);
         if (!response.ok) throw new Error('Failed to load thumbnail');
         
@@ -221,13 +220,13 @@ const VideoDetailsModal: React.FC<VideoDetailsCardProps> = ({
 
   // Helper function to get thumbnail URL through proxy
   const getThumbnailUrl = (thumbnailUrl: string, originalId: string) => {
-    // If it's already a proxy URL or we don't have an ID to proxy with, return as is
+    // If already an API URL or no ID provided, use as-is
     if (thumbnailUrl.includes('/api/thumbnail/') || !originalId) {
       return thumbnailUrl;
     }
     
-    // Return proxy URL instead of direct Supabase URL
-    return `http://localhost:8000/api/thumbnail/${originalId}`;
+    // Otherwise, route through our thumbnail proxy
+    return `http://localhost:8001/api/thumbnail/${originalId}`;
   };
 
   // Add this near the beginning of the component function, after the useQuery hook

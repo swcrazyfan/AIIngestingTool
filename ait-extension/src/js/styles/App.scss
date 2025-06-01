@@ -38,6 +38,11 @@ body {
   font-weight: 500;
   z-index: 100;
   
+  &.local-mode-banner {
+    background: linear-gradient(135deg, #10b981, #059669);
+    justify-content: center; // Center the text since no button
+  }
+  
   button {
     background: rgba(255, 255, 255, 0.2);
     border: 1px solid rgba(255, 255, 255, 0.3);

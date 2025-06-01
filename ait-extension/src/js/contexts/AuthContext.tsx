@@ -27,53 +27,83 @@ export const useAuth = () => {
 };
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Since authentication is disabled, start in local authenticated mode
+  const [authStatus, setAuthStatus] = useState<AuthStatus | null>({
+    authenticated: true,
+    user: {
+      id: 'local-user',
+      email: 'local@localhost',
+      profile_type: 'local'
+    }
+  });
+  const [loading, setLoading] = useState(false); // No loading since we start authenticated
   const [isConnected, setIsConnected] = useState(true);
   const [requiresReLogin, setRequiresReLogin] = useState(false);
-  const [isGuestMode, setIsGuestMode] = useState(false);
+  const [isGuestMode, setIsGuestMode] = useState(false); // Not guest mode, but local mode
 
   const handleAuthError = useCallback(() => {
-    console.warn('Authentication error detected, forcing re-login.');
-    setAuthStatus({ authenticated: false, user: undefined }); 
-    setRequiresReLogin(true);
+    // Since auth is disabled, this shouldn't really happen, but keep for compatibility
+    console.warn('Authentication error detected, but auth is disabled - continuing in local mode.');
+    setRequiresReLogin(false); // Don't require re-login since auth is disabled
   }, []);
 
   const checkAuth = useCallback(async () => {
     try {
       setLoading(true);
-      const status = await authApi.getStatus();
-      setAuthStatus(status);
-      if (!status.authenticated) {
-        handleAuthError(); 
-      } else {
-        setRequiresReLogin(false); 
-      }
+      const status = await authApi.getStatus(); // This will return fake success
+      // Always set to authenticated since auth is disabled
+      setAuthStatus({
+        authenticated: true,
+        user: {
+          id: 'local-user',
+          email: 'local@localhost',
+          profile_type: 'local'
+        }
+      });
+      setRequiresReLogin(false);
     } catch (error) {
       console.error('checkAuth failed:', error);
-      handleAuthError(); 
+      // Even if check fails, keep authenticated since auth is disabled
+      setAuthStatus({
+        authenticated: true,
+        user: {
+          id: 'local-user',
+          email: 'local@localhost',
+          profile_type: 'local'
+        }
+      });
     } finally {
       setLoading(false);
     }
-  }, [handleAuthError]);
+  }, []);
 
   const login = async (email: string, password: string) => {
-    const response = await authApi.login(email, password);
-    if (response.success) {
-      await checkAuth(); 
-    } else {
-      setRequiresReLogin(true); 
-      throw new Error(response.error || 'Login failed');
-    }
+    // Since auth is disabled, always succeed
+    const response = await authApi.login(email, password); // Returns fake success
+    setAuthStatus({
+      authenticated: true,
+      user: {
+        id: 'local-user',
+        email: email || 'local@localhost',
+        profile_type: 'local'
+      }
+    });
+    setRequiresReLogin(false);
   };
 
   const logout = async () => {
     setLoading(true);
     try {
-      if (!isGuestMode) {
-        await authApi.logout();
-      }
-      setAuthStatus(null);
+      await authApi.logout(); // Returns fake success
+      // For local mode, don't actually log out - just refresh the status
+      setAuthStatus({
+        authenticated: true,
+        user: {
+          id: 'local-user',
+          email: 'local@localhost',
+          profile_type: 'local'
+        }
+      });
       setIsGuestMode(false);
       // Clear the thumbnail cache when logging out
       clearCache();
@@ -99,7 +129,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setIsGuestMode(true);
       setLoading(false);
     } else {
-      setAuthStatus(null);
+      // Return to local mode
+      setAuthStatus({
+        authenticated: true,
+        user: {
+          id: 'local-user',
+          email: 'local@localhost',
+          profile_type: 'local'
+        }
+      });
       setIsGuestMode(false);
     }
   };
@@ -109,13 +147,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setIsConnected(connected);
       
       if (connected) {
-        console.log('Reconnected to server, re-checking authentication.');
+        console.log('Reconnected to server, checking status.');
         await checkAuth();
       }
     };
     
     connectionManager.addConnectionListener(handleConnectionChange);
     
+    // Initial check - but since auth is disabled, this will just confirm local mode
     checkAuth();
     
     return () => {

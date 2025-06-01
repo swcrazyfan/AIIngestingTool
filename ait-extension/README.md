@@ -4,7 +4,7 @@ A powerful Adobe CEP extension that integrates with the AI Video Ingest Tool API
 
 ## Features
 
-- **Authentication**: Secure login to access your video library
+- **Local Mode**: Works directly with local DuckDB database (no authentication required)
 - **Video Library**: Browse and search your processed videos
 - **Advanced Search**: 
   - Hybrid search combining semantic and full-text
@@ -28,7 +28,7 @@ A powerful Adobe CEP extension that integrates with the AI Video Ingest Tool API
 - Node.js 16+
 - Yarn
 - Adobe Premiere Pro 2020 or later
-- Python API server running on http://localhost:8000
+- Python API server running on http://localhost:8001
 
 ### Installation
 
@@ -53,8 +53,10 @@ The extension requires the Python API server to be running:
 
 ```bash
 cd /Users/developer/Development/GitHub/AIIngestingTool
-python api_server.py
+python -m video_ingest_tool.api.server --port 8001
 ```
+
+**Note**: Authentication has been removed. The extension now works directly with a local DuckDB database without requiring user accounts or login.
 
 ### Scripts
 
@@ -70,6 +72,7 @@ python api_server.py
 - **React Query** for data fetching
 - **SCSS** for styling
 - **ExtendScript** for Premiere Pro integration
+- **Local Mode**: Uses DuckDB for local data storage
 
 ## Configuration
 

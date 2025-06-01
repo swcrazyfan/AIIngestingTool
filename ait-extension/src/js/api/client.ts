@@ -21,8 +21,8 @@ const connectionListeners: ConnectionListener[] = [];
 let isConnected = true;
 let authErrorCallback: (() => void) | null = null;
 
-// API configuration - connects to the new API server (api_server_new.py)
-const API_BASE_URL = 'http://localhost:8000/api';
+// API configuration - Updated to match the current server setup
+const API_BASE_URL = 'http://localhost:8001/api';
 
 // Create axios instance with default config
 const apiClient: AxiosInstance = axios.create({
@@ -31,7 +31,7 @@ const apiClient: AxiosInstance = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  withCredentials: true
+  withCredentials: false // No authentication required
 });
 
 // Add interceptors to track connection status
@@ -51,17 +51,8 @@ apiClient.interceptors.response.use(
         isConnected = false;
         notifyConnectionListeners(false);
       }
-    } 
-    // If we get a 401 on a protected endpoint, notify listeners
-    else if (error.response?.status === 401) {
-      // Don't trigger for auth endpoints
-      const url = error.config?.url || '';
-      if (!url.includes('/auth/')) {
-        if (connectionManager.triggerAuthError) { 
-          connectionManager.triggerAuthError();
-        }
-      }
     }
+    // Note: No auth error handling needed since authentication is disabled
     return Promise.reject(error);
   }
 );
@@ -71,26 +62,36 @@ function notifyConnectionListeners(connected: boolean) {
   connectionListeners.forEach(listener => listener(connected));
 }
 
-// Auth API
+// Auth API - DEPRECATED: Authentication has been removed but keeping for compatibility
 export const authApi = {
   async login(email: string, password: string) {
-    const response = await apiClient.post('/auth/login', { email, password });
-    return response.data;
+    // Return fake success since auth is disabled
+    return { success: true, message: "Authentication disabled - using local mode" };
   },
 
   async signup(email: string, password: string) {
-    const response = await apiClient.post('/auth/signup', { email, password });
-    return response.data;
+    // Return fake success since auth is disabled
+    return { success: true, message: "Authentication disabled - using local mode" };
   },
 
   async logout() {
-    const response = await apiClient.post('/auth/logout');
-    return response.data;
+    // Return fake success since auth is disabled
+    return { success: true, message: "Authentication disabled - using local mode" };
   },
 
   async getStatus() {
-    const response = await apiClient.get('/auth/status');
-    return response.data;
+    // Return fake authenticated status since auth is disabled
+    return { 
+      success: true, 
+      data: { 
+        authenticated: true, 
+        user: { 
+          id: "local-user", 
+          email: "local@localhost", 
+          profile_type: "local" 
+        } 
+      } 
+    };
   }
 };
 
@@ -98,13 +99,24 @@ export const authApi = {
 export const ingestApi = {
   async startIngest(directory: string, options: IngestOptions) {
     try {
-      const response = await apiClient.post('/ingest', { directory, ...options });
+      // Map parameters to match server expectations
+      const requestData = {
+        directory,
+        recursive: options.recursive ?? true,
+        // Map client options to server parameter names
+        ai_analysis: options.ai_analysis ?? false,  // Server expects ai_analysis, maps to ai_analysis_enabled
+        store_database: options.store_database ?? false,  // Server expects store_database, maps to database_storage
+        generate_embeddings: options.generate_embeddings ?? false,
+        force_reprocess: options.force_reprocess ?? false
+      };
+      
+      const response = await apiClient.post('/ingest', requestData);
       return response.data;
     } catch (error: any) {
       console.error('AIServer: Error starting ingest:', error);
       if (error.response && error.response.data) {
         console.error('AIServer: Server error details:', error.response.data);
-        const message = error.response.data.details || error.response.data.error || 'Failed to start ingest (server error)';
+        const message = error.response.data.error || 'Failed to start ingest (server error)';
         throw new Error(message);
       }
       throw new Error(error.message || 'Failed to start ingest process (network or unknown error)');
@@ -112,13 +124,13 @@ export const ingestApi = {
   },
 
   async getProgress() {
-    const response = await apiClient.get('/ingest/progress');
+    const response = await apiClient.get('/progress');
     return response.data;
   },
 
   async getResults() {
-    const response = await apiClient.get('/ingest/results');
-    return response.data;
+    // This endpoint doesn't exist in current server, return placeholder
+    return { success: true, data: { results: [] } };
   }
 };
 
@@ -127,56 +139,71 @@ export const searchApi = {
   async search(query: string, searchType: SearchType = 'hybrid', limit: number = 20): Promise<SearchResults> {
     // For similar search, this shouldn't be called directly from generic search UI
     if (searchType === 'similar') {
-      // UI should ideally use findSimilar directly
       console.warn('Attempted to use general search for similar items. Use findSimilar instead.');
       return { results: [], total: 0, query, search_type: searchType }; 
     }
     
     if (!query.trim()) {
-      // Keyword search requires a query. Return empty if query is blank.
-      // UI should guide user to use video listing for browsing all videos.
       console.warn('Search query is empty. Returning empty results for keyword search.');
       return { results: [], total: 0, query, search_type: searchType };
     }
     
-    // Backend /api/search is now GET
-    const response = await apiClient.get<SearchResults>('/search', {
+    // Backend /api/search endpoint
+    const response = await apiClient.get('/search', {
       params: {
-        query,
+        q: query,  // Server expects 'q' parameter
         type: searchType,
         limit
       }
     });
-    return response.data;
+    
+    // Extract data from success response structure
+    const data = response.data.success ? response.data.data : response.data;
+    return {
+      results: data.data || [],
+      total: data.pagination?.total || 0,
+      query,
+      search_type: searchType
+    };
   },
 
   async findSimilar(clipId: string, limit: number = 5): Promise<SearchResults> {
-    // Backend /api/similar is now GET
-    const response = await apiClient.get<SearchResults>('/similar', {
+    // Backend /api/search/similar endpoint
+    const response = await apiClient.get('/search/similar', {
       params: {
         clip_id: clipId,
         limit
       }
     });
-    return response.data;
+    
+    // Extract data from success response structure
+    const data = response.data.success ? response.data.data : response.data;
+    return {
+      results: data.data || [],
+      total: data.pagination?.total || 0,
+      search_type: 'similar'
+    };
   }
 };
 
 // Videos API (New)
 export const videosApi = {
-  async list(options?: ListVideoOptions): Promise<SearchResults> { // Assuming SearchResults can represent a list of videos
+  async list(options?: ListVideoOptions): Promise<SearchResults> {
     const params: Record<string, any> = {};
     if (options?.sortBy) params.sort_by = options.sortBy;
     if (options?.sortOrder) params.sort_order = options.sortOrder;
     if (options?.limit) params.limit = options.limit;
     if (options?.offset) params.offset = options.offset;
-    if (options?.dateStart) params.date_start = options.dateStart;
-    if (options?.dateEnd) params.date_end = options.dateEnd;
-    if (options?.filter) params.filter = options.filter;
 
     // Use /clips endpoint for listing all videos
-    const response = await apiClient.get<SearchResults>('/clips', { params });
-    return response.data;
+    const response = await apiClient.get('/clips', { params });
+    
+    // Extract data from success response structure
+    const data = response.data.success ? response.data.data : response.data;
+    return {
+      results: data.data || [],
+      total: data.pagination?.total || 0
+    };
   }
 };
 
@@ -195,24 +222,42 @@ export const healthApi = {
 // Clips API
 export const clipsApi = {
   async getDetails(clipId: string): Promise<VideoDetails> {
-    const response = await apiClient.get<VideoDetails>(`/clips/${clipId}`);
-    return response.data;
+    const response = await apiClient.get(`/clips/${clipId}`, {
+      params: {
+        include: 'transcript,analysis'  // Get full details
+      }
+    });
+    
+    // Extract data from success response structure
+    const data = response.data.success ? response.data.data : response.data;
+    return {
+      clip: data,
+      transcript: data.transcript || null,
+      analysis: data.analysis || null
+    };
   }
 };
 
-// Stats API
+// Stats API - Not available in current server, provide placeholder
 export const statsApi = {
   async getCatalogStats(): Promise<CatalogStats> {
-    const response = await apiClient.get<CatalogStats>('/stats');
-    return response.data;
+    // This endpoint doesn't exist in current server, return placeholder
+    return {
+      total_videos: 0,
+      total_duration_seconds: 0,
+      total_file_size_bytes: 0
+    };
   }
 };
 
 // Pipeline API
 export const pipelineApi = {
   async getSteps(): Promise<PipelineStep[]> {
-    const response = await apiClient.get<PipelineStep[]>('/pipeline/steps');
-    return response.data;
+    const response = await apiClient.get('/pipeline/steps');
+    
+    // Extract data from success response structure
+    const data = response.data.success ? response.data.data : response.data;
+    return data.steps || [];
   }
 };
 
@@ -250,6 +295,7 @@ export const connectionManager = {
   /**
    * Sets the callback function to be invoked when a 401 auth error occurs.
    * @param callback The function to call on auth error, or null to clear.
+   * @deprecated Authentication has been disabled
    */
   setAuthErrorCallback(callback: (() => void) | null) {
     authErrorCallback = callback;
@@ -257,7 +303,7 @@ export const connectionManager = {
 
   /**
    * Triggers the registered auth error callback.
-   * Called internally when a 401 error is detected on a non-auth endpoint.
+   * @deprecated Authentication has been disabled
    */
   triggerAuthError() {
     if (authErrorCallback) {

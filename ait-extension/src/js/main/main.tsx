@@ -25,14 +25,20 @@ const AppContent: React.FC = () => {
     );
   }
 
-  if (!authStatus?.authenticated && !isGuestMode) {
-    return <Login />;
-  }
+  // Since authentication is disabled, always show the main app
+  const isLocalMode = authStatus?.user?.profile_type === 'local';
 
   return (
     <div className="app">
       {/* Connection status monitor */}
       <ConnectionMonitor />
+      
+      {/* Local mode banner */}
+      {isLocalMode && !isGuestMode && (
+        <div className="guest-mode-banner local-mode-banner">
+          <span>🏠 Local Mode - Using local DuckDB database</span>
+        </div>
+      )}
       
       {/* Guest mode banner */}
       {isGuestMode && (

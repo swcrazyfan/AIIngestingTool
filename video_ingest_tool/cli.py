@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-from .cli_commands import SearchCommand, IngestCommand, SystemCommand, ClipsCommand # AuthCommand removed
+from .cli_commands import SearchCommand, IngestCommand, SystemCommand, ClipsCommand, ServicesCommand # Added ServicesCommand
 from .config import console
 from .config.settings import PIPELINE_STEP_DEFINITIONS # Import step definitions
 
@@ -200,7 +200,7 @@ def list_steps(
 
 @app.command("check-progress")
 def check_progress(
-    api_url: str = typer.Option("http://localhost:8000", "--api-url", help="API server URL")
+    api_url: str = typer.Option("http://localhost:8001", "--api-url", help="API server URL")
 ):
     """Check the progress of running ingest operations."""
     
@@ -567,6 +567,148 @@ def clip_analysis(
         # Display as formatted analysis
         console.print(f"\n[bold blue]🤖 AI Analysis for Clip {clip_id}[/bold blue]\n")
         console.print(Panel(json.dumps(analysis_data, indent=2), title="AI Analysis", border_style="magenta"))
+
+
+# ============================================================================
+# SERVICE MANAGEMENT COMMANDS
+# ============================================================================
+
+@app.command("start-services")
+def start_services(
+    service: str = typer.Argument("all", help="Service to start: 'prefect-server', 'prefect-worker', 'api-server', or 'all'"),
+    port: Optional[int] = typer.Option(None, "--port", "-p", help="Port override (only for prefect-server or api-server)"),
+    debug: bool = typer.Option(False, "--debug", help="Enable debug mode for API server"),
+    foreground: bool = typer.Option(False, "--foreground", "-f", help="Run API server in foreground (only when starting api-server)")
+):
+    """Start one or more services (Prefect server, worker, API server)."""
+    
+    cmd = ServicesCommand()
+    result = cmd.execute('start', service=service, port=port, debug=debug, foreground=foreground)
+    
+    if result.get('success'):
+        data = result.get('data', {})
+        console.print(f"\n[green]✅ {data.get('message', 'Services started')}[/green]")
+        
+        services = data.get('services', [])
+        if services:
+            table = Table(title="Started Services", show_header=True, header_style="bold magenta")
+            table.add_column("Service", style="cyan")
+            table.add_column("PID", justify="center")
+            table.add_column("Port", justify="center")
+            table.add_column("Log File", style="dim")
+            
+            for svc in services:
+                port_str = str(svc.get('port', 'N/A'))
+                log_file = svc.get('log_file', 'N/A')
+                if svc.get('foreground'):
+                    log_file = "Foreground (no log file)"
+                
+                table.add_row(
+                    svc.get('service', 'Unknown'),
+                    str(svc.get('pid', 'N/A')),
+                    port_str,
+                    log_file
+                )
+            
+            console.print(table)
+            
+            # Special message for foreground API server
+            if any(svc.get('foreground') for svc in services):
+                console.print("\n[yellow]💡 API server is running in foreground. Press Ctrl+C to stop.[/yellow]")
+        
+    else:
+        console.print(f"\n[red]❌ Failed to start services: {result.get('error')}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("stop-services")
+def stop_services(
+    service: str = typer.Argument("all", help="Service to stop: 'prefect-server', 'prefect-worker', 'api-server', or 'all'")
+):
+    """Stop one or more services."""
+    
+    cmd = ServicesCommand()
+    result = cmd.execute('stop', service=service)
+    
+    if result.get('success'):
+        data = result.get('data', {})
+        stopped = data.get('stopped_services', [])
+        console.print(f"\n[green]✅ {data.get('message', 'Services stopped')}[/green]")
+        
+        if stopped:
+            for svc in stopped:
+                console.print(f"  • Stopped {svc}")
+    else:
+        console.print(f"\n[red]❌ Failed to stop services: {result.get('error')}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("services-status")
+def services_status():
+    """Show status of all services."""
+    
+    cmd = ServicesCommand()
+    result = cmd.execute('status')
+    
+    if result.get('success'):
+        services = result.get('data', {}).get('services', {})
+        
+        console.print("\n[bold blue]🔧 Services Status[/bold blue]\n")
+        
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Service", style="cyan")
+        table.add_column("Status", justify="center")
+        table.add_column("Port", justify="center")
+        table.add_column("Processes", justify="center")
+        
+        for service_name, status in services.items():
+            status_icon = "🟢 Running" if status.get('running') else "🔴 Stopped"
+            port_str = str(status.get('port', 'N/A'))
+            if service_name == 'prefect-worker':
+                port_str = 'N/A'
+            
+            processes = status.get('processes', [])
+            process_count = str(len(processes)) if processes else '0'
+            
+            table.add_row(
+                service_name,
+                status_icon,
+                port_str,
+                process_count
+            )
+        
+        console.print(table)
+        console.print()
+        
+    else:
+        console.print(f"\n[red]❌ Failed to get services status: {result.get('error')}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("restart-services")
+def restart_services(
+    service: str = typer.Argument("all", help="Service to restart: 'prefect-server', 'prefect-worker', 'api-server', or 'all'"),
+    port: Optional[int] = typer.Option(None, "--port", "-p", help="Port override (only for prefect-server or api-server)"),
+    debug: bool = typer.Option(False, "--debug", help="Enable debug mode for API server"),
+    foreground: bool = typer.Option(False, "--foreground", "-f", help="Run API server in foreground (only when restarting api-server)")
+):
+    """Restart one or more services."""
+    
+    cmd = ServicesCommand()
+    result = cmd.execute('restart', service=service, port=port, debug=debug, foreground=foreground)
+    
+    if result.get('success'):
+        data = result.get('data', {})
+        console.print(f"\n[green]✅ {data.get('message', 'Services restarted')}[/green]")
+        
+        services = data.get('services', [])
+        if services:
+            for svc in services:
+                console.print(f"  • Restarted {svc.get('service')} (PID: {svc.get('pid')})")
+        
+    else:
+        console.print(f"\n[red]❌ Failed to restart services: {result.get('error')}[/red]")
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

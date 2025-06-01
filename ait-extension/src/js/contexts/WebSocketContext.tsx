@@ -80,9 +80,9 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       socketRef.current.disconnect();
     }
 
-    console.log('Setting up WebSocket connection to new API server...');
+    console.log('Setting up WebSocket connection to local API server...');
     
-    const newSocket = io('http://localhost:8000', {
+    const newSocket = io('http://localhost:8001', {
       transports: ['websocket', 'polling'],
       reconnectionAttempts: 15,
       reconnectionDelay: 1000,
@@ -140,10 +140,7 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // Generic error handler for responses
     newSocket.on('response_error', (data) => {
       const { requestId, error: errorMsg } = data;
-      if (typeof errorMsg === 'string' && (errorMsg.startsWith('Authentication required') || errorMsg.startsWith('Authentication error:'))) {
-        console.warn('WebSocket authentication error:', errorMsg);
-        handleAuthError();
-      }
+      // Note: Auth error handling removed since authentication is disabled
 
       const request = pendingRequests.current.get(requestId);
       if (request) {
@@ -156,13 +153,10 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // Handle any other errors (e.g. server-side exceptions not caught by specific handlers)
     newSocket.on('error', (error) => {
       console.error('Generic WebSocket error:', error);
-      if (typeof error.message === 'string' && (error.message.startsWith('Authentication required') || error.message.startsWith('Authentication error:'))) {
-        console.warn('Generic WebSocket authentication error:', error.message);
-        handleAuthError();
-      }
+      // Note: Auth error handling removed since authentication is disabled
     });
 
-  }, [handleAuthError]);
+  }, []); // Removed handleAuthError dependency
 
   // Effect to setup and cleanup socket connection
   useEffect(() => {
