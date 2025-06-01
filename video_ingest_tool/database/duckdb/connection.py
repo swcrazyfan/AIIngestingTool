@@ -4,6 +4,29 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+class _InMemoryConnectionWrapper:
+    """Wraps the actual in-memory connection to prevent close() by 'with' statements."""
+    def __init__(self, actual_conn):
+        self._actual_conn = actual_conn
+
+    def __getattr__(self, name):
+        # Delegate all attribute access to the actual connection
+        return getattr(self._actual_conn, name)
+
+    def close(self):
+        # This is called by 'with ... as conn:' on exit.
+        # We do nothing to keep the underlying cached connection open.
+        logger.debug("InMemoryConnectionWrapper.close() called, but underlying connection is kept open.")
+        pass
+
+    def __enter__(self):
+        # Allow the wrapper to be used in a 'with' statement directly if needed,
+        # though get_db_connection returns the actual connection for the cache.
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close() # Call our no-op close
+
 # Define the database file name and directory
 DATABASE_DIR = "data"
 DATABASE_NAME = "ai_ingest_local.duckdb"
@@ -23,69 +46,91 @@ def get_db_connection(db_path: str = None) -> "duckdb.DuckDBPyConnection":
     Sets the default search path.
 
     Args:
-        db_path (str, optional): Path to the database file. 
-                                 Defaults to a path in the project's data/ directory.
+        db_path (str, optional): Path to the database file.
+                                 If None, tries to get from Flask's current_app.config['DUCKDB_PATH'],
+                                 then defaults to a persistent path in the project's data/ directory.
 
     Returns:
         duckdb.DuckDBPyConnection: An active DuckDB connection object.
     """
-    if db_path is None:
-        db_path = get_db_path()
+    final_db_path_determined = db_path # Start with the explicit db_path if provided
 
-    # Ensure the database directory exists, but not for in-memory databases
-    if db_path != ":memory:":
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    # Attempt to use Flask app context for test connection or configured DUCKDB_PATH
+    try:
+        from flask import current_app
+        if current_app:
+            # PRIORITY 1: Use session-scoped test connection if available
+            if current_app.config.get("TESTING") and \
+               hasattr(current_app, 'extensions') and \
+               '_duckdb_actual_test_conn' in current_app.extensions:
+                
+                actual_test_conn = current_app.extensions['_duckdb_actual_test_conn']
+                # Basic check to see if the connection is alive
+                try:
+                    actual_test_conn.execute("SELECT 42;")
+                    logger.debug("Using session-scoped actual test DB connection from app context via wrapper.")
+                    return _InMemoryConnectionWrapper(actual_test_conn)
+                except duckdb.ConnectionException as ce: # Handles if connection was somehow closed
+                    logger.error(f"App-context test connection found but is closed/unusable: {ce}. This is unexpected. Will proceed to create new connection based on DUCKDB_PATH or default.")
+                    # Let final_db_path_determined (which might be None or db_path) be re-evaluated or fall through.
+                    # If DUCKDB_PATH is ':memory:', a new one will be made.
+
+            # PRIORITY 2: Use DUCKDB_PATH from Flask app config if no specific test connection was used
+            if final_db_path_determined is None and 'DUCKDB_PATH' in current_app.config:
+                final_db_path_determined = current_app.config['DUCKDB_PATH']
+                logger.debug(f"Using DUCKDB_PATH from Flask app config: {final_db_path_determined}")
+    except ImportError: # Flask not available
+        logger.debug("Flask not available during DB connection setup.")
+    except RuntimeError: # Outside of application context
+        logger.debug("Outside Flask app context during DB connection setup.")
+
+    # If final_db_path_determined is still None, use the default file path
+    if final_db_path_determined is None:
+        final_db_path_determined = get_db_path()
+        logger.debug(f"Using default DUCKDB_PATH: {final_db_path_determined}")
+    
+    # Now, final_db_path_determined holds the definitive path to connect to.
+    # This will be a file path, or ":memory:" if configured for non-test in-memory use.
+    # The test-specific shared :memory: connection is handled above and returns early.
 
     try:
-        con = duckdb.connect(database=db_path, read_only=False)
-        logger.info(f"Successfully connected to DuckDB at {db_path}")
+        # Ensure the database directory exists for file-based DBs
+        if final_db_path_determined != ":memory:":
+            # Use final_db_path_determined for directory creation
+            os.makedirs(os.path.dirname(final_db_path_determined), exist_ok=True)
+        
+        logger.info(f"Establishing new DuckDB connection to: {final_db_path_determined}")
+        con = duckdb.connect(database=final_db_path_determined, read_only=False)
 
-        # Install and load extensions
-        # Using try-except for INSTALL as it might fail if already installed by another connection/process
-        # LOAD is generally safe to call multiple times.
+        # Load extensions for any newly created connection
         extensions_to_load = ["fts", "vss"]
         for ext_name in extensions_to_load:
             try:
                 con.execute(f"INSTALL {ext_name};")
-                logger.info(f"Installed DuckDB extension: {ext_name}")
-            except duckdb.IOException as e: # More specific exception for "already installed"
-                 if "already installed" in str(e).lower():
-                    logger.debug(f"DuckDB extension {ext_name} already installed.")
-                 else:
-                    logger.warning(f"Could not install DuckDB extension {ext_name} (may be fine if preloaded): {e}")
-            except duckdb.CatalogException as e: # For "already loaded" on LOAD if INSTALL was skipped
-                if "already loaded" in str(e).lower():
-                    logger.debug(f"DuckDB extension {ext_name} already loaded.")
-                else:
-                    logger.warning(f"Catalog exception for DuckDB extension {ext_name}: {e}")
-            except Exception as e: # Catch-all for other INSTALL issues
-                logger.warning(f"Error installing DuckDB extension {ext_name}: {e}")
-
+                logger.info(f"Installed DuckDB extension: {ext_name} for {final_db_path_determined}")
+            except Exception: # More permissive for already installed
+                logger.debug(f"DuckDB extension {ext_name} likely already installed for {final_db_path_determined}.")
+                pass
             try:
                 con.execute(f"LOAD {ext_name};")
-                logger.info(f"Loaded DuckDB extension: {ext_name}")
-            except duckdb.CatalogException as e: # For "already loaded"
-                if "already loaded" in str(e).lower():
-                    logger.debug(f"DuckDB extension {ext_name} already loaded.")
+                logger.info(f"Loaded DuckDB extension: {ext_name} for {final_db_path_determined}")
+            except Exception as e_load:
+                if "already loaded" in str(e_load).lower():
+                    logger.debug(f"DuckDB extension {ext_name} already loaded for {final_db_path_determined}.")
                 else:
-                    # If it's a CatalogException but not "already loaded", it's a problem.
-                    logger.error(f"CatalogException while loading DuckDB extension {ext_name} (not 'already loaded'): {e}")
-                    raise # Re-raise critical load errors
-            except Exception as e: # Catch-all for other LOAD issues
-                logger.error(f"Unexpected error loading DuckDB extension {ext_name}: {e}")
-                raise # Re-raise critical load errors
-
-
-        # Set default search path (schema)
-        # Schemas will be created by the schema.py script
-        # con.execute(f"SET search_path = '{DEFAULT_SCHEMA}';")
-        # logger.info(f"Set default search path to '{DEFAULT_SCHEMA}'")
-        # Note: Setting search_path might be better done after schema creation or per session need.
-        # For now, we ensure extensions are loaded. Schema creation will handle CREATE SCHEMA.
-
+                    logger.error(f"Failed to load extension {ext_name} for {final_db_path_determined}.", error=str(e_load))
+                    raise
+        
+        # If this is a new :memory: connection (not the test session one), wrap it if it's meant to be shared via the old global cache.
+        # However, the global _CACHED_IN_MEMORY_CONN is being phased out.
+        # For now, if it's a :memory: path and not the test one, it's a fresh, non-shared instance.
+        # If a wrapper is needed for non-test :memory: that might be used with 'with', this logic would need adjustment.
+        # The current primary goal is to fix test isolation.
+        
         return con
+        
     except Exception as e:
-        logger.error(f"Failed to connect to DuckDB or load extensions at {db_path}", error=str(e))
+        logger.error(f"Failed to connect to DuckDB or load extensions at {final_db_path_determined}", error=str(e))
         raise
 
 if __name__ == "__main__":

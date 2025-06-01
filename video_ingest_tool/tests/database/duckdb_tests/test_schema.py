@@ -48,7 +48,7 @@ def test_clips_table_columns_and_types(db_connection):
     # Based on the final schema in duckdb_schema_crud_design_plan.md
     expected_columns = {
         "id": "UUID",
-        "file_path": "VARCHAR",
+        # "file_path": "VARCHAR", # Removed, replaced by local_path
         "local_path": "VARCHAR",
         "file_name": "VARCHAR",
         "file_checksum": "VARCHAR",

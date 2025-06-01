@@ -93,7 +93,7 @@ def generate_thumbnail_embedding(
     
     Args:
         image_path: Path to the thumbnail image
-        description: Short text description of the thumbnail (not used in current API implementation but kept for future compatibility)
+        description: Short text description of the thumbnail
         api_base: API base URL (default: http://localhost:8001)
         api_key: API key (not required for local server)
         logger: Optional logger
@@ -108,12 +108,11 @@ def generate_thumbnail_embedding(
         if not api_base:
             api_base = "http://100.121.182.8:8001" # Ensure this IP/port is correct for your server
 
-        # Convert original image to base64 directly.
+        # Convert original image to base64 with data URI format.
         # The server will handle resizing and preprocessing.
         with open(image_path, "rb") as image_file:
             img_bytes = image_file.read()
-            # Determine image format for data URI (optional but good practice)
-        # For simplicity, assuming JPEG or PNG. More robust detection might be needed.
+            # Determine image format for data URI
             if image_path.lower().endswith((".jpg", ".jpeg")):
                 img_format = "jpeg"
             elif image_path.lower().endswith(".png"):
@@ -123,13 +122,16 @@ def generate_thumbnail_embedding(
             base64_image = base64.b64encode(img_bytes).decode('utf-8')
             data_uri = f"data:image/{img_format};base64,{base64_image}"
 
-        logger.info(f"Generating embedding for image: {image_path}")
-        logger.info(f"With description: {description} (description not used in current API implementation)")
+        logger.info(f"Generating joint image+text embedding for: {image_path}")
+        logger.info(f"With description: {description}")
         logger.info(f"Using API endpoint: {api_base}/v1/embeddings")
 
-        # Simplified payload - just send the image as base64
+        # Send both image and text as joint input using JointInputItem format
         payload = {
-            "input": data_uri  # Send base64 image directly
+            "input": {
+                "image": data_uri,
+                "text": description
+            }
         }
 
         headers = {"Content-Type": "application/json"}
@@ -145,7 +147,7 @@ def generate_thumbnail_embedding(
                     embedding_data = result["data"][0]
                     if "embedding" in embedding_data:
                         embedding = embedding_data["embedding"]
-                        logger.info(f"Successfully generated embedding of dimension {len(embedding)}")
+                        logger.info(f"Successfully generated joint embedding of dimension {len(embedding)}")
                         return embedding
                     else:
                         logger.error(f"'embedding' key missing in data item: {embedding_data}")
@@ -184,7 +186,7 @@ def batch_generate_thumbnail_embeddings(
     logger=None
 ) -> Dict[int, Optional[List[float]]]:
     """
-    Generate embeddings for multiple thumbnails.
+    Generate joint image+text embeddings for multiple thumbnails.
     
     Args:
         thumbnails: List of dictionaries with 'path', 'description', and 'rank' keys

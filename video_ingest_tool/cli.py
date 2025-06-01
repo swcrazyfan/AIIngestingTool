@@ -6,15 +6,28 @@ by the API server, ensuring consistent behavior across interfaces.
 """
 
 import typer
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn
 import json
+import uuid # Import uuid
+from datetime import datetime, date # Import datetime and date
+from dotenv import load_dotenv
 
-from .cli_commands import AuthCommand, SearchCommand, IngestCommand, SystemCommand, ClipsCommand
+# Load environment variables from .env file
+load_dotenv()
+
+from .cli_commands import SearchCommand, IngestCommand, SystemCommand, ClipsCommand # AuthCommand removed
 from .config import console
+from .config.settings import PIPELINE_STEP_DEFINITIONS # Import step definitions
+
+# Helper to create a map of step default enabled states
+_step_defaults: Dict[str, bool] = {
+    step['name']: step['enabled_by_default']
+    for step in PIPELINE_STEP_DEFINITIONS
+}
 
 # Create the main CLI app
 app = typer.Typer(
@@ -22,12 +35,12 @@ app = typer.Typer(
     help="AI-powered video ingestion and analysis tool"
 )
 
-# Create subgroups  
-auth_app = typer.Typer(help="Authentication commands")
+# Create subgroups
+# auth_app = typer.Typer(help="Authentication commands") # Removed
 search_app = typer.Typer(help="Search and discovery commands")
 clip_app = typer.Typer(help="Individual clip operations")
 
-app.add_typer(auth_app, name="auth")
+# app.add_typer(auth_app, name="auth") # Removed
 app.add_typer(search_app, name="search")
 app.add_typer(clip_app, name="clip")
 
@@ -45,17 +58,18 @@ def ingest(
     force_reprocess: bool = typer.Option(False, "--force", "-f", help="Force reprocess existing files"),
     save_json: bool = typer.Option(True, "--save-json/--no-save-json", help="Save results as JSON"),
     save_directory: Optional[str] = typer.Option(None, "--save-directory", "-s", help="Directory to save outputs"),
-    ai_analysis_enabled: bool = typer.Option(True, "--ai-analysis/--no-ai-analysis", help="Enable AI video analysis"),
-    compression_enabled: bool = typer.Option(True, "--compression/--no-compression", help="Enable video compression for AI analysis"),
+    ai_analysis_enabled: bool = typer.Option(_step_defaults.get('ai_video_analysis_step', False), "--ai-analysis/--no-ai-analysis", help="Enable AI video analysis"),
+    compression_enabled: bool = typer.Option(_step_defaults.get('video_compression_step', False), "--compression/--no-compression", help="Enable video compression for AI analysis"),
     compression_fps: int = typer.Option(2, "--compression-fps", help="Frame rate for compression"),
     compression_bitrate: str = typer.Option("500k", "--compression-bitrate", help="Bitrate for compression"),
-    database_storage: bool = typer.Option(True, "--database-storage/--no-database-storage", help="Store results in database"),
-    upload_thumbnails: bool = typer.Option(True, "--upload-thumbnails/--no-upload-thumbnails", help="Upload thumbnails to storage"),
-    generate_embeddings: bool = typer.Option(True, "--generate-embeddings/--no-generate-embeddings", help="Generate vector embeddings"),
-    focal_length_detection: bool = typer.Option(True, "--focal-length-detection/--no-focal-length-detection", help="Enable AI focal length detection"),
-    ai_thumbnail_selection: bool = typer.Option(True, "--ai-thumbnail-selection/--no-ai-thumbnail-selection", help="Enable AI thumbnail selection"),
+    database_storage: bool = typer.Option(_step_defaults.get('database_storage_step', True), "--database-storage/--no-database-storage", help="Store results in database"),
+    upload_thumbnails: bool = typer.Option(_step_defaults.get('upload_thumbnails_step', True), "--upload-thumbnails/--no-upload-thumbnails", help="Upload thumbnails to storage"),
+    generate_embeddings: bool = typer.Option(_step_defaults.get('generate_embeddings_step', False), "--generate-embeddings/--no-generate-embeddings", help="Generate vector embeddings"),
+    focal_length_detection: bool = typer.Option(_step_defaults.get('detect_focal_length_step', False), "--focal-length-detection/--no-focal-length-detection", help="Enable AI focal length detection"),
+    ai_thumbnail_selection: bool = typer.Option(_step_defaults.get('ai_thumbnail_selection_step', False), "--ai-thumbnail-selection/--no-ai-thumbnail-selection", help="Enable AI thumbnail selection"),
     parallel_tasks: int = typer.Option(4, "--parallel-tasks", "-p", help="Number of parallel processing tasks"),
-    use_api: bool = typer.Option(False, "--use-api/--no-use-api", help="Use API server for background processing")
+    use_api: bool = typer.Option(False, "--use-api/--no-use-api", help="Use API server for background processing"),
+    task_to_run: Optional[str] = typer.Option(None, "--task-to-run", help="Run a specific task only (e.g., 'checksum', 'create_model'). See 'list-steps' for task keys.")
 ):
     """Ingest and analyze video files with AI-powered metadata extraction."""
     
@@ -80,7 +94,8 @@ def ingest(
         'focal_length_detection': focal_length_detection,
         'ai_thumbnail_selection': ai_thumbnail_selection,
         'parallel_tasks': parallel_tasks,
-        'use_api': use_api
+        'use_api': use_api,
+        'task_to_run': task_to_run  # Added new argument
     }
     
     console.print(f"\n[bold blue]🎬 Starting video ingest from:[/bold blue] {directory}")
@@ -91,34 +106,44 @@ def ingest(
     if result.get('success'):
         data = result.get('data', {})
         
-        # Handle Prefect task_run_id (background processing)
-        if 'task_run_id' in result:
-            task_run_id = result['task_run_id']
-            console.print(f"\n[green]✅ Ingest started successfully![/green]")
-            console.print(f"[cyan]Task Run ID:[/cyan] {task_run_id}")
-            console.print("[yellow]💡 Use 'check-progress' to monitor progress[/yellow]")
-            console.print(f"[yellow]   Or visit API server for real-time updates[/yellow]")
+        # If a specific task was run, print its direct data output
+        if ingest_args.get('task_to_run'):
+            console.print(f"\n[green]✅ Task '{ingest_args['task_to_run']}' completed successfully![/green]")
+            console.print("[bold blue]📊 Task Output Data:[/bold blue]")
+            # Use a custom serializer for datetime/UUID if they appear in the raw data dict
+            try:
+                console.print(json.dumps(data, indent=2, default=_json_default_serializer))
+            except TypeError as e:
+                console.print(f"[yellow]Note: Some data might not be JSON serializable directly: {e}[/yellow]")
+                console.print(data) # Fallback to direct print
+        
+        # Handle Prefect task_run_id (background processing for batch)
+        elif 'task_run_id' in data: # Changed from result to data for consistency
+            task_run_id = data['task_run_id']
+            console.print(f"\n[green]✅ Batch ingest started successfully![/green]")
+            console.print(f"[cyan]Batch Run ID:[/cyan] {task_run_id}")
+            console.print("[yellow]💡 Use 'check-progress' to monitor progress (if API is used/available)[/yellow]")
+            # console.print(f"[yellow]   Or visit API server for real-time updates[/yellow]") # If applicable
             
-        # Handle direct processing result  
+        # Handle direct batch processing result (no task_run_id if not using API/background mode)
         else:
-            console.print(f"\n[green]✅ Ingest completed successfully![/green]")
+            console.print(f"\n[green]✅ Batch ingest completed successfully![/green]")
             
             if 'files_processed' in data:
-                console.print(f"Files processed: {data['files_processed']}")
-            if 'run_id' in data:
-                console.print(f"Run ID: {data['run_id']}")
-            if 'output_directory' in data:
-                console.print(f"Output directory: {data['output_directory']}")
+                console.print(f"Files processed: {data.get('files_processed', 0)}")
+            if 'files_failed' in data:
+                console.print(f"Files failed: {data.get('files_failed', 0)}")
+            if 'total_files' in data:
+                console.print(f"Total files considered: {data.get('total_files', 0)}")
+            if data.get('message'):
+                 console.print(f"Message: {data['message']}")
+            if data.get('thumbnails_dir'):
+                console.print(f"Thumbnails directory: {data['thumbnails_dir']}")
+
+            # If detailed results per file are included (optional in IngestCommand)
             if 'results' in data and isinstance(data['results'], list):
-                console.print(f"Results: {len(data['results'])} files processed")
-                
-            # Show processing summary if available
-            if 'processing_summary' in data:
-                summary = data['processing_summary']
-                console.print(f"\n[bold blue]📊 Processing Summary:[/bold blue]")
-                for key, value in summary.items():
-                    console.print(f"  {key}: {value}")
-            
+                console.print(f"Detailed results for {len(data['results'])} files available in returned object (if saved).")
+
     else:
         console.print(f"\n[red]❌ Ingest failed: {result.get('error')}[/red]")
         
@@ -152,7 +177,7 @@ def list_steps(
     categories = data.get('categories', {})
     
     if format_type == "json":
-        console.print(json.dumps(steps, indent=2))
+        print(json.dumps(steps, indent=2)) # Changed to standard print
         return
         
     # Display as table grouped by category
@@ -204,114 +229,9 @@ def check_progress(
 
 
 # ============================================================================
-# AUTH COMMANDS  
-# ============================================================================
-
-@auth_app.command("login")
-def auth_login():
-    """Log in to your account."""
-    
-    email = typer.prompt("Email")
-    password = typer.prompt("Password", hide_input=True)
-    
-    cmd = AuthCommand()
-    result = cmd.execute('login', email=email, password=password)
-    
-    if result.get('success'):
-        user_data = result.get('data', {}).get('user', {})
-        console.print(f"\n[green]✅ Successfully logged in as {user_data.get('email', email)}[/green]")
-        
-        # Show user info if available
-        if user_data:
-            panel_content = []
-            for key, value in user_data.items():
-                if key != 'email':  # Already shown above
-                    panel_content.append(f"[cyan]{key.title()}:[/cyan] {value}")
-            
-            if panel_content:
-                console.print(Panel("\n".join(panel_content), title="User Information", border_style="green"))
-                
-    else:
-        console.print(f"\n[red]❌ Login failed: {result.get('error')}[/red]")
-        raise typer.Exit(1)
-
-
-@auth_app.command("signup")  
-def auth_signup():
-    """Create a new account."""
-    
-    email = typer.prompt("Email")
-    password = typer.prompt("Password", hide_input=True)
-    password_confirm = typer.prompt("Confirm password", hide_input=True)
-    
-    if password != password_confirm:
-        console.print("[red]❌ Passwords do not match[/red]")
-        raise typer.Exit(1)
-        
-    cmd = AuthCommand()
-    result = cmd.execute('register', email=email, password=password)
-    
-    if result.get('success'):
-        console.print(f"\n[green]✅ Account created successfully![/green]")
-        console.print(f"You can now log in with email: {email}")
-    else:
-        console.print(f"\n[red]❌ Signup failed: {result.get('error')}[/red]")
-        raise typer.Exit(1)
-
-
-@auth_app.command("logout")
-def auth_logout():
-    """Log out of your current session."""
-    
-    cmd = AuthCommand()
-    result = cmd.execute('logout')
-    
-    if result.get('success'):
-        console.print("\n[green]✅ Successfully logged out[/green]")
-    else:
-        console.print(f"\n[red]❌ Logout failed: {result.get('error')}[/red]")
-        raise typer.Exit(1)
-
-
-@auth_app.command("status")
-def auth_status():
-    """Show current authentication status."""
-    
-    cmd = AuthCommand()
-    result = cmd.execute('status')
-    
-    if result.get('success'):
-        data = result.get('data', {})
-        is_authenticated = data.get('authenticated', False)
-        
-        if is_authenticated:
-            user = data.get('user', {})
-            console.print(f"\n[green]✅ Logged in as {user.get('email', 'Unknown')}[/green]")
-            
-            # Show additional user details
-            if user:
-                details = []
-                for key, value in user.items():
-                    if key != 'email':  # Already shown above
-                        details.append(f"[cyan]{key.title()}:[/cyan] {value}")
-                        
-                if details:
-                    console.print(Panel("\n".join(details), title="Account Details", border_style="green"))
-        else:
-            console.print("\n[yellow]ℹ️  Not logged in[/yellow]")
-            console.print("Use [cyan]auth login[/cyan] to authenticate")
-            
-        # Show database connection status
-        db_status = data.get('database_connection', {})
-        if db_status:
-            status_text = "✅ Connected" if db_status.get('connected') else "❌ Disconnected"
-            console.print(f"\nDatabase: {status_text}")
-            
-    else:
-        console.print(f"\n[red]❌ Status check failed: {result.get('error')}[/red]")
-        raise typer.Exit(1)
-
-
+# AUTH COMMANDS (Removed as authentication is handled by local DuckDB setup)
+# All auth commands (login, signup, logout, status) and their definitions
+# have been removed from this section.
 # ============================================================================
 # SEARCH COMMANDS
 # ============================================================================
@@ -328,7 +248,7 @@ def search_recent(
     
     if not result.get('success'):
         console.print(f"[red]❌ Search failed: {result.get('error')}[/red]")
-            raise typer.Exit(1)
+        raise typer.Exit(1) # Corrected indentation
         
     _display_search_results(result, format_type)
 
@@ -413,42 +333,80 @@ def search_stats():
 # HELPER FUNCTIONS FOR DISPLAY
 # ============================================================================
 
-def _display_search_results(data: dict, format_type: str, show_relevance: bool = False, show_similarity: bool = False):
-    """Display search results in the specified format."""
+def _json_default_serializer(obj):
+    """JSON serializer for objects not serializable by default json code"""
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, uuid.UUID):
+        return str(obj)
+    raise TypeError(f"Type {type(obj)} not serializable")
+
+def _display_search_results(data: dict, format_type: str, show_relevance: bool = False, show_similarity: bool = False, is_clip_list: bool = False):
+    """Display search results or a list of clips in the specified format."""
     
-    results = data.get('results', [])
-    total = data.get('total', 0)
+    results = data.get('results', []) if not is_clip_list else data.get('clips', [])
+    total = data.get('total', len(results)) # Use length of results if total not provided (e.g. for simple list)
     
     if format_type == "json":
-        console.print(json.dumps(data, indent=2))
+        # For clip list, the relevant data might be directly under 'data'
+        if is_clip_list:
+            print(json.dumps(data, indent=2, default=_json_default_serializer)) # Changed to standard print
+        else:
+            print(json.dumps({"results": results, "total": total}, indent=2, default=_json_default_serializer)) # Changed to standard print
         return
         
     if not results:
         console.print("\n[yellow]No results found[/yellow]")
-            return
+        return
         
-    console.print(f"\n[bold blue]🔍 Found {total} video(s)[/bold blue]\n")
+    if is_clip_list:
+        limit = data.get('limit')
+        offset = data.get('offset')
+        count_display = f"{len(results)} clip(s)"
+        if limit is not None and offset is not None:
+            count_display += f" (limit: {limit}, offset: {offset})"
+        console.print(f"\n[bold blue]📋 Displaying {count_display}[/bold blue]\n")
+    else:
+        console.print(f"\n[bold blue]🔍 Found {total} video(s)[/bold blue]\n")
     
     # Create results table
     table = Table(show_header=True, header_style="bold magenta")
     table.add_column("File Name", style="cyan", no_wrap=True, max_width=40)
     table.add_column("Duration", justify="center", max_width=10)
-    table.add_column("Size", justify="center", max_width=10)
-    table.add_column("Processed", justify="center", max_width=12)
+    table.add_column("Size (MB)", justify="center", max_width=10) # Clarified unit
+    table.add_column("Processed At", justify="center", max_width=12) # Clarified name
     
     if show_relevance:
         table.add_column("Relevance", justify="center", max_width=10)
     elif show_similarity:
         table.add_column("Similarity", justify="center", max_width=10)
         
-    table.add_column("Clip ID", style="dim", max_width=20)
+    table.add_column("Clip ID", style="dim", max_width=38) # Increased width for full UUID
     
     for result in results:
+        # Adapt for different data structures (search vs. direct clip list)
+        file_name = result.get('file_name', 'Unknown')
+        duration = result.get('duration_seconds', 0)
+        
+        # Size might be file_size_mb (search) or file_size_bytes (direct clip)
+        size_bytes = result.get('file_size_bytes')
+        if size_bytes is not None:
+            size_mb = size_bytes / (1024 * 1024)
+        else:
+            size_mb = result.get('file_size_mb', 0)
+
+        processed_at_val = result.get('processed_at', 'Unknown')
+        processed_at_display = processed_at_val[:10] if isinstance(processed_at_val, str) else str(processed_at_val).split(" ")[0]
+
+
+        duration_display = f"{duration:.1f}s" if duration is not None else "N/A"
+        size_mb_display = f"{size_mb:.1f}MB" if size_mb is not None else "N/A"
+
         row = [
-            result.get('file_name', 'Unknown'),
-            f"{result.get('duration_seconds', 0):.1f}s",
-            f"{result.get('file_size_mb', 0):.1f}MB",
-            result.get('processed_at', 'Unknown')[:10] if result.get('processed_at') else 'Unknown'
+            file_name,
+            duration_display,
+            size_mb_display,
+            processed_at_display
         ]
         
         if show_relevance:
@@ -456,7 +414,9 @@ def _display_search_results(data: dict, format_type: str, show_relevance: bool =
         elif show_similarity:
             row.append(f"{result.get('similarity_score', 0):.3f}")
             
-        row.append(result.get('clip_id', 'Unknown')[:12] + '...' if result.get('clip_id') else 'Unknown')
+        # Display full clip_id if available, otherwise truncated
+        clip_id_val = result.get('id', result.get('clip_id', 'Unknown')) # 'id' from direct clip, 'clip_id' from search
+        row.append(str(clip_id_val))
         
         table.add_row(*row)
         
@@ -493,7 +453,7 @@ def _display_clip_details(data: dict):
     # Show AI analysis if available  
     analysis = data.get('analysis')
     if analysis:
-        console.print(Panel(json.dumps(analysis, indent=2), title="AI Analysis", border_style="magenta"))
+        console.print(Panel(json.dumps(analysis, indent=2, default=_json_default_serializer), title="AI Analysis", border_style="magenta"))
         
     console.print()
 
@@ -521,6 +481,47 @@ def clip_show(
     _display_clip_details(result.get('data', {}))
 
 
+@clip_app.command("list")
+def clip_list(
+    sort_by: str = typer.Option("created_at", "--sort-by", help="Column to sort by (e.g., created_at, file_name, duration_seconds)"),
+    sort_order: str = typer.Option("desc", "--sort-order", help="Sort order ('asc' or 'desc')"),
+    limit: int = typer.Option(20, "--limit", "-l", help="Maximum number of clips to list"),
+    offset: int = typer.Option(0, "--offset", help="Number of clips to skip (for pagination)"),
+    filters: Optional[str] = typer.Option(None, "--filters", help="JSON string of filters to apply (e.g., '{\"content_category\": \"Tutorial\", \"duration_seconds >=\": 60}')"),
+    format_type: str = typer.Option("table", "--format", "-f", help="Output format (table or json)")
+):
+    """List video clips with sorting, pagination, and filtering."""
+    cmd = ClipsCommand()
+    
+    parsed_filters = None
+    if filters:
+        try:
+            parsed_filters = json.loads(filters)
+            if not isinstance(parsed_filters, dict):
+                console.print(f"[red]❌ Invalid filters format. Must be a JSON object string.[/red]")
+                raise typer.Exit(1)
+        except json.JSONDecodeError:
+            console.print(f"[red]❌ Invalid JSON in filters string.[/red]")
+            raise typer.Exit(1)
+
+    list_args = {
+        'action': 'list',
+        'sort_by': sort_by,
+        'sort_order': sort_order,
+        'limit': limit,
+        'offset': offset,
+        'filters': parsed_filters # Pass the parsed dictionary
+    }
+    result = cmd.execute(**list_args)
+
+    if not result.get('success'):
+        console.print(f"[red]❌ Failed to list clips: {result.get('error')}[/red]")
+        raise typer.Exit(1)
+
+    # Use _display_search_results, adapting it for a list of clips
+    _display_search_results(result.get('data', {}), format_type, is_clip_list=True)
+
+
 @clip_app.command("transcript")
 def clip_transcript(
     clip_id: str = typer.Argument(..., help="Clip ID to get transcript for"),
@@ -538,7 +539,7 @@ def clip_transcript(
     transcript_data = result.get('data', {}).get('transcript', {})
     
     if format_type == "json":
-        console.print(json.dumps(transcript_data, indent=2))
+        print(json.dumps(transcript_data, indent=2, default=_json_default_serializer)) # Changed to standard print
     else:
         # Display as formatted text
         transcript_text = transcript_data.get('text', 'No transcript text available')
@@ -563,7 +564,7 @@ def clip_analysis(
     analysis_data = result.get('data', {}).get('analysis', {})
     
     if format_type == "json":
-        console.print(json.dumps(analysis_data, indent=2))
+        print(json.dumps(analysis_data, indent=2, default=_json_default_serializer)) # Changed to standard print
     else:
         # Display as formatted analysis
         console.print(f"\n[bold blue]🤖 AI Analysis for Clip {clip_id}[/bold blue]\n")

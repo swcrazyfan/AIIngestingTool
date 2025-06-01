@@ -8,6 +8,7 @@ from all collected video metadata and analysis results.
 import os
 import datetime
 import uuid
+import json # Added for parsing ai_selected_thumbnails_json
 from typing import Any, Dict, List, Optional
 from ...models import (
     VideoIngestOutput, FileInfo, VideoCodecDetails, VideoResolution, VideoHDRDetails,
@@ -41,12 +42,20 @@ def create_model_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     processed_at_time = datetime.datetime.now()
     
     master_metadata = data.get('master_metadata', {})
-    thumbnail_paths = data.get('thumbnail_paths', [])
+    thumbnail_data = data.get('thumbnail_paths', [])
     exposure_data = data.get('exposure_data', {})
     audio_tracks = data.get('audio_tracks', [])
     subtitle_tracks = data.get('subtitle_tracks', [])
     ai_analysis_summary = data.get('ai_analysis_summary', {})
     ai_analysis_file_path = data.get('ai_analysis_file_path')
+    
+    # Extract thumbnail paths - the generate_thumbnails_step returns {'thumbnail_paths': [list]}
+    if isinstance(thumbnail_data, dict) and 'thumbnail_paths' in thumbnail_data:
+        thumbnail_paths = thumbnail_data['thumbnail_paths']
+    elif isinstance(thumbnail_data, list):
+        thumbnail_paths = thumbnail_data
+    else:
+        thumbnail_paths = []
     
     # Create complete AI analysis object for main JSON
     ai_analysis_obj = None
@@ -284,7 +293,7 @@ def create_model_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     
     # Create the Pydantic models
     file_info_obj = FileInfo(
-        file_path=file_path,
+        local_path=file_path,
         file_name=file_name,
         file_checksum=checksum,
         file_size_bytes=file_size_bytes,
@@ -444,8 +453,80 @@ def create_model_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
         camera=camera_details_obj,
         thumbnails=thumbnail_paths,
         analysis=analysis_details_obj
+        # Embeddings will be added below
     )
+
+    # --- Assign Embeddings ---
+    # Embedding results are nested under 'data' key from generate_embeddings_step output
+    # This 'data' key is from the return structure of generate_embeddings_step: {'embeddings_generated': True, 'data': embedding_results_dict}
+    # So, when data.update(embedding_result.result()) is called in the flow, we get data['data']
     
+    # Ensure Embeddings model is imported (it should be from the top imports)
+    from ...models import Embeddings
+
+    embeddings_payload = data.get('data', {})
+    
+    if isinstance(embeddings_payload, dict) and data.get('embeddings_generated'):
+        if logger:
+            logger.debug("Attempting to assign embeddings.",
+                         embeddings_generated_flag=data.get('embeddings_generated'),
+                         embeddings_payload_keys=list(embeddings_payload.keys()),
+                         raw_embeddings_payload_snippet=str(embeddings_payload)[:500])
+        
+        embeddings_model_fields = {}
+        
+        s_emb = embeddings_payload.get('summary_embedding')
+        if s_emb is not None:
+            embeddings_model_fields['summary_embedding'] = s_emb
+            
+        k_emb = embeddings_payload.get('keyword_embedding')
+        if k_emb is not None:
+            embeddings_model_fields['keyword_embedding'] = k_emb
+
+        image_embeddings_map = embeddings_payload.get('image_embeddings', {})
+        # ai_thumbnail_metadata should be in the main 'data' dict from ai_thumbnail_selection_step
+        ai_thumbs_metadata = data.get('ai_thumbnail_metadata', [])
+
+        if image_embeddings_map and ai_thumbs_metadata:
+            try:
+                # Sort by rank if 'rank' is present and numeric, otherwise take first 3
+                sorted_thumbs = sorted(ai_thumbs_metadata, key=lambda x: int(x.get('rank', 99)))
+            except (ValueError, TypeError):
+                sorted_thumbs = ai_thumbs_metadata
+            
+            thumb_paths_for_embedding = [thumb.get('path') for thumb in sorted_thumbs if thumb.get('path')]
+
+            if len(thumb_paths_for_embedding) > 0 and thumb_paths_for_embedding[0] in image_embeddings_map:
+                embeddings_model_fields['thumbnail_1_embedding'] = image_embeddings_map[thumb_paths_for_embedding[0]]
+            if len(thumb_paths_for_embedding) > 1 and thumb_paths_for_embedding[1] in image_embeddings_map:
+                embeddings_model_fields['thumbnail_2_embedding'] = image_embeddings_map[thumb_paths_for_embedding[1]]
+            if len(thumb_paths_for_embedding) > 2 and thumb_paths_for_embedding[2] in image_embeddings_map:
+                embeddings_model_fields['thumbnail_3_embedding'] = image_embeddings_map[thumb_paths_for_embedding[2]]
+        
+        if embeddings_model_fields:
+            if logger: # Log final fields before creating Embeddings model
+                logger.debug("Final embeddings_model_fields before creating Embeddings object",
+                             fields=list(embeddings_model_fields.keys()),
+                             has_summary_emb='summary_embedding' in embeddings_model_fields,
+                             has_keyword_emb='keyword_embedding' in embeddings_model_fields,
+                             has_thumb1_emb='thumbnail_1_embedding' in embeddings_model_fields)
+            output.embeddings = Embeddings(**embeddings_model_fields)
+            if logger:
+                logger.info(f"Assigned embeddings to output model for {file_name}")
+        elif logger:
+            logger.info(f"No specific embedding data (summary, keyword, or mapped thumbnails) found to assign for {file_name}.")
+            
+    elif logger:
+        logger.warning(f"Embeddings were not generated (embeddings_generated flag missing/false) or embedding_payload was not a dict for {file_name}.",
+                       embeddings_generated_flag=data.get('embeddings_generated'),
+                       is_payload_dict=isinstance(embeddings_payload, dict))
+    
+    # Log what is being returned
+    if logger:
+        logger.info(f"create_model_step returning model for file: {file_name}, checksum: {checksum}, model_id: {output.id}")
+    else: # Fallback for direct calls without Prefect logger
+        print(f"create_model_step returning model for file: {file_name}, checksum: {checksum}, model_id: {output.id}")
+
     return {
         'model': output
-    } 
+    }

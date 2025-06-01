@@ -7,7 +7,7 @@ Compresses the video file using ffmpeg and stores the path to the compressed fil
 from typing import Any, Dict, Optional, Callable
 from ...video_processor.compression import VideoCompressor
 from ...config import DEFAULT_COMPRESSION_CONFIG
-from ...api.progress_tracker import get_progress_tracker # Import progress tracker
+# from ...api.progress_tracker import get_progress_tracker # Import moved into function
 import os
 from prefect import task, runtime # Import runtime for flow_run_id
 
@@ -52,6 +52,7 @@ def video_compression_step(
     
     logger.info(f"video_compression_step invoked with tracker_flow_run_id: {tracker_flow_run_id}")
 
+    from ...api.progress_tracker import get_progress_tracker # Moved import here
     progress_tracker = get_progress_tracker()
     
     # Capture the correct tracker_flow_run_id for the callback

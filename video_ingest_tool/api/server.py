@@ -17,11 +17,12 @@ from flask_socketio import SocketIO, emit
 import structlog
 
 # Import command classes
-from ..cli_commands import AuthCommand, SearchCommand, ClipsCommand, IngestCommand, SystemCommand
+# Imports moved inside functions to avoid circular import
 
 # Import middleware
 from .middleware import (
-    require_auth, handle_errors, validate_json_request, 
+    # require_auth, # Removed
+    handle_errors, validate_json_request,
     log_request, add_cors_headers, create_success_response, create_error_response
 )
 
@@ -96,93 +97,22 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
     @log_request()
     @handle_errors
     def system_status():
-        """Get system status including auth and database connectivity."""
-        cmd = AuthCommand()
-        result = cmd.execute('status')
-        
-        if result.get('success'):
-            return jsonify(create_success_response(result.get('data', {})))
-        else:
-            return create_error_response(result.get('error', 'Status check failed'), 
-                                       'STATUS_ERROR', 500)
+        """Get basic system status."""
+        # AuthCommand removed, this can be simplified or use SystemCommand
+        # For now, return a basic healthy status if this endpoint is reached.
+        # Future: Could check DuckDB file presence or other local checks.
+        return jsonify(create_success_response({
+            "status": "api_running",
+            "database_type": "duckdb_local",
+            "message": "System is operational with local DuckDB backend."
+        }))
     
     # ========================================================================
-    # AUTHENTICATION ENDPOINTS
+    # AUTHENTICATION ENDPOINTS (REMOVED)
     # ========================================================================
-    
-    @app.route('/api/auth/login', methods=['POST'])
-    @log_request()
-    @handle_errors
-    @validate_json_request(['email', 'password'])
-    def auth_login():
-        """Authenticate user with email and password."""
-        data = request.get_json()
-        
-        cmd = AuthCommand()
-        result = cmd.execute(action='login', email=data['email'], password=data['password'])
-        
-        if result.get('success'):
-            logger.info(f"User logged in successfully", email=data['email'])
-            return jsonify(create_success_response(result.get('data', {}), 
-                                                 "Login successful"))
-        else:
-            logger.warning(f"Login failed", email=data['email'], 
-                          error=result.get('error'))
-            return create_error_response(result.get('error', 'Login failed'), 
-                                       'LOGIN_ERROR', 401)
-    
-    @app.route('/api/auth/signup', methods=['POST'])
-    @log_request()
-    @handle_errors
-    @validate_json_request(['email', 'password'])
-    def auth_signup():
-        """Create new user account."""
-        data = request.get_json()
-        
-        cmd = AuthCommand()
-        result = cmd.execute(action='register', email=data['email'], password=data['password'])
-        
-        if result.get('success'):
-            logger.info(f"User registered successfully", email=data['email'])
-            return jsonify(create_success_response(result.get('data', {}), 
-                                                 "Account created successfully"))
-        else:
-            logger.warning(f"Registration failed", email=data['email'], 
-                          error=result.get('error'))
-            return create_error_response(result.get('error', 'Registration failed'), 
-                                       'SIGNUP_ERROR', 400)
-    
-    @app.route('/api/auth/logout', methods=['POST'])
-    @log_request()
-    @require_auth
-    @handle_errors
-    def auth_logout():
-        """End current user session."""
-        cmd = AuthCommand()
-        result = cmd.execute(action='logout')
-        
-        if result.get('success'):
-            logger.info(f"User logged out", user=getattr(request, 'user_email', 'unknown'))
-            return jsonify(create_success_response(message="Logout successful"))
-        else:
-            return create_error_response(result.get('error', 'Logout failed'), 
-                                       'LOGOUT_ERROR', 500)
-    
-    @app.route('/api/auth/status', methods=['GET'])
-    @log_request()
-    @handle_errors
-    def auth_status():
-        """Get current authentication status."""
-        cmd = AuthCommand()
-        result = cmd.execute(action='status')
-        
-        # Extract the nested data for backward compatibility with extension
-        if result.get('success') and 'data' in result:
-            # Return the auth status directly (not wrapped in success response)
-            return jsonify(result['data'])
-        else:
-            # If there's an error, return not authenticated
-            return jsonify({"authenticated": False})
+    # All /api/auth/* endpoints (login, signup, logout, status) are removed
+    # as authentication is handled locally or not at all with DuckDB.
+    # The @require_auth decorator is also removed from other endpoints.
     
     # ========================================================================
     # SEARCH ENDPOINTS (Multiple Results)
@@ -190,13 +120,14 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
     
     @app.route('/api/search/recent', methods=['GET'])
     @log_request()
-    @require_auth
+    # @require_auth # Removed
     @handle_errors
     def search_recent():
         """Get recently processed videos."""
         limit = request.args.get('limit', 10, type=int)
         format_type = request.args.get('format', 'json')
         
+        from ..cli_commands import SearchCommand
         cmd = SearchCommand()
         result = cmd.execute(action='recent', limit=limit, format_type=format_type)
         
@@ -208,7 +139,7 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
     
     @app.route('/api/search', methods=['GET'])
     @log_request()
-    @require_auth
+    # @require_auth # Removed
     @handle_errors
     def search_query():
         """Search videos by query text."""
@@ -222,6 +153,7 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
         semantic_weight = request.args.get('semantic_weight', 0.7, type=float)
         keyword_weight = request.args.get('keyword_weight', 0.3, type=float)
         
+        from ..cli_commands import SearchCommand
         cmd = SearchCommand()
         result = cmd.execute(
             action='search',
@@ -240,7 +172,7 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
     
     @app.route('/api/search/similar', methods=['GET'])
     @log_request()
-    @require_auth
+    # @require_auth # Removed
     @handle_errors
     def search_similar():
         """Find videos similar to a specific clip."""
@@ -251,6 +183,7 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
         
         limit = request.args.get('limit', 10, type=int)
         
+        from ..cli_commands import SearchCommand
         cmd = SearchCommand()
         result = cmd.execute(action='similar', clip_id=clip_id, limit=limit)
         
@@ -260,20 +193,7 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
             return create_error_response(result.get('error', 'Similar search failed'), 
                                        'SIMILAR_SEARCH_ERROR', 500)
     
-    @app.route('/api/search/stats', methods=['GET'])
-    @log_request()
-    @require_auth
-    @handle_errors
-    def search_stats():
-        """Get video catalog statistics."""
-        cmd = SearchCommand()
-        result = cmd.execute(action='stats')
-        
-        if result.get('success'):
-            return jsonify(create_success_response(result.get('data', {})))
-        else:
-            return create_error_response(result.get('error', 'Stats failed'), 
-                                       'STATS_ERROR', 500)
+    # /api/search/stats endpoint removed as 'stats' action was removed from SearchCommand
     
     # ========================================================================
     # CLIPS ENDPOINTS (RESTful: list, details, transcript, analysis)
@@ -281,55 +201,61 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
 
     @app.route('/api/clips', methods=['GET'])
     @log_request()
-    @require_auth
+    # @require_auth # Removed
     @handle_errors
     def list_clips():
-        """List all clips with filtering, sorting, and pagination."""
+        """List all clips with filtering, sorting, and pagination using ClipsCommand."""
         # Query params
-        sort_by = request.args.get('sort', 'processed_at')
-        sort_order = request.args.get('order', 'descending')
+        sort_by = request.args.get('sort_by', 'created_at') # Default to created_at as per ClipsCommand
+        sort_order_param = request.args.get('sort_order', 'desc').lower() # Default to desc
+        if sort_order_param not in ['asc', 'desc']:
+            return create_error_response("Invalid sort_order. Must be 'asc' or 'desc'.", "INVALID_INPUT", 400)
+        
         limit = request.args.get('limit', 20, type=int)
+        if limit < 0:
+            return create_error_response("Limit must be a non-negative integer.", "INVALID_INPUT", 400)
+            
         offset = request.args.get('offset', 0, type=int)
-        search = request.args.get('search', '').strip()
-        # Optional: add more filters as needed
-        filters = {}
-        # Example: category, tag, etc.
-        if request.args.get('category'):
-            filters['category'] = request.args['category']
-        if request.args.get('tag'):
-            filters['tag'] = request.args['tag']
+        if offset < 0:
+            return create_error_response("Offset must be a non-negative integer.", "INVALID_INPUT", 400)
 
-        cmd = SearchCommand()
-        if search:
-            # Use search action for text search
-            result = cmd.execute(
-                action='search',
-                query=search,
-                search_type='hybrid',
-                limit=limit,
-                offset=offset,
-                sort_by=sort_by,
-                sort_order=sort_order,
-                filters=filters
-            )
-        else:
-            # Use list action for all clips
-            result = cmd.execute(
-                action='list',
-                sort_by=sort_by,
-                sort_order=sort_order,
-                limit=limit,
-                offset=offset,
-                filters=filters
-            )
+        filters_json_str = request.args.get('filters', None)
+        parsed_filters = None
+        if filters_json_str:
+            try:
+                import json # Ensure json is imported
+                parsed_filters = json.loads(filters_json_str)
+                if not isinstance(parsed_filters, dict):
+                    raise ValueError("Filters parameter must be a JSON object.")
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.warning(f"Invalid filters JSON string provided: {filters_json_str}", error=str(e))
+                return create_error_response(f"Invalid 'filters' format: {str(e)} Must be a valid JSON object string.",
+                                           'INVALID_FILTERS', 400)
+        
+        from ..cli_commands import ClipsCommand # Use ClipsCommand for listing
+        cmd = ClipsCommand()
+        
+        # Call the 'list' action of ClipsCommand
+        result = cmd.execute(
+            action='list',
+            sort_by=sort_by,
+            sort_order=sort_order_param, # Use validated sort_order
+            limit=limit,
+            offset=offset,
+            filters=parsed_filters # Pass the parsed dictionary
+        )
+        
         if result.get('success'):
-            return jsonify(create_success_response(result))
+            # The ClipsCommand 'list' action returns data structured as {"clips": [...], "limit": ..., ...}
+            # We want to return this directly under the 'data' key of our standard success response.
+            return jsonify(create_success_response(result.get('data', {})))
         else:
-            return create_error_response(result.get('error', 'Failed to list clips'), 'CLIPS_LIST_ERROR', 500)
+            return create_error_response(result.get('error', 'Failed to list clips'),
+                                       'CLIPS_LIST_ERROR', 500)
 
     @app.route('/api/clips/<clip_id>', methods=['GET'])
     @log_request()
-    @require_auth
+    # @require_auth # Removed
     @handle_errors
     def get_clip_details_rest(clip_id: str):
         """Get detailed information about a specific clip."""
@@ -337,6 +263,7 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
         include = request.args.get('include', '')
         show_transcript = 'transcript' in include.split(',')
         show_analysis = 'analysis' in include.split(',')
+        from ..cli_commands import ClipsCommand
         cmd = ClipsCommand()
         result = cmd.execute(action='show', clip_id=clip_id, show_transcript=show_transcript, show_analysis=show_analysis)
         if result.get('success'):
@@ -344,31 +271,8 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
         else:
             return create_error_response(result.get('error', 'Clip not found'), 'CLIP_NOT_FOUND', 404)
 
-    @app.route('/api/clips/<clip_id>/transcript', methods=['GET'])
-    @log_request()
-    @require_auth
-    @handle_errors
-    def get_clip_transcript_rest(clip_id: str):
-        """Get transcript for a specific clip."""
-        cmd = ClipsCommand()
-        result = cmd.execute(action='transcript', clip_id=clip_id)
-        if result.get('success'):
-            return jsonify(create_success_response(result.get('data', {})))
-        else:
-            return create_error_response(result.get('error', 'Transcript not found'), 'TRANSCRIPT_NOT_FOUND', 404)
-
-    @app.route('/api/clips/<clip_id>/analysis', methods=['GET'])
-    @log_request()
-    @require_auth
-    @handle_errors
-    def get_clip_analysis_rest(clip_id: str):
-        """Get AI analysis for a specific clip."""
-        cmd = ClipsCommand()
-        result = cmd.execute(action='analysis', clip_id=clip_id)
-        if result.get('success'):
-            return jsonify(create_success_response(result.get('data', {})))
-        else:
-            return create_error_response(result.get('error', 'Analysis not found'), 'ANALYSIS_NOT_FOUND', 404)
+    # /api/clips/<clip_id>/transcript endpoint removed (data consolidated)
+    # /api/clips/<clip_id>/analysis endpoint removed (data consolidated)
     
     # ========================================================================
     # INGEST ENDPOINTS (Following Prefect Best Practices)
@@ -376,14 +280,14 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
     
     @app.route('/api/ingest', methods=['POST'])
     @log_request()
-    @require_auth
+    # @require_auth # Removed
     @handle_errors
     @validate_json_request(['directory'])
     def start_ingest():
         """Start video ingest process for a directory."""
         data = request.get_json()
         directory = data.get('directory')
-        user_email = getattr(request, 'user_email', 'unknown_user')
+        # user_email = getattr(request, 'user_email', 'unknown_user') # Removed user_email
 
         # Extract options from the top level of the request
         # These correspond to IngestCommand.start_ingest parameters
@@ -401,27 +305,28 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
 
         logger.info(f"Ingest request received by /api/ingest", directory=directory, options=options, user=user_email)
 
+        from ..cli_commands import IngestCommand
         cmd = IngestCommand()
         result = cmd.execute(
             action='start',
-            directory=directory, 
-            user_email=user_email, 
-            **options 
+            directory=directory,
+            # user_email=user_email, # Removed user_email
+            **options
         )
         logger.info("IngestCommand result in /api/ingest", raw_result=result)
         
         if result.get('success') and result.get('data', {}).get('task_run_id'):
             task_run_id = result['data']['task_run_id']
             total_files = result['data'].get('total_files', 0)
-            logger.info(f"Ingest flow submitted successfully via /api/ingest", 
+            logger.info(f"Ingest flow submitted successfully via /api/ingest",
                        task_run_id=task_run_id, directory=directory, total_files=total_files)
             
             # Start tracking progress
             progress_tracker.start_tracking(
                 flow_run_id=task_run_id,
                 directory=directory,
-                total_files=total_files,
-                user_email=user_email
+                total_files=total_files
+                # user_email=user_email # Removed user_email
             )
             
             response_data = create_success_response(result['data'], f"Ingest process started for {directory}")
@@ -441,7 +346,7 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
     
     @app.route('/api/progress/<task_run_id>', methods=['GET'])
     @log_request()
-    @require_auth
+    # @require_auth # Removed
     @handle_errors
     async def get_task_progress(task_run_id: str):
         """Get progress of a specific ingest task (flow run)."""
@@ -658,9 +563,9 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
     # Synchronous wrapper for the /api/progress GET endpoint
     @app.route('/api/progress', methods=['GET'])
     @log_request()
-    @require_auth
+    # @require_auth # Removed
     @handle_errors
-    def get_all_progress(): 
+    def get_all_progress():
         """Get progress of the active ingest using the progress tracker."""
         logger.info("Request processing started for /api/progress")
         
@@ -676,10 +581,11 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
     
     @app.route('/api/pipeline/steps', methods=['GET'])
     @log_request()
-    @require_auth
+    # @require_auth # Removed
     @handle_errors
     def get_pipeline_steps():
         """Get all available pipeline steps."""
+        from ..cli_commands import SystemCommand
         cmd = SystemCommand()
         result = cmd.execute(action='list_steps', format_type='json')
         
@@ -694,97 +600,73 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
     # ========================================================================
     
     @app.route('/api/thumbnail/<clip_id>')
-    @require_auth
+    # @require_auth # Removed
     @handle_errors
     def thumbnail_proxy(clip_id: str):
-        """Proxy thumbnail requests (for extension compatibility).
-        
-        This endpoint fetches the thumbnail image from Supabase storage and serves it
-        to the client with appropriate headers. It handles authentication and CORS issues
-        that might occur when the extension tries to access storage directly.
-        """
+        """Serve thumbnail image from local storage."""
         try:
-            from ..auth import AuthManager
-            import mimetypes
-            import datetime
-            
-            # Get authenticated client
-            auth_manager = AuthManager()
-            client = auth_manager.get_authenticated_client()
-            
-            # Get clip details
-            clip_result = client.table('clips').select('id, thumbnail_url, updated_at').eq('id', clip_id).execute()
-            
-            if not clip_result.data or not clip_result.data[0]:
+            # Imports moved to top of file if not already there,
+            # but for clarity in this diff, showing them here.
+            # Ensure 'os' and 'mimetypes' are imported at the top of server.py
+            # from ..database.duckdb import connection as duckdb_connection # Already imported
+            # from ..database.duckdb import crud as duckdb_crud # Already imported
+            from ..database.duckdb import connection as duckdb_connection
+            from ..database.duckdb import crud as duckdb_crud
+            import mimetypes # Should be at the top of the file
+
+            with duckdb_connection.get_db_connection() as conn:
+                clip_details = duckdb_crud.get_clip_details(clip_id=clip_id, conn=conn)
+
+            if not clip_details:
                 return create_error_response("Clip not found", 'CLIP_NOT_FOUND', 404)
+
+            thumbnail_path = clip_details.get('primary_thumbnail_path')
+
+            if not thumbnail_path:
+                thumbnails_list = clip_details.get('thumbnails') # This is List[str] of paths
+                if isinstance(thumbnails_list, list) and thumbnails_list:
+                    # Attempt to use the first thumbnail from the general list if primary is not set
+                    # This list should contain paths to AI selected ones if ai_thumbnail_selection_step ran,
+                    # or paths to general thumbnails if not.
+                    thumbnail_path = thumbnails_list[0]
+                    logger.info(f"Primary thumbnail not set for clip {clip_id}, using first from 'thumbnails' list: {thumbnail_path}")
+                else:
+                    logger.warning(f"No primary_thumbnail_path or thumbnails list for clip {clip_id}")
+                    return create_error_response("Thumbnail path not found for clip", 'THUMBNAIL_NOT_FOUND', 404)
             
-            clip = clip_result.data[0]
-            thumbnail_url = clip.get('thumbnail_url')
+            if not isinstance(thumbnail_path, str):
+                logger.error(f"Thumbnail path for clip {clip_id} is not a string: {thumbnail_path}")
+                return create_error_response("Invalid thumbnail path format", 'INVALID_PATH', 500)
+
+            # Security check: Ensure the path is within an expected base directory if necessary
+            # For now, assuming paths stored in DB are safe and absolute or resolvable
+            if not os.path.isabs(thumbnail_path):
+                 # Attempt to resolve relative to a known base, e.g., project root or a configured media dir
+                 # This part is crucial and depends on how paths are stored and where the app runs.
+                 # For now, let's assume if it's not absolute, it might be relative to project root.
+                 # A better solution would be to store absolute paths or have a configured base media path.
+                 # current_app.root_path could be an option if paths are relative to app root.
+                 # For simplicity, if not absolute, we'll try to serve it as is,
+                 # but this might need adjustment based on actual path storage strategy.
+                 logger.warning(f"Thumbnail path {thumbnail_path} is not absolute. Attempting to serve as is.")
+
+
+            if not os.path.exists(thumbnail_path):
+                logger.error(f"Thumbnail file not found at path: {thumbnail_path} for clip {clip_id}")
+                return create_error_response("Thumbnail file not found on server", 'FILE_NOT_FOUND_SERVER', 404)
             
-            if not thumbnail_url:
-                return create_error_response("Thumbnail not found for clip", 'THUMBNAIL_NOT_FOUND', 404)
+            if not os.path.isfile(thumbnail_path):
+                logger.error(f"Thumbnail path is not a file: {thumbnail_path} for clip {clip_id}")
+                return create_error_response("Thumbnail path is not a file", 'PATH_NOT_FILE', 500)
+
+            content_type = mimetypes.guess_type(thumbnail_path)[0] or 'image/jpeg'
             
-            # Include cache header based on updated_at timestamp if available
-            last_updated = clip.get('updated_at')
-            
-            # Remove any trailing question mark from the URL
-            thumbnail_url = thumbnail_url.rstrip('?')
-            
-            # Parse URL to determine storage path
-            # URL format: https://{project}.supabase.co/storage/v1/object/public/{bucket}/{path}
-            try:
-                # Extract bucket and path from the URL
-                parts = thumbnail_url.split('/storage/v1/object/public/')
-                if len(parts) != 2:
-                    return create_error_response("Invalid thumbnail URL format", 'INVALID_URL', 500)
-                
-                bucket_and_path = parts[1]
-                # The first segment is the bucket name
-                bucket, *path_parts = bucket_and_path.split('/', 1)
-                path = path_parts[0] if path_parts else ""
-                
-                # Use storage admin API to download the file
-                response = client.storage.from_(bucket).download(path)
-                
-                # Determine content type based on file extension
-                content_type = mimetypes.guess_type(path)[0] or 'image/jpeg'
-                
-                # Create response with image data
-                image_response = Response(response, mimetype=content_type)
-                
-                # Add cache control headers
-                if last_updated:
-                    # Format timestamp for HTTP header
-                    if isinstance(last_updated, str):
-                        try:
-                            # Parse ISO format string to datetime
-                            last_updated_dt = datetime.datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
-                        except ValueError:
-                            # Fallback if parsing fails
-                            last_updated_dt = datetime.datetime.now(datetime.timezone.utc)
-                    elif isinstance(last_updated, datetime.datetime):
-                        last_updated_dt = last_updated
-                    else:
-                        last_updated_dt = datetime.datetime.now(datetime.timezone.utc)
-                    
-                    # Format for HTTP header
-                    last_modified_str = last_updated_dt.strftime('%a, %d %b %Y %H:%M:%S GMT')
-                    image_response.headers['Last-Modified'] = last_modified_str
-                    
-                    # Set cache control to use validation but allow caching
-                    image_response.headers['Cache-Control'] = 'private, max-age=86400'  # 24 hours
-                    image_response.headers['ETag'] = f'"{clip_id}-{int(last_updated_dt.timestamp())}"'
-                
-                return image_response
-                
-            except Exception as e:
-                logger.error(f"Error fetching thumbnail from storage: {str(e)}")
-                return create_error_response(f"Error fetching thumbnail: {str(e)}", 
-                                           'STORAGE_ERROR', 500)
-                
+            logger.info(f"Serving thumbnail for clip {clip_id} from path: {thumbnail_path}")
+            return send_file(thumbnail_path, mimetype=content_type)
+
         except Exception as e:
-            logger.error(f"Failed to get thumbnail for clip {clip_id}", error=str(e))
-            return create_error_response(f"Failed to get thumbnail: {str(e)}", 
+            logger.error(f"Failed to get thumbnail for clip {clip_id}", error=str(e), exc_info=True)
+            return create_error_response(f"Failed to get thumbnail: {str(e)}",
                                        'THUMBNAIL_ERROR', 500)
     
     # ========================================================================

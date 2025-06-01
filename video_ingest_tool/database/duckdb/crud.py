@@ -1,6 +1,7 @@
 import duckdb
 from typing import Dict, List, Optional, Any
 import logging
+import uuid # Add uuid import
 
 # Assuming get_db_connection will be imported from .connection
 # from .connection import get_db_connection
@@ -132,7 +133,10 @@ def get_clip_details(clip_id: str, conn: duckdb.DuckDBPyConnection) -> Optional[
         row = cur.fetchone()
         if row:
             column_names = [desc[0] for desc in cur.description]
-            return dict(zip(column_names, row))
+            clip_dict = dict(zip(column_names, row))
+            if 'id' in clip_dict and isinstance(clip_dict['id'], uuid.UUID): # Ensure uuid is imported if not already
+                clip_dict['id'] = str(clip_dict['id'])
+            return clip_dict
         return None
     except Exception as e:
         logger.error(f"Error fetching clip details for ID {clip_id}: {e}", exc_info=True)
@@ -156,7 +160,10 @@ def find_clip_by_checksum(checksum: str, conn: duckdb.DuckDBPyConnection) -> Opt
         row = cur.fetchone()
         if row:
             column_names = [desc[0] for desc in cur.description]
-            return dict(zip(column_names, row))
+            clip_dict = dict(zip(column_names, row))
+            if 'id' in clip_dict and isinstance(clip_dict['id'], uuid.UUID): # Ensure uuid is imported
+                clip_dict['id'] = str(clip_dict['id'])
+            return clip_dict
         return None
     except Exception as e:
         logger.error(f"Error finding clip by checksum {checksum}: {e}", exc_info=True)
@@ -198,8 +205,110 @@ def get_all_clips(conn: duckdb.DuckDBPyConnection, limit: int = 100, offset: int
         rows = cur.fetchall()
         if rows:
             column_names = [desc[0] for desc in cur.description]
-            return [dict(zip(column_names, row)) for row in rows]
+            results = []
+            for row in rows:
+                clip_dict = dict(zip(column_names, row))
+                if 'id' in clip_dict and isinstance(clip_dict['id'], uuid.UUID): # Ensure uuid is imported
+                    clip_dict['id'] = str(clip_dict['id'])
+                # Convert other potential UUIDs if they exist in the selection
+                results.append(clip_dict)
+            return results
         return []
     except Exception as e:
         logger.error(f"Error fetching all clips: {e}", exc_info=True)
+        return []
+def list_clips_advanced_duckdb(
+    conn: duckdb.DuckDBPyConnection,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+    limit: int = 20,
+    offset: int = 0,
+    filters: Optional[Dict[str, Any]] = None
+) -> List[Dict[str, Any]]:
+    """
+    Lists clips from the 'app_data.clips' table with advanced sorting and filtering.
+
+    Args:
+        conn: Active DuckDB connection.
+        sort_by: Column name to sort by.
+        sort_order: 'asc' or 'desc'.
+        limit: Maximum number of records to return.
+        offset: Number of records to skip (for pagination).
+        filters: A dictionary of filters to apply. 
+                 Example: {"column_name": "value", "other_column >=": 10}
+                 For more complex filters like date ranges, the calling function
+                 should construct the appropriate SQL filter strings.
+
+    Returns:
+        A list of dictionaries, where each dictionary represents a clip record.
+    """
+    logger.debug(
+        f"Listing clips with sort_by={sort_by}, sort_order={sort_order}, "
+        f"limit={limit}, offset={offset}, filters={filters}"
+    )
+    
+    # Basic validation for sort_by to prevent SQL injection if it's directly used.
+    # A more robust approach would be to map allowed sort_by values to actual column names.
+    allowed_sort_columns = [
+        "id", "local_path", "file_name", "file_checksum", "file_size_bytes",
+        "duration_seconds", "created_at", "processed_at", "updated_at", "width", "height",
+        "frame_rate", "codec", "container", "camera_make", "camera_model",
+        "content_category", "content_summary" 
+        # Add other sortable columns as needed from your schema
+    ]
+    if sort_by not in allowed_sort_columns:
+        logger.warning(f"Invalid sort_by column: {sort_by}. Defaulting to 'created_at'.")
+        sort_by = "created_at"
+
+    sort_order_sql = "DESC" if sort_order.lower() == "desc" else "ASC"
+    
+    base_query = "SELECT * FROM app_data.clips"
+    filter_clauses = []
+    filter_params = []
+
+    if filters:
+        for key, value in filters.items():
+            # This is a simple equality filter. More complex filters (>, <, LIKE, date ranges)
+            # would require more sophisticated parsing of the key or specific filter structures.
+            # For example, if key is "processed_at >=", then use "processed_at >= ?"
+            # For now, assuming simple equality or that the key contains the operator.
+            
+            parts = key.strip().split(" ", 1)
+            column_name = parts[0]
+            operator = "=" # Default operator
+            if len(parts) > 1:
+                operator = parts[1]
+
+            # Validate column_name against allowed columns to prevent injection
+            if column_name not in allowed_sort_columns: # Re-using allowed_sort_columns for filterable columns
+                logger.warning(f"Invalid filter column: {column_name}. Skipping this filter.")
+                continue
+            
+            # Basic operator whitelist
+            allowed_operators = ["=", "!=", ">", "<", ">=", "<=", "LIKE", "ILIKE"]
+            if operator.upper() not in allowed_operators:
+                logger.warning(f"Invalid filter operator: {operator} for column {column_name}. Using '='.")
+                operator = "="
+            
+            filter_clauses.append(f'"{column_name}" {operator.upper()} ?')
+            filter_params.append(value)
+
+    if filter_clauses:
+        base_query += " WHERE " + " AND ".join(filter_clauses)
+    
+    query_sql = f"{base_query} ORDER BY \"{sort_by}\" {sort_order_sql} LIMIT ? OFFSET ?"
+    query_params = filter_params + [limit, offset]
+    
+    logger.debug(f"Executing SQL for list_clips_advanced: {query_sql} with params: {query_params}")
+
+    try:
+        cur = conn.cursor()
+        cur.execute(query_sql, query_params)
+        rows = cur.fetchall()
+        if rows:
+            column_names_desc = [desc[0] for desc in cur.description]
+            return [dict(zip(column_names_desc, row)) for row in rows]
+        return []
+    except Exception as e:
+        logger.error(f"Error listing clips: {e}", exc_info=True)
         return []

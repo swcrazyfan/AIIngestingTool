@@ -14,7 +14,7 @@ from video_ingest_tool.models import (
     SpeakerAnalysis, SoundEvent, AudioQuality, VisualAnalysis, ShotType, TechnicalQuality,
     TextAndGraphics, DetectedText, DetectedLogo, KeyframeAnalysis, RecommendedKeyframe,
     ContentAnalysis, Entities, PersonDetail, Activity, ContentWarning,
-    AudioTrack, SubtitleTrack,
+    AudioTrack, SubtitleTrack, Embeddings, # Added Embeddings
     Location as ModelLocation # Alias if needed
 )
 
@@ -168,7 +168,8 @@ def test_prepare_clip_data_for_db_with_real_models(
 ):
     """Test mapping with real Pydantic models and AI thumbnail metadata."""
     vio = sample_video_ingest_output_model
-    prepared_data = prepare_clip_data_for_db(vio, sample_embeddings, sample_ai_selected_thumbnail_metadata)
+    vio.embeddings = Embeddings(**sample_embeddings) # Assign embeddings to model
+    prepared_data = prepare_clip_data_for_db(vio, sample_ai_selected_thumbnail_metadata) # Call with 2 args
 
     assert prepared_data is not None
     assert prepared_data["id"] == vio.id
@@ -305,10 +306,11 @@ def test_prepare_clip_data_minimal_real_input():
         analysis=minimal_analysis_details
         # audio_tracks, subtitle_tracks, thumbnails have defaults
     )
-    embeddings = {}
+    # embeddings = {} # No longer passed as dict
+    minimal_vio.embeddings = Embeddings() # Assign empty Embeddings model
     ai_thumb_meta_empty = []
 
-    prepared_data = prepare_clip_data_for_db(minimal_vio, embeddings, ai_thumb_meta_empty)
+    prepared_data = prepare_clip_data_for_db(minimal_vio, ai_thumb_meta_empty) # Call with 2 args
     assert prepared_data is not None
     assert prepared_data["file_checksum"] == "minimalsum"
     assert prepared_data["primary_thumbnail_path"] is None # No AI thumbs provided
@@ -367,8 +369,9 @@ def test_prepare_clip_data_various_none_fields(
             )
         )
     )
+    vio_with_nones.embeddings = Embeddings(**sample_embeddings) # Assign embeddings to model
 
-    prepared_data = prepare_clip_data_for_db(vio_with_nones, sample_embeddings, None) # No AI thumbs
+    prepared_data = prepare_clip_data_for_db(vio_with_nones, None) # No AI thumbs, call with 2 args
 
     assert prepared_data is not None
     assert prepared_data["id"] == vio_with_nones.id
@@ -486,8 +489,9 @@ def test_json_field_structures_and_defaults(
         subtitle_tracks=[],
         thumbnails=[]
     )
+    vio_partial_ai.embeddings = Embeddings(**sample_embeddings) # Assign embeddings to model
 
-    prepared_data = prepare_clip_data_for_db(vio_partial_ai, sample_embeddings, None)
+    prepared_data = prepare_clip_data_for_db(vio_partial_ai, None) # Call with 2 args
     assert prepared_data is not None
 
     # CameraDetails (should still serialize fine even if some internal fields are default/None)

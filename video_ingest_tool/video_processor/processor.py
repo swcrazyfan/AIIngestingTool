@@ -88,7 +88,7 @@ class VideoProcessor:
             
             # Compress video
             compressor = VideoCompressor(self.compression_config)
-            compressed_path = compressor.compress(file_path, output_dir)
+            compressed_path = compressor.compress_video(file_path, output_dir) # Corrected method name
             
             self.logger.info(f"Compression successful. Output: {compressed_path}")
             self.logger.info(f"Starting AI analysis...")

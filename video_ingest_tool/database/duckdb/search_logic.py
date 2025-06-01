@@ -33,7 +33,7 @@ def fulltext_search_clips_duckdb(
 
     select_columns = [
         "c.id", "c.file_name", "c.file_checksum", "c.content_summary", "c.transcript_preview",
-        "c.created_at", "c.duration_seconds", "c.primary_thumbnail_path"
+        "c.created_at", "c.duration_seconds", "c.primary_thumbnail_path", "c.content_category"
     ]
     select_columns_str = ", ".join(select_columns)
 

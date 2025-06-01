@@ -120,7 +120,7 @@ The final schema consists of a single `clips` table. See `duckdb_schema_crud_des
         *   `CREATE INDEX idx_clips_thumb1_vec ON app_data.clips USING HNSW (thumbnail_1_embedding);` (and for thumb2, thumb3).
 -   **Standard B-Tree Indexes:** Create on frequently queried/sorted columns (e.g., `clips.created_at`, `clips.file_checksum`).
 
-## 5. Search Functionality Migration (`search_logic.py`) ⬜
+## 5. Search Functionality Migration (`search_logic.py`) ✅
 
 The SQL functions from `supabase_schema_and_functions.md` need to be adapted to DuckDB's SQL dialect and FTS/VSS mechanisms. These will be implemented as Python functions in `search_logic.py` that construct and execute the appropriate DuckDB SQL.
 
@@ -129,27 +129,24 @@ The SQL functions from `supabase_schema_and_functions.md` need to be adapted to 
     *   Logic: Use `fts_main_app_data_clips.match_bm25(id, query_text)` on the FTS index of the `clips` table.
     *   Order by rank, limit by `match_count`.
 
-*   **`semantic_search_clips`:** (Enhanced to support text and thumbnail embeddings)
-    *   Input: `query_summary_embedding (FLOAT[1024])`, `query_keyword_embedding (FLOAT[1024])`, `query_thumbnail_1_embedding (FLOAT[768])`, etc., `match_count`, weights for each embedding type, threshold.
+*   **`semantic_search_clips`:** (For external text query embeddings)
+    *   Input: `query_summary_embedding (FLOAT[1024])`, `query_keyword_embedding (FLOAT[1024])`, `match_count`, weights for summary/keyword, threshold.
     *   Logic:
-        *   Calculate cosine similarity for each provided query embedding against its corresponding column in `app_data.clips` (e.g., `summary_embedding`, `keyword_embedding`, `thumbnail_1_embedding`, `thumbnail_2_embedding`, `thumbnail_3_embedding`). DuckDB's `array_cosine_similarity` function from the `vss` extension will be used.
-        *   Filter by `similarity_threshold` on the combined weighted score.
-        *   Combine scores using provided weights for each embedding type.
-        *   Order by combined similarity, limit by `match_count`.
+        *   Calculates cosine similarity for `summary_embedding` and `keyword_embedding` against `app_data.clips`.
+        *   Combines scores using weights, filters by threshold, orders, and limits.
 
-*   **`find_similar_clips`:**
-    *   Input: `source_clip_id (UUID)`, `mode ('text' | 'visual' | 'combined')`, `match_count`, weights, threshold.
+*   **`find_similar_clips`:** (For finding clips similar to a source clip)
+    *   Input: `source_clip_id (UUID)`, `mode ('text' | 'visual' | 'combined')`, `match_count`, various weights for text and visual components, threshold.
     *   Logic:
-        1.  Fetch the embeddings of the `source_clip_id` from `app_data.clips` table (summary, keyword, and thumbnail_1/2/3 embeddings).
-        2.  Based on the `mode`:
-            *   'text': Use `summary_embedding` and `keyword_embedding` of the source clip as query embeddings.
-            *   'visual': Use `thumbnail_1_embedding`, `thumbnail_2_embedding`, `thumbnail_3_embedding` of the source clip as query embeddings.
-            *   'combined': Use all fetched text and visual embeddings as query embeddings.
-        3.  Call the enhanced `semantic_search_clips` function with the selected query embeddings and appropriate weights for the chosen mode.
-        4.  Ensure the `source_clip_id` itself is excluded from the results.
-        5.  Order by similarity, limit by `match_count`.
+        1.  Fetches all embeddings (text and visual) for the `source_clip_id`.
+        2.  Based on `mode`:
+            *   'text': Dynamically builds SQL to compare source text embeddings against `summary_embedding` and `keyword_embedding` of other clips.
+            *   'visual': Dynamically builds SQL to compare source thumbnail embeddings against `thumbnail_1/2/3_embedding` of other clips.
+            *   'combined': Dynamically builds SQL to compare all source text and visual embeddings against corresponding columns of other clips, applying overall factors for text vs. visual contributions.
+        3.  Excludes `source_clip_id` directly in SQL.
+        4.  Orders by combined similarity, limits by `match_count`.
 
-*   **`hybrid_search_clips`:**
+*   **`hybrid_search_clips`:** (Combines FTS with text-based semantic search)
     *   Input: `query_text`, `query_summary_embedding`, `query_keyword_embedding`, weights, thresholds, `rrf_k`, `match_count`.
     *   Logic:
         1.  Perform FTS to get ranked results (CTE_fts).
@@ -250,20 +247,22 @@ These findings were critical for getting the FTS index tests in `test_schema.py`
 -   🧪 **Testing 2.2:**
     -   ⬜ Write unit tests for each CRUD function in `crud.py`.
 
-### Phase 3: Search Functionality Implementation ⬜
--   ⬜ **Task 3.1:** Implement search functions in `video_ingest_tool/database/duckdb/search_logic.py`:
-    -   ⬜ `fulltext_search_clips_duckdb`
-    -   ⬜ `semantic_search_clips_duckdb`
-    -   ⬜ `hybrid_search_clips_duckdb`
-    -   ⬜ `search_transcripts_duckdb`
-    -   (Adapt SQL logic from `supabase_schema_and_functions.md` and DuckDB FTS/VSS documentation).
+### Phase 3: Search Functionality Implementation ✅
+-   ✅ **Task 3.1:** Implement search functions in `video_ingest_tool/database/duckdb/search_logic.py`:
+    -   ✅ `fulltext_search_clips_duckdb`
+    -   ✅ `semantic_search_clips_duckdb` (for external text query embeddings)
+    -   ✅ `hybrid_search_clips_duckdb` (FTS + text semantic)
+    -   ✅ `find_similar_clips_duckdb` (text, visual, combined similarity to source clip)
+    -   ✅ `search_transcripts_duckdb` (currently uses FTS, can be specialized later)
+    -   (Adapted SQL logic from `supabase_schema_and_functions.md` and DuckDB FTS/VSS documentation).
 -   🧪 **Testing 3.2:**
-    -   ⬜ Write unit tests for each search function. This will require setting up test data with embeddings and FTS content. Verify ranking, filtering, and limit clauses.
+    -   ✅ Write unit tests for each search function using mocked embeddings.
+    -   ✅ Write integration tests for `semantic_search_clips_duckdb` and `find_similar_clips_duckdb` using real API calls for embedding generation.
 
 ### Phase 4: Refactor Core Application Logic ⬜
 -   ⬜ **Task 4.1:** Refactor `video_ingest_tool/database_storage.py`:
     -   ⬜ Remove Supabase-specific code.
-    -   ⬜ Update `store_video_in_database` (or its replacement) to use the new DuckDB CRUD operations from `video_ingest_tool/database/duckdb/crud.py`.
+    -   ⬜ Update `store_video_in_database` (or its replacement) to use the new DuckDB CRUD operations from `video_ingest_tool/database/duckdb/crud.py`. or actually maybe the '/video_ingest_tool/database/duckdb/mappers.py' you will have to read both and see. I think mappers is right.
 -   ⬜ **Task 4.2:** Refactor `video_ingest_tool/cli_commands/` (`SearchCommand`, `ClipsCommand`, `IngestCommand`):
     -   ⬜ Replace Supabase client/RPC calls with calls to the new DuckDB layer (`crud.py`, `search_logic.py`).
     -   ⬜ Remove `AuthCommand` and its usage.

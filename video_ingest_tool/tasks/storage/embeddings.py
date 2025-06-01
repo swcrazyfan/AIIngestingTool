@@ -52,6 +52,9 @@ def generate_embeddings_step(data: Dict[str, Any], logger=None) -> Dict[str, Any
     
     try:
         # 1. Prepare text content for summary and keyword embeddings
+        if logger:
+            logger.info("Starting embedding generation - preparing content")
+        
         summary_content, keyword_content, prep_metadata = prepare_embedding_content(output_model)
         embeddings_results['metadata'].update(prep_metadata) # prep_metadata contains token counts and truncation for summary/keyword
         
@@ -64,6 +67,9 @@ def generate_embeddings_step(data: Dict[str, Any], logger=None) -> Dict[str, Any
         # 2. Generate summary and keyword embeddings
         # Ensure content is not empty before passing to generate_embeddings,
         # as the reverted generate_embeddings expects non-optional strings.
+        if logger:
+            logger.info("Generating text embeddings")
+            
         s_emb, k_emb = None, None
         if summary_content and keyword_content:
             s_emb, k_emb = generate_embeddings(
@@ -84,13 +90,16 @@ def generate_embeddings_step(data: Dict[str, Any], logger=None) -> Dict[str, Any
         embeddings_results['summary_embedding'] = s_emb
         embeddings_results['keyword_embedding'] = k_emb
         
+        if logger:
+            logger.info(f"Generated text embeddings - Summary: {len(s_emb) if s_emb else 0}D, Keyword: {len(k_emb) if k_emb else 0}D")
+        
         # 3. Generate AI thumbnail/image embeddings
         # batch_generate_thumbnail_embeddings returns Dict[str, List[float]]
         # where key is thumbnail_path
-        if ai_thumbnail_metadata:
-            if logger:
-                logger.info(f"Processing embeddings for {len(ai_thumbnail_metadata)} AI thumbnails")
+        if logger:
+            logger.info(f"Processing image embeddings for {len(ai_thumbnail_metadata) if ai_thumbnail_metadata else 0} AI thumbnails")
             
+        if ai_thumbnail_metadata:
             image_embeddings_dict = batch_generate_thumbnail_embeddings(
                 ai_thumbnail_metadata, # expects list of dicts with 'thumbnail_path'
                 logger=logger
@@ -105,7 +114,7 @@ def generate_embeddings_step(data: Dict[str, Any], logger=None) -> Dict[str, Any
                 logger.info("No AI thumbnail metadata provided for embedding generation.")
 
         if logger:
-            logger.info("Successfully generated requested embeddings (summary, keyword, images).")
+            logger.info("Successfully generated all requested embeddings (summary, keyword, images).")
         
         return {
             'embeddings_generated': True,
@@ -113,10 +122,12 @@ def generate_embeddings_step(data: Dict[str, Any], logger=None) -> Dict[str, Any
         }
         
     except Exception as e:
+        error_msg = str(e)
         if logger:
-            logger.error(f"Embedding generation failed: {str(e)}", exc_info=True)
+            logger.error(f"Embedding generation failed with error: {error_msg}", exc_info=True)
         return {
             'embeddings_failed': True,
-            'error': str(e),
+            'error': error_msg,
+            'exception_type': type(e).__name__,
             'details': embeddings_results # return any partial results
         }

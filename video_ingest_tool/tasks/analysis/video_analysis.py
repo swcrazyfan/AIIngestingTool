@@ -8,6 +8,7 @@ import os
 from typing import Dict, Any, Optional
 from ...config import DEFAULT_COMPRESSION_CONFIG, Config
 from prefect import task
+from ...video_processor.compression import VideoCompressor # Moved import to top
 
 # Try to import VideoProcessor - it may not be available if dependencies are missing
 try:
@@ -152,9 +153,9 @@ def ai_video_analysis_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
             if logger:
                 logger.info("No pre-compressed video found, compressing now...")
             # Compress the video now
-            from ...video_processor.compression import VideoCompressor
+            # from ...video_processor.compression import VideoCompressor # Already imported at top
             compressor = VideoCompressor(compression_config)
-            compressed_path = compressor.compress(file_path, run_dir)
+            compressed_path = compressor.compress_video(file_path, run_dir) # Corrected to compress_video
             video_to_analyze = compressed_path
             output['compressed_video_path'] = compressed_path
         # Process the video (this will analyze the compressed video)

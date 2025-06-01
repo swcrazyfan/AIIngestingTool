@@ -45,7 +45,26 @@ def consolidate_metadata_step(data: Dict[str, Any], logger=None) -> Dict[str, An
         # Add any other technical fields you want to preserve
     ]
     for key in tech_keys:
-        master_metadata[key] = mediainfo_data.get(key, ffprobe_data.get(key, exiftool_data.get(key, codec_params.get(key))))
+        val_mediainfo = mediainfo_data.get(key)
+        val_ffprobe = ffprobe_data.get(key)
+        val_exiftool = exiftool_data.get(key) # Fallback
+        val_codec_params = codec_params.get(key) # Fallback
+
+        # Prioritize in order: mediainfo -> ffprobe -> exiftool -> codec_params
+        chosen_value = None
+        if val_mediainfo is not None:
+            chosen_value = val_mediainfo
+        elif val_ffprobe is not None:
+            chosen_value = val_ffprobe
+        elif val_exiftool is not None:
+            chosen_value = val_exiftool
+        elif val_codec_params is not None:
+            chosen_value = val_codec_params
+        
+        master_metadata[key] = chosen_value
+        
+        if logger and key in ['duration_seconds', 'width', 'height', 'frame_rate', 'codec', 'container', 'bit_rate_kbps']:
+            logger.debug(f"Consolidated '{key}': MI='{val_mediainfo}', FF='{val_ffprobe}', ET='{val_exiftool}', CP='{val_codec_params}' -> Final='{chosen_value}'")
 
     # Prioritize sources for camera/lens info
     camera_keys = [

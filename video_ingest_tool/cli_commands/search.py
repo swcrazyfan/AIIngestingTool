@@ -56,8 +56,7 @@ class SearchCommand(BaseCommand):
                 return self.list_recent(**kwargs)
             elif action == 'similar':
                 return self.find_similar(**kwargs)
-            elif action == 'stats':
-                return self.get_stats()
+            # 'stats' action removed as user-specific stats are being phased out
             else:
                 return {
                     "success": False,
@@ -91,9 +90,17 @@ class SearchCommand(BaseCommand):
             if not query:
                 raise ValueError("Query is required for search operations")
             
-            search_type = kwargs.get('search_type', 'hybrid')
-            if search_type not in ['semantic', 'fulltext', 'hybrid', 'transcripts']:
-                raise ValueError(f"Invalid search type: {search_type}")
+            search_type_input = kwargs.get('search_type', 'hybrid').lower()
+            
+            # Map API/user-friendly search types to internal SearchType enum or recognized strings
+            if search_type_input == 'all':
+                kwargs['search_type'] = 'hybrid' # 'all' from API maps to 'hybrid'
+            elif search_type_input == 'keyword':
+                kwargs['search_type'] = 'fulltext' # 'keyword' from API maps to 'fulltext'
+            elif search_type_input in ['semantic', 'fulltext', 'hybrid', 'transcripts']:
+                kwargs['search_type'] = search_type_input # Already a valid internal type
+            else:
+                raise ValueError(f"Invalid search type: {search_type_input}. Valid types are 'all', 'keyword', 'semantic', 'fulltext', 'hybrid', 'transcripts'.")
                 
         elif action == 'similar':
             clip_id = kwargs.get('clip_id', '').strip()
@@ -136,26 +143,32 @@ class SearchCommand(BaseCommand):
         
         return kwargs
     
-    def search(self, query: str, search_type: str = 'hybrid', match_count: int = 20, 
+    def search(self, query: str, search_type: str = 'hybrid',
                filters: Optional[Dict[str, Any]] = None, weights: Optional[Dict[str, float]] = None,
+               limit: Optional[int] = None, # Added limit from kwargs
+               match_count: Optional[int] = None, # Keep match_count for direct calls
                **kwargs) -> Dict[str, Any]:
         """Perform search operation.
         
         Args:
             query: Search query text
             search_type: Type of search to perform
-            match_count: Number of results to return
             filters: Optional filters
             weights: Optional search weights
+            limit: Number of results to return (often from API query params)
+            match_count: Number of results to return (alternative to limit)
             
         Returns:
             Dict with search results and metadata
         """
+        # Prioritize limit if provided (usually from API), else use match_count, else default.
+        effective_match_count = limit if limit is not None else match_count if match_count is not None else 20
+
         try:
             results = self.searcher.search(
                 query=query,
                 search_type=search_type,
-                match_count=match_count,
+                match_count=effective_match_count,
                 filters=filters,
                 weights=weights
             )
@@ -165,11 +178,13 @@ class SearchCommand(BaseCommand):
             
             return {
                 "success": True,
-                "results": formatted_results,
-                "total": len(formatted_results),
-                "query": query,
-                "search_type": search_type,
-                "match_count": match_count
+                "data": {
+                    "results": formatted_results,
+                    "total": len(formatted_results),
+                    "query": query,
+                    "search_type": search_type,
+                    "match_count": effective_match_count
+                }
             }
             
         except Exception as e:
@@ -205,12 +220,14 @@ class SearchCommand(BaseCommand):
             
             return {
                 "success": True,
-                "results": results,
-                "total": len(results),
-                "sort_by": sort_by,
-                "sort_order": sort_order,
-                "limit": limit,
-                "offset": offset
+                "data": {
+                    "results": results,
+                    "total": len(results),
+                    "sort_by": sort_by,
+                    "sort_order": sort_order,
+                    "limit": limit,
+                    "offset": offset
+                }
             }
             
         except Exception as e:
@@ -244,11 +261,13 @@ class SearchCommand(BaseCommand):
             
             return {
                 "success": True,
-                "results": formatted_results,
-                "total": len(formatted_results),
-                "clip_id": clip_id,
-                "match_count": match_count,
-                "similarity_threshold": similarity_threshold
+                "data": {
+                    "results": formatted_results,
+                    "total": len(formatted_results),
+                    "clip_id": clip_id,
+                    "match_count": match_count,
+                    "similarity_threshold": similarity_threshold
+                }
             }
             
         except Exception as e:
@@ -275,23 +294,5 @@ class SearchCommand(BaseCommand):
             **kwargs
         )
     
-    def get_stats(self) -> Dict[str, Any]:
-        """Get user statistics.
-        
-        Returns:
-            Dict with user stats
-        """
-        try:
-            stats = self.searcher.get_user_stats()
-            
-            return {
-                "success": True,
-                "stats": stats
-            }
-            
-        except Exception as e:
-            logger.error(f"Get stats failed: {str(e)}")
-            return {
-                "success": False,
-                "error": f"Get stats failed: {str(e)}"
-            } 
+    # get_stats method removed as user-specific stats are being phased out.
+    # The corresponding 'stats' action has also been removed from the execute method.

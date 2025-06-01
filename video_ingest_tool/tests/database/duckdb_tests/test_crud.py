@@ -8,7 +8,8 @@ from video_ingest_tool.database.duckdb.crud import (
     get_clip_details,
     find_clip_by_checksum,
     delete_clip_by_id,
-    get_all_clips
+    get_all_clips,
+    list_clips_advanced_duckdb # Added import
 )
 from video_ingest_tool.database.duckdb.schema import initialize_schema
 from video_ingest_tool.database.duckdb.mappers import prepare_clip_data_for_db
@@ -17,7 +18,9 @@ from video_ingest_tool.database.duckdb.connection import get_db_connection
 from video_ingest_tool.models import (
     VideoIngestOutput, FileInfo, VideoDetails, AnalysisDetails,
     VideoCodecDetails, VideoResolution, VideoColorDetails, VideoHDRDetails, VideoExposureDetails,
-    CameraDetails, CameraFocalLength, CameraSettings, CameraLocation # Added Camera models for completeness
+    CameraDetails, CameraFocalLength, CameraSettings, CameraLocation, # Added Camera models for completeness
+    Embeddings, # Import Embeddings model
+    ComprehensiveAIAnalysis, AIAnalysisSummary # Import for nested data
 )
 
 # Sample data for testing - can be expanded or moved to fixtures
@@ -100,6 +103,7 @@ def test_upsert_new_clip(db_conn):
         "thumbnail_2_embedding": None,
         "thumbnail_3_embedding": None,
     }
+    video_output_data.embeddings = Embeddings(**mock_embeddings) # Assign to the model
     
     # ai_selected_thumbnail_metadata is also needed by the mapper
     mock_ai_thumbnails_metadata = [
@@ -107,7 +111,7 @@ def test_upsert_new_clip(db_conn):
         {"rank": 2, "path": f"/test/thumb_{checksum}_2.jpg", "timestamp_seconds": 20.0, "description": "Thumb 2"},
     ]
 
-    prepared_data = prepare_clip_data_for_db(video_output_data, mock_embeddings, mock_ai_thumbnails_metadata)
+    prepared_data = prepare_clip_data_for_db(video_output_data, mock_ai_thumbnails_metadata) # mock_embeddings removed from call
     assert prepared_data is not None, "Mapper failed to prepare data"
     assert prepared_data["id"] == str(clip_id_uuid)
     assert prepared_data["file_checksum"] == checksum
@@ -163,9 +167,10 @@ def test_upsert_existing_clip(db_conn):
         "summary_embedding": [0.1] * 1024, "keyword_embedding": [0.2] * 1024,
         "thumbnail_1_embedding": None, "thumbnail_2_embedding": None, "thumbnail_3_embedding": None,
     }
+    video_output_initial.embeddings = Embeddings(**mock_embeddings) # Assign to the model
     mock_ai_thumbnails_initial = [{"rank": 1, "path": f"/test/thumb_{checksum}_initial.jpg", "description": "Initial"}]
     
-    prepared_initial_data = prepare_clip_data_for_db(video_output_initial, mock_embeddings, mock_ai_thumbnails_initial)
+    prepared_initial_data = prepare_clip_data_for_db(video_output_initial, mock_ai_thumbnails_initial) # mock_embeddings removed
     assert prepared_initial_data is not None
     
     initial_upsert_id = upsert_clip_data(prepared_initial_data, conn)
@@ -190,9 +195,10 @@ def test_upsert_existing_clip(db_conn):
         "summary_embedding": [0.9] * 1024, "keyword_embedding": [0.8] * 1024, # Changed embeddings
         "thumbnail_1_embedding": None, "thumbnail_2_embedding": None, "thumbnail_3_embedding": None,
     }
+    video_output_updated.embeddings = Embeddings(**updated_mock_embeddings) # Assign to the model
     mock_ai_thumbnails_updated = [{"rank": 1, "path": f"/test/thumb_{checksum}_updated.jpg", "description": "Updated"}]
 
-    prepared_updated_data = prepare_clip_data_for_db(video_output_updated, updated_mock_embeddings, mock_ai_thumbnails_updated)
+    prepared_updated_data = prepare_clip_data_for_db(video_output_updated, mock_ai_thumbnails_updated) # updated_mock_embeddings removed
     assert prepared_updated_data is not None
     
     # Explicitly set created_at in the data for the update operation to be the same as the initial one.
@@ -276,8 +282,9 @@ def test_get_clip_details(db_conn):
     clip_id_uuid = uuid.uuid4()
 
     video_output = get_sample_video_ingest_output(checksum_val=checksum, id_val=clip_id_uuid)
-    mock_embeddings = {"summary_embedding": None, "keyword_embedding": None, "thumbnail_1_embedding": None, "thumbnail_2_embedding": None, "thumbnail_3_embedding": None}
-    prepared_data = prepare_clip_data_for_db(video_output, mock_embeddings, None)
+    mock_embeddings_dict = {"summary_embedding": None, "keyword_embedding": None, "thumbnail_1_embedding": None, "thumbnail_2_embedding": None, "thumbnail_3_embedding": None}
+    video_output.embeddings = Embeddings(**mock_embeddings_dict)
+    prepared_data = prepare_clip_data_for_db(video_output, None) # mock_embeddings removed
     assert prepared_data is not None
     
     upserted_id = upsert_clip_data(prepared_data, conn)
@@ -301,8 +308,9 @@ def test_find_clip_by_checksum(db_conn):
     clip_id_uuid = uuid.uuid4()
 
     video_output = get_sample_video_ingest_output(checksum_val=checksum, id_val=clip_id_uuid)
-    mock_embeddings = {"summary_embedding": None, "keyword_embedding": None, "thumbnail_1_embedding": None, "thumbnail_2_embedding": None, "thumbnail_3_embedding": None}
-    prepared_data = prepare_clip_data_for_db(video_output, mock_embeddings, None)
+    mock_embeddings_dict = {"summary_embedding": None, "keyword_embedding": None, "thumbnail_1_embedding": None, "thumbnail_2_embedding": None, "thumbnail_3_embedding": None}
+    video_output.embeddings = Embeddings(**mock_embeddings_dict)
+    prepared_data = prepare_clip_data_for_db(video_output, None) # mock_embeddings removed
     assert prepared_data is not None
 
     upserted_id = upsert_clip_data(prepared_data, conn)
@@ -325,8 +333,9 @@ def test_delete_clip_by_id(db_conn):
     clip_id_uuid = uuid.uuid4()
 
     video_output = get_sample_video_ingest_output(checksum_val=checksum, id_val=clip_id_uuid)
-    mock_embeddings = {"summary_embedding": None, "keyword_embedding": None, "thumbnail_1_embedding": None, "thumbnail_2_embedding": None, "thumbnail_3_embedding": None}
-    prepared_data = prepare_clip_data_for_db(video_output, mock_embeddings, None)
+    mock_embeddings_dict = {"summary_embedding": None, "keyword_embedding": None, "thumbnail_1_embedding": None, "thumbnail_2_embedding": None, "thumbnail_3_embedding": None}
+    video_output.embeddings = Embeddings(**mock_embeddings_dict)
+    prepared_data = prepare_clip_data_for_db(video_output, None) # mock_embeddings removed
     assert prepared_data is not None
     
     upserted_id_str = upsert_clip_data(prepared_data, conn)
@@ -360,8 +369,9 @@ def test_get_all_clips(db_conn):
         clip_id = uuid.uuid4()
         ids_inserted.append(str(clip_id))
         video_output = get_sample_video_ingest_output(checksum_val=checksum, id_val=clip_id)
-        mock_embeddings = {"summary_embedding": None, "keyword_embedding": None, "thumbnail_1_embedding": None, "thumbnail_2_embedding": None, "thumbnail_3_embedding": None}
-        prepared_data = prepare_clip_data_for_db(video_output, mock_embeddings, None)
+        mock_embeddings_dict = {"summary_embedding": None, "keyword_embedding": None, "thumbnail_1_embedding": None, "thumbnail_2_embedding": None, "thumbnail_3_embedding": None}
+        video_output.embeddings = Embeddings(**mock_embeddings_dict)
+        prepared_data = prepare_clip_data_for_db(video_output, None) # mock_embeddings removed
         assert prepared_data is not None
         upsert_clip_data(prepared_data, conn)
 
@@ -413,3 +423,140 @@ def test_get_all_clips(db_conn):
     # Test offset beyond total items
     empty_clips = get_all_clips(conn, offset=10)
     assert len(empty_clips) == 0
+
+def test_list_clips_advanced(db_conn):
+    """Test retrieving clips with advanced sorting and filtering."""
+    conn = db_conn
+    
+    # Insert sample data with varying fields for sorting/filtering
+    clip_data_list = [
+        get_sample_video_ingest_output(checksum_val="adv_cs1", id_val=uuid.uuid4()),
+        get_sample_video_ingest_output(checksum_val="adv_cs2", id_val=uuid.uuid4()),
+        get_sample_video_ingest_output(checksum_val="adv_cs3", id_val=uuid.uuid4()),
+        get_sample_video_ingest_output(checksum_val="adv_cs4", id_val=uuid.uuid4()),
+        get_sample_video_ingest_output(checksum_val="adv_cs5", id_val=uuid.uuid4()),
+    ]
+
+    # Modify some data for distinctness
+    clip_data_list[0].file_info.file_name = "zeta_clip.mp4"
+    clip_data_list[0].video.duration_seconds = 120.5
+    clip_data_list[0].file_info.created_at = datetime.now(timezone.utc) - timedelta(days=5)
+    if clip_data_list[0].analysis.ai_analysis is None: clip_data_list[0].analysis.ai_analysis = ComprehensiveAIAnalysis()
+    if clip_data_list[0].analysis.ai_analysis.summary is None: clip_data_list[0].analysis.ai_analysis.summary = AIAnalysisSummary()
+    clip_data_list[0].analysis.ai_analysis.summary.content_category = "CategoryA"
+
+    clip_data_list[1].file_info.file_name = "alpha_clip.mp4"
+    clip_data_list[1].video.duration_seconds = 30.0
+    clip_data_list[1].file_info.created_at = datetime.now(timezone.utc) - timedelta(days=2)
+    if clip_data_list[1].analysis.ai_analysis is None: clip_data_list[1].analysis.ai_analysis = ComprehensiveAIAnalysis()
+    if clip_data_list[1].analysis.ai_analysis.summary is None: clip_data_list[1].analysis.ai_analysis.summary = AIAnalysisSummary()
+    clip_data_list[1].analysis.ai_analysis.summary.content_category = "CategoryB"
+
+    clip_data_list[2].file_info.file_name = "gamma_clip.mp4"
+    clip_data_list[2].video.duration_seconds = 180.0
+    clip_data_list[2].file_info.created_at = datetime.now(timezone.utc) - timedelta(days=10)
+    if clip_data_list[2].analysis.ai_analysis is None: clip_data_list[2].analysis.ai_analysis = ComprehensiveAIAnalysis()
+    if clip_data_list[2].analysis.ai_analysis.summary is None: clip_data_list[2].analysis.ai_analysis.summary = AIAnalysisSummary()
+    clip_data_list[2].analysis.ai_analysis.summary.content_category = "CategoryA"
+    
+    clip_data_list[3].file_info.file_name = "beta_clip.mp4"
+    clip_data_list[3].video.duration_seconds = 60.2
+    clip_data_list[3].file_info.created_at = datetime.now(timezone.utc) - timedelta(days=1)
+    # Ensure ai_analysis and summary exist if we want to test filtering for None/missing content_category
+    if clip_data_list[3].analysis.ai_analysis is None: clip_data_list[3].analysis.ai_analysis = ComprehensiveAIAnalysis()
+    if clip_data_list[3].analysis.ai_analysis.summary is None: clip_data_list[3].analysis.ai_analysis.summary = AIAnalysisSummary()
+    clip_data_list[3].analysis.ai_analysis.summary.content_category = None # Explicitly None
+
+    clip_data_list[4].file_info.file_name = "delta_clip.mp4"
+    clip_data_list[4].video.duration_seconds = 90.0
+    clip_data_list[4].file_info.created_at = datetime.now(timezone.utc) # Most recent
+    if clip_data_list[4].analysis.ai_analysis is None: clip_data_list[4].analysis.ai_analysis = ComprehensiveAIAnalysis()
+    if clip_data_list[4].analysis.ai_analysis.summary is None: clip_data_list[4].analysis.ai_analysis.summary = AIAnalysisSummary()
+    clip_data_list[4].analysis.ai_analysis.summary.content_category = "CategoryB"
+
+
+    mock_embeddings_dict = {"summary_embedding": None, "keyword_embedding": None, "thumbnail_1_embedding": None, "thumbnail_2_embedding": None, "thumbnail_3_embedding": None}
+    
+    inserted_ids = []
+    for video_output in clip_data_list:
+        video_output.embeddings = Embeddings(**mock_embeddings_dict) # Assign embeddings
+        prepared_data = prepare_clip_data_for_db(video_output, None) # mock_embeddings removed from call
+        assert prepared_data is not None
+        upsert_id = upsert_clip_data(prepared_data, conn)
+        assert upsert_id is not None
+        inserted_ids.append(upsert_id)
+    
+    conn.commit()
+
+    # 1. Test default sorting (created_at DESC)
+    default_sorted_clips = list_clips_advanced_duckdb(conn)
+    assert len(default_sorted_clips) == 5
+    assert default_sorted_clips[0]["file_name"] == "delta_clip.mp4" # Most recent
+    assert default_sorted_clips[4]["file_name"] == "gamma_clip.mp4" # Oldest
+
+    # 2. Test sorting by file_name ASC
+    filename_asc_clips = list_clips_advanced_duckdb(conn, sort_by="file_name", sort_order="asc")
+    assert len(filename_asc_clips) == 5
+    assert filename_asc_clips[0]["file_name"] == "alpha_clip.mp4"
+    assert filename_asc_clips[4]["file_name"] == "zeta_clip.mp4"
+
+    # 3. Test sorting by duration_seconds DESC
+    duration_desc_clips = list_clips_advanced_duckdb(conn, sort_by="duration_seconds", sort_order="desc")
+    assert len(duration_desc_clips) == 5
+    assert duration_desc_clips[0]["file_name"] == "gamma_clip.mp4" # 180.0s
+    assert duration_desc_clips[4]["file_name"] == "alpha_clip.mp4" # 30.0s
+
+    # 4. Test filtering by content_category = "CategoryA"
+    category_a_clips = list_clips_advanced_duckdb(conn, filters={"content_category": "CategoryA"})
+    assert len(category_a_clips) == 2
+    for clip in category_a_clips:
+        assert clip["content_category"] == "CategoryA"
+
+    # 5. Test filtering by content_category = "CategoryB" and sort by duration_seconds ASC
+    category_b_duration_asc = list_clips_advanced_duckdb(conn,
+                                                       filters={"content_category": "CategoryB"},
+                                                       sort_by="duration_seconds",
+                                                       sort_order="asc")
+    assert len(category_b_duration_asc) == 2
+    assert category_b_duration_asc[0]["file_name"] == "alpha_clip.mp4" # 30.0s
+    assert category_b_duration_asc[1]["file_name"] == "delta_clip.mp4" # 90.0s
+
+    # 6. Test limit and offset
+    limited_offset_clips = list_clips_advanced_duckdb(conn, limit=2, offset=1, sort_by="file_name", sort_order="asc")
+    assert len(limited_offset_clips) == 2
+    assert limited_offset_clips[0]["file_name"] == "beta_clip.mp4" # Second in alpha sort
+    assert limited_offset_clips[1]["file_name"] == "delta_clip.mp4" # Third in alpha sort
+
+    # 7. Test filtering with an operator (e.g., duration_seconds >= 100)
+    long_duration_clips = list_clips_advanced_duckdb(conn, filters={"duration_seconds >=": 100.0})
+    assert len(long_duration_clips) == 2 # zeta (120.5), gamma (180.0)
+    for clip in long_duration_clips:
+        assert clip["duration_seconds"] >= 100.0
+
+    # 8. Test filtering for a non-existent category
+    no_category_clips = list_clips_advanced_duckdb(conn, filters={"content_category": "CategoryNonExistent"})
+    assert len(no_category_clips) == 0
+    
+    # 9. Test with invalid sort column (should default to created_at)
+    invalid_sort_clips = list_clips_advanced_duckdb(conn, sort_by="invalid_column")
+    assert len(invalid_sort_clips) == 5
+    assert invalid_sort_clips[0]["file_name"] == "delta_clip.mp4" # Default sort by created_at desc
+
+    # 10. Test filtering by a field that might be NULL (content_category for beta_clip)
+    # This requires the filter implementation to handle IS NULL or specific value checks.
+    # The current simple equality filter in list_clips_advanced_duckdb won't find NULLs with `column = ?` if value is None.
+    # To test for NULLs, the filter key would need to be "content_category IS NULL" or similar.
+    # For now, let's test filtering for a specific value that exists.
+    
+    # 11. Test multiple filters
+    multi_filter_clips = list_clips_advanced_duckdb(conn, filters={"content_category": "CategoryA", "duration_seconds <": 150.0})
+    assert len(multi_filter_clips) == 1
+    assert multi_filter_clips[0]["file_name"] == "zeta_clip.mp4" # CategoryA and 120.5s
+    assert multi_filter_clips[0]["content_category"] == "CategoryA"
+    assert multi_filter_clips[0]["duration_seconds"] < 150.0
+
+    # 12. Test case-insensitive LIKE filter (if supported by your filter logic)
+    # Assuming list_clips_advanced_duckdb supports "column_name ILIKE ?"
+    like_filter_clips = list_clips_advanced_duckdb(conn, filters={"file_name ILIKE": "%zeta%"})
+    assert len(like_filter_clips) == 1
+    assert like_filter_clips[0]["file_name"] == "zeta_clip.mp4"

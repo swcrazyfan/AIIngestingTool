@@ -53,44 +53,155 @@ logger = logging.getLogger(__name__)
 
 def _generate_searchable_content(video_output: VideoIngestOutput) -> Optional[str]:
     """
-    Generates a consolidated string of searchable content from various fields
-    of the VideoIngestOutput object.
-    """
-    parts = []
-    try:
-        if video_output.file_info and video_output.file_info.file_name:
-            parts.append(str(video_output.file_info.file_name))
-
-        if video_output.analysis:
-            if video_output.analysis.content_summary:
-                parts.append(str(video_output.analysis.content_summary))
-            if video_output.analysis.content_tags:
-                parts.extend([str(tag) for tag in video_output.analysis.content_tags])
-
-            if video_output.analysis.ai_analysis:
-                ai_analysis = video_output.analysis.ai_analysis
-                if ai_analysis.summary and ai_analysis.summary.overall:
-                     parts.append(str(ai_analysis.summary.overall))
-                if ai_analysis.summary and ai_analysis.summary.content_category:
-                     parts.append(str(ai_analysis.summary.content_category))
-
-                if ai_analysis.audio_analysis and ai_analysis.audio_analysis.transcript:
-                    transcript = ai_analysis.audio_analysis.transcript
-                    if transcript.full_text:
-                        parts.append(str(transcript.full_text))
-                        # If transcript_preview is just full_text, it's already included.
-                        # If it were a separate summary, it might be added here.
+    Generate a comprehensive searchable content string from all video metadata.
+    Extracts and flattens nested data from JSONB structures for full-text search.
+    
+    Args:
+        video_output: The processed video data output model
         
-        if not parts:
+    Returns:
+        String containing all searchable content, or None if no content is generated.
+    """
+    content_parts = []
+    
+    try:
+        def _add_part(value: Any):
+            if value is not None:
+                s_value = str(value).strip()
+                if s_value: # Ensure not empty string after stripping
+                    content_parts.append(s_value)
+
+        # Basic file information
+        if video_output.file_info:
+            _add_part(video_output.file_info.file_name)
+        
+        # Video details
+        if video_output.video:
+            if video_output.video.resolution:
+                width = video_output.video.resolution.width
+                height = video_output.video.resolution.height
+                if width is not None and height is not None: # Ensure both exist
+                    _add_part(f"{width}x{height}")
+            
+            if video_output.video.frame_rate is not None: # Check for None before f-string
+                _add_part(f"{video_output.video.frame_rate}fps")
+            
+            if video_output.video.codec:
+                codec_name = video_output.video.codec.name or ''
+                codec_long = video_output.video.codec.format_long_name or video_output.video.codec.codec_long_name or ''
+                combined_codec = f"{codec_name} {codec_long}".strip()
+                if combined_codec: # Only add if not empty
+                    _add_part(combined_codec)
+            
+            if video_output.video.color:
+                _add_part(video_output.video.color.color_primaries)
+                _add_part(video_output.video.color.color_space)
+            
+        # Camera details
+        if video_output.camera:
+            _add_part(video_output.camera.make)
+            _add_part(video_output.camera.model)
+            _add_part(video_output.camera.lens_model)
+            
+            if video_output.camera.focal_length:
+                if video_output.camera.focal_length.value_mm is not None:
+                    _add_part(f"focal length {video_output.camera.focal_length.value_mm}mm")
+                if video_output.camera.focal_length.category: # category is already a string or None
+                    _add_part(f"{video_output.camera.focal_length.category} focal length")
+                    _add_part(f"{video_output.camera.focal_length.category} shot")
+            
+            if video_output.camera.settings:
+                if video_output.camera.settings.iso is not None:
+                    _add_part(f"ISO {video_output.camera.settings.iso}")
+                if video_output.camera.settings.shutter_speed is not None:
+                     _add_part(f"shutter speed {video_output.camera.settings.shutter_speed}")
+                if video_output.camera.settings.f_stop is not None:
+                    _add_part(f"f-stop {video_output.camera.settings.f_stop}")
+                _add_part(video_output.camera.settings.exposure_mode)
+                _add_part(video_output.camera.settings.white_balance)
+            
+            if video_output.camera.location:
+                _add_part(video_output.camera.location.location_name)
+                if video_output.camera.location.gps_latitude is not None and video_output.camera.location.gps_longitude is not None:
+                    _add_part(f"gps {video_output.camera.location.gps_latitude},{video_output.camera.location.gps_longitude}")
+        
+        # Analysis and content data
+        if video_output.analysis:
+            _add_part(video_output.analysis.content_summary)
+            if video_output.analysis.content_tags:
+                for tag in video_output.analysis.content_tags:
+                    _add_part(tag)
+            
+            if video_output.analysis.ai_analysis:
+                ai = video_output.analysis.ai_analysis
+                if ai.summary:
+                    _add_part(ai.summary.content_category)
+                    _add_part(ai.summary.overall)
+                    if ai.summary.key_activities:
+                        for activity in ai.summary.key_activities:
+                            _add_part(activity)
+                
+                if ai.visual_analysis:
+                    visual = ai.visual_analysis
+                    if visual.shot_types:
+                        for shot in visual.shot_types:
+                            if hasattr(shot, 'shot_attributes_ordered') and shot.shot_attributes_ordered:
+                                for attr in shot.shot_attributes_ordered:
+                                    _add_part(f"{attr} shot")
+                            if hasattr(shot, 'description'):
+                                _add_part(shot.description)
+                    
+                    if visual.technical_quality:
+                        tq = visual.technical_quality
+                        if tq.overall_focus_quality: _add_part(f"{tq.overall_focus_quality} focus")
+                        if tq.stability_assessment: _add_part(f"{tq.stability_assessment} stability")
+                        if tq.usability_rating: _add_part(f"{tq.usability_rating} usability")
+                        if tq.detected_artifacts:
+                            for artifact_obj in tq.detected_artifacts: # Assuming detected_artifacts is a list of objects/dicts
+                                if isinstance(artifact_obj, dict): # Example if it's a dict
+                                    _add_part(artifact_obj.get("name")) # Or however artifact is structured
+                                else: # If it's just a list of strings
+                                     _add_part(artifact_obj)
+                
+                if ai.content_analysis:
+                    content = ai.content_analysis
+                    if content.entities:
+                        entities = content.entities
+                        if entities.people_details:
+                            for person in entities.people_details:
+                                _add_part(person.description)
+                                _add_part(person.role)
+                        
+                        if entities.locations:
+                            for loc_item in entities.locations:
+                                _add_part(loc_item.name)
+                                if loc_item.type: _add_part(f"{loc_item.type} location")
+                                _add_part(loc_item.description)
+                        
+                        if entities.objects_of_interest:
+                            for obj in entities.objects_of_interest:
+                                _add_part(obj.object)
+                                if obj.significance and obj.object: _add_part(f"{obj.significance} {obj.object}")
+                    
+                    if content.activity_summary:
+                        for act_item in content.activity_summary:
+                            _add_part(act_item.activity)
+                            if act_item.importance and act_item.activity: _add_part(f"{act_item.importance} {act_item.activity}")
+
+                if ai.audio_analysis and ai.audio_analysis.transcript:
+                    _add_part(ai.audio_analysis.transcript.full_text)
+
+        if not content_parts:
             return None
-        return " ".join(filter(None, parts))
-    except AttributeError as e:
-        logger.warning(f"AttributeError while generating searchable content: {e}. Some data might be missing.")
-        if not parts:
+        return " ".join(content_parts)
+
+    except AttributeError as e: # Keep existing exception handling
+        logger.warning(f"AttributeError while generating searchable content for {video_output.id if video_output else 'N/A'}: {e}. Some data might be missing.")
+        if not content_parts: # Check again in case some parts were added before error
             return None
-        return " ".join(filter(None, parts))
+        return " ".join(content_parts) # Join whatever was collected
     except Exception as e:
-        logger.error(f"Unexpected error in _generate_searchable_content: {e}", exc_info=True)
+        logger.error(f"Unexpected error in _generate_searchable_content for {video_output.id if video_output else 'N/A'}: {e}", exc_info=True)
         return None
 
 

@@ -112,6 +112,15 @@ def initialize_schema(con: "duckdb.DuckDBPyConnection", create_fts: bool = True)
     and HNSW/B-Tree indexes. Optionally creates FTS index.
     """
     logger.info("Initializing database schema...")
+    
+    # Enable HNSW persistence for file-based DBs if this connection will create them
+    # This is safe to run even if already set or on in-memory DBs (where it's not needed).
+    try:
+        con.execute("SET hnsw_enable_experimental_persistence=true;")
+        logger.info("Executed SET hnsw_enable_experimental_persistence=true for schema initialization.")
+    except Exception as e_set_hnsw:
+        logger.warning(f"Could not set hnsw_enable_experimental_persistence: {e_set_hnsw}. HNSW on disk might fail if not already enabled.")
+
     logger.info("Creating core schemas and the clips table...")
     con.begin()
     try:

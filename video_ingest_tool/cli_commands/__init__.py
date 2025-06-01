@@ -31,7 +31,7 @@ class BaseCommand(ABC):
 
 
 # Import all command classes
-from .auth import AuthCommand
+# from .auth import AuthCommand # Removed as AuthCommand is deprecated
 from .search import SearchCommand
 from .ingest import IngestCommand
 from .system import SystemCommand
@@ -40,9 +40,9 @@ from .clips import ClipsCommand
 # Export all command classes
 __all__ = [
     'BaseCommand',
-    'AuthCommand', 
+    # 'AuthCommand',  # Removed
     'SearchCommand',
     'IngestCommand',
     'SystemCommand',
     'ClipsCommand'
-] 
+]

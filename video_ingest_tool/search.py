@@ -9,9 +9,13 @@ import os
 from typing import List, Dict, Any, Optional, Tuple, Literal
 import structlog
 
-from .auth import AuthManager
+# AuthManager removed as authentication is being phased out for local DuckDB
+# from .auth import AuthManager
 from .embeddings import generate_embeddings
 from .search_config import get_search_params
+from .database.duckdb import connection as duckdb_connection # For DuckDB connection
+from .database.duckdb import search_logic as duckdb_search_logic # For DuckDB search functions
+from .database.duckdb import crud as duckdb_crud # For listing/filtering if needed
 
 logger = structlog.get_logger(__name__)
 
@@ -42,63 +46,54 @@ class VideoSearcher:
     """
     
     def __init__(self):
-        self.auth_manager = AuthManager()
+        # self.auth_manager = AuthManager() # Removed
+        pass # No specific initialization needed for now
     
-    def _get_authenticated_client(self):
-        """Get authenticated Supabase client."""
-        client = self.auth_manager.get_authenticated_client()
-        if not client:
-            raise ValueError("Authentication required for search operations")
-        return client
-    
-    def _get_current_user_id(self):
-        """Get current authenticated user ID."""
-        session = self.auth_manager.get_current_session()
-        if not session:
-            raise ValueError("Authentication required")
-        return session.get('user_id')
+    # _get_authenticated_client method removed
+    # _get_current_user_id method removed
     
     def search(
         self,
         query: str,
         search_type: SearchType = "hybrid",
         match_count: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[Dict[str, Any]] = None, # Filters might be handled differently with DuckDB
         weights: Optional[Dict[str, float]] = None
     ) -> List[Dict[str, Any]]:
         """
-        Perform search across video catalog.
+        Perform search across video catalog using DuckDB.
         
         Args:
             query: Search query text
             search_type: Type of search to perform
             match_count: Number of results to return
-            filters: Optional filters (camera_make, content_category, etc.)
+            filters: Optional filters (TODO: define how these apply to DuckDB queries)
             weights: Optional search weights for hybrid search
             
         Returns:
             List of matching video clips with metadata
         """
-        # Get search parameters from centralized config, with optional overrides
         search_params = get_search_params(weights)
         
-        client = self._get_authenticated_client()
-        user_id = self._get_current_user_id()
+        # client = self._get_authenticated_client() # Removed
+        # user_id = self._get_current_user_id() # Removed
         
-        # Enforce max match count
         max_count = search_params.get('max_match_count', 100)
         if match_count > max_count:
             logger.warning(f"Requested match count {match_count} exceeds maximum {max_count}, limiting results")
             match_count = max_count
         
+        # Connection will be established within each specific search method for now
+        # or refactored to be passed if a single connection per VideoSearcher call is preferred.
+        
         if search_type == "semantic":
-            return self._semantic_search(client, user_id, query, match_count, search_params)
+            return self._semantic_search(query, match_count, search_params, filters) # client and user_id removed
         elif search_type == "fulltext":
-            return self._fulltext_search(client, user_id, query, match_count)
+            return self._fulltext_search(query, match_count, filters) # client and user_id removed
         elif search_type == "hybrid":
-            return self._hybrid_search(client, user_id, query, match_count, search_params)
+            return self._hybrid_search(query, match_count, search_params, filters) # client and user_id removed
         elif search_type == "transcripts":
-            return self._transcript_search(client, user_id, query, match_count)
+            return self._transcript_search(query, match_count, filters) # client and user_id removed
         else:
             raise ValueError(f"Unsupported search type: {search_type}")
     
@@ -127,21 +122,28 @@ class VideoSearcher:
         if threshold is None:
             threshold = search_params.get('similar_threshold', 0.65)
         
-        client = self._get_authenticated_client()
-        user_id = self._get_current_user_id()
-        
         try:
-            result = client.rpc('find_similar_clips', {
-                'source_clip_id': clip_id,
-                'user_id_filter': user_id,
-                'match_count': match_count,
-                'similarity_threshold': threshold
-            }).execute()
-            
-            return result.data if result.data else []
+            with duckdb_connection.get_db_connection() as con:
+                logger.info("Calling duckdb_search_logic.find_similar_clips_duckdb", source_clip_id=clip_id, match_count=match_count, threshold=threshold)
+                results = duckdb_search_logic.find_similar_clips_duckdb(
+                    con, # Pass con as positional argument
+                    source_clip_id=clip_id,
+                    match_count=match_count,
+                    # Assuming the duckdb function handles the threshold internally or has a similar param
+                    # The current duckdb_search_logic.find_similar_clips_duckdb signature might need adjustment
+                    # if it expects different/more parameters (e.g. weights, mode) as per duckdb_migration_plan.md
+                    # For now, passing what's available and aligns with the old RPC call's intent.
+                    # The plan mentions: mode ('text' | 'visual' | 'combined'), various weights.
+                    # These are not currently passed from SearchCommand.find_similar.
+                    # This might be a point for future enhancement or alignment.
+                    # Passing threshold directly if the duckdb function supports it.
+                    # Let's assume it takes similarity_threshold for now.
+                    similarity_threshold=threshold
+                )
+            return results
             
         except Exception as e:
-            logger.error(f"Similar search failed: {str(e)}")
+            logger.error(f"Similar search failed with DuckDB: {str(e)}")
             raise
     
     def list_videos(
@@ -168,175 +170,168 @@ class VideoSearcher:
         Returns:
             List of video objects.
         """
-        client = self._get_authenticated_client()
-        user_id = self._get_current_user_id()
         filters = filters or {}
 
         try:
-            query = client.from_("clips").select("*", count="exact").eq("user_id", user_id)
-
-            # Apply filters
-            if "date_start" in filters:
-                query = query.gte("processed_at", filters["date_start"])
-            if "date_end" in filters:
-                query = query.lte("processed_at", filters["date_end"])
-            
-            # Add other specific field filters if needed, e.g.:
-            # if "content_category" in filters:
-            #     query = query.eq("content_category", filters["content_category"])
-
-            is_descending = sort_order == "descending"
-            query = query.order(sort_by, desc=is_descending).limit(limit).offset(offset)
-            
-            result = query.execute()
-            return result.data if result.data else []
+            with duckdb_connection.get_db_connection() as con:
+                logger.info("Calling duckdb_crud.list_clips_advanced_duckdb", sort_by=sort_by, sort_order=sort_order, limit=limit, offset=offset, filters=filters)
+                results = duckdb_crud.list_clips_advanced_duckdb(
+                    conn=con,
+                    sort_by=sort_by,
+                    sort_order=sort_order,
+                    limit=limit,
+                    offset=offset,
+                    filters=filters
+                )
+            return results
 
         except Exception as e:
-            logger.error("Failed to list videos", error=str(e), sort_by=sort_by, sort_order=sort_order, filters=filters)
-            # Optionally, re-raise or return an empty list based on desired error handling
+            logger.error("Failed to list videos with DuckDB", error=str(e), sort_by=sort_by, sort_order=sort_order, filters=filters)
             raise
     
     def _semantic_search(
         self,
-        client,
-        user_id: str,
         query: str,
         match_count: int,
-        search_params: Dict[str, Any]
+        search_params: Dict[str, Any],
+        filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
-        """Perform semantic search using vector embeddings."""
+        """Perform semantic search using vector embeddings with DuckDB."""
         summary_content, keyword_content = prepare_search_embeddings(query)
         
-        # Call generate_embeddings once with both content types and unpack the tuple
         query_summary_embedding, query_keyword_embedding = generate_embeddings(summary_content, keyword_content)
         
-        # Get parameters from the search_params dictionary
-        rpc_params = {
-            'p_query_summary_embedding': query_summary_embedding,
-            'p_query_keyword_embedding': query_keyword_embedding,
-            'p_user_id_filter': user_id,
-            'p_match_count': match_count,
-            'p_summary_weight': search_params.get('summary_weight', 1.0),
-            'p_keyword_weight': search_params.get('keyword_weight', 0.8),
-            'p_similarity_threshold': search_params.get('similarity_threshold', 0.4)
+        duckdb_params = {
+            'query_summary_embedding': query_summary_embedding,
+            'query_keyword_embedding': query_keyword_embedding,
+            'match_count': match_count,
+            'summary_weight': search_params.get('summary_weight', 1.0),
+            'keyword_weight': search_params.get('keyword_weight', 0.8),
+            'similarity_threshold': search_params.get('similarity_threshold', 0.4)
+            # Filters are not currently passed to duckdb_search_logic.semantic_search_clips_duckdb
         }
 
         try:
-            # Modified to avoid logging full embeddings
-            logger.info("Performing semantic search", 
-                        limit=match_count, 
-                        query=query, 
+            logger.info("Performing DUCKDB semantic search",
+                        limit=match_count,
+                        query=query,
                         search_type="semantic",
-                        weights={k: v for k, v in search_params.items() if k in ['summary_weight', 'keyword_weight', 'similarity_threshold']})
+                        weights={k: v for k, v in duckdb_params.items() if 'weight' in k or 'threshold' in k})
             
-            result = client.rpc('semantic_search_clips', rpc_params).execute()
-            
-            return result.data if result.data else []
+            with duckdb_connection.get_db_connection() as con:
+                results = duckdb_search_logic.semantic_search_clips_duckdb(con, **duckdb_params) # Pass con as positional
+            return results
             
         except Exception as e:
-            logger.error(f"Semantic search failed: {str(e)}")
+            logger.error(f"Semantic search failed with DuckDB: {str(e)}")
             raise
     
     def _fulltext_search(
         self,
-        client,
-        user_id: str,
         query: str,
-        match_count: int
+        match_count: int,
+        filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
-        """Perform full-text search."""
+        """Perform full-text search with DuckDB."""
         try:
-            result = client.rpc('fulltext_search_clips', {
-                'p_query_text': query,
-                'p_user_id_filter': user_id,
-                'p_match_count': match_count
-            }).execute()
-            
-            return result.data if result.data else []
+            logger.info("Performing DUCKDB full-text search", query=query, limit=match_count)
+            with duckdb_connection.get_db_connection() as con:
+                # Filters are not currently passed to duckdb_search_logic.fulltext_search_clips_duckdb
+                results = duckdb_search_logic.fulltext_search_clips_duckdb(
+                    query_text=query, # Correct order
+                    conn=con,
+                    match_count=match_count
+                )
+            return results
             
         except Exception as e:
-            logger.error(f"Full-text search failed: {str(e)}")
+            logger.error(f"Full-text search failed with DuckDB: {str(e)}")
             raise
     
     def _hybrid_search(
         self,
-        client,
-        user_id: str,
         query: str,
         match_count: int,
-        search_params: Dict[str, Any]
+        search_params: Dict[str, Any],
+        filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
-        """Perform hybrid search combining full-text and semantic search."""
+        """Perform hybrid search combining full-text and semantic search with DuckDB."""
         summary_content, keyword_content = prepare_search_embeddings(query)
 
         query_summary_embedding, query_keyword_embedding = generate_embeddings(summary_content, keyword_content)
         
-        # Prepare parameters for the RPC call with 'p_' prefix
-        rpc_params = {
-            'p_query_text': query,
-            'p_query_summary_embedding': query_summary_embedding,
-            'p_query_keyword_embedding': query_keyword_embedding,
-            'p_user_id_filter': user_id,
-            'p_match_count': match_count,
-            'p_fulltext_weight': search_params.get('fulltext_weight', 2.5),
-            'p_summary_weight': search_params.get('summary_weight', 1.0),
-            'p_keyword_weight': search_params.get('keyword_weight', 0.8),
-            'p_rrf_k': int(search_params.get('rrf_k', 50)),
-            'p_summary_threshold': search_params.get('similarity_threshold', 0.4),
-            'p_keyword_threshold': search_params.get('similarity_threshold', 0.4)
+        duckdb_params = {
+            'query_text': query,
+            'query_summary_embedding': query_summary_embedding,
+            'query_keyword_embedding': query_keyword_embedding,
+            'match_count': match_count,
+            'fts_weight': search_params.get('fulltext_weight', 2.5), # Changed key from fulltext_weight to fts_weight
+            'summary_weight': search_params.get('summary_weight', 1.0),
+            'keyword_weight': search_params.get('keyword_weight', 0.8),
+            'rrf_k': int(search_params.get('rrf_k', 50)), # Ensure rrf_k is int
+            'similarity_threshold': search_params.get('similarity_threshold', 0.4)
+            # Filters are not currently passed to duckdb_search_logic.hybrid_search_clips_duckdb
         }
 
         try:
-            # Modified to avoid logging full embeddings and log the parameters being used
-            logger.info("Performing hybrid search", 
-                        limit=match_count, 
-                        query=query, 
+            logger.info("Performing DUCKDB hybrid search",
+                        limit=match_count,
+                        query=query,
                         search_type="hybrid",
-                        weights={k: v for k, v in search_params.items() 
-                                 if k in ['fulltext_weight', 'summary_weight', 'keyword_weight', 
-                                         'rrf_k', 'similarity_threshold']})
+                        weights={k: v for k, v in duckdb_params.items()
+                                 if 'weight' in k or 'threshold' in k or 'rrf_k' in k})
             
-            result = client.rpc('hybrid_search_clips', rpc_params).execute()
+            with duckdb_connection.get_db_connection() as con:
+                # Ensure 'conn' is not in duckdb_params to avoid conflict if it was accidentally added
+                if 'conn' in duckdb_params:
+                    logger.warning("Unexpected 'conn' in duckdb_params for hybrid_search, removing.")
+                    del duckdb_params['conn']
+                
+                # Explicitly pass conn, then unpack other params.
+                # hybrid_search_clips_duckdb expects: query_text, query_summary_embedding, query_keyword_embedding, conn, ...
+                # duckdb_params contains query_text, query_summary_embedding, query_keyword_embedding, etc.
+                
+                # Extract query_text for positional argument, remove from duckdb_params to avoid duplication
+                q_text = duckdb_params.pop('query_text')
+                q_summary_emb = duckdb_params.pop('query_summary_embedding')
+                q_keyword_emb = duckdb_params.pop('query_keyword_embedding')
 
-            return result.data if result.data else []
+                results = duckdb_search_logic.hybrid_search_clips_duckdb(
+                    q_text,
+                    q_summary_emb,
+                    q_keyword_emb,
+                    conn=con, # conn is now correctly passed to the 'conn' parameter
+                    **duckdb_params # The rest of the params like match_count, weights, etc.
+                )
+            return results
             
         except Exception as e:
-            logger.error(f"Hybrid search failed: {str(e)}")
+            logger.error(f"Hybrid search failed with DuckDB: {str(e)}")
             raise
     
     def _transcript_search(
         self,
-        client,
-        user_id: str,
         query: str,
-        match_count: int
+        match_count: int,
+        filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
-        """Perform search specifically on transcripts."""
+        """Perform search specifically on transcripts with DuckDB."""
         try:
-            result = client.rpc('search_transcripts', {
-                'query_text': query,
-                'user_id_filter': user_id,
-                'match_count': match_count,
-                'min_content_length': 50
-            }).execute()
-            
-            return result.data if result.data else []
+            logger.info("Performing DUCKDB transcript search", query=query, limit=match_count)
+            with duckdb_connection.get_db_connection() as con:
+                # Filters are not currently passed to duckdb_search_logic.search_transcripts_duckdb
+                results = duckdb_search_logic.search_transcripts_duckdb(
+                    query_text=query, # Correct order
+                    conn=con,
+                    match_count=match_count
+                )
+            return results
             
         except Exception as e:
-            logger.error(f"Transcript search failed: {str(e)}")
+            logger.error(f"Transcript search failed with DuckDB: {str(e)}")
             raise
     
-    def get_user_stats(self) -> Dict[str, Any]:
-        """Get user statistics for the video catalog."""
-        client = self._get_authenticated_client()
-        
-        try:
-            result = client.rpc('get_user_stats').execute()
-            return result.data[0] if result.data else {}
-            
-        except Exception as e:
-            logger.error(f"Failed to get user stats: {str(e)}")
-            return {}
+    # get_user_stats method removed as it's user-specific and not applicable to local DuckDB.
 
 
 def format_search_results(
