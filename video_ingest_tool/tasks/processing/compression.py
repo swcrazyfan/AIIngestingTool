@@ -17,71 +17,81 @@ def video_compression_step(
     logger=None, # Prefect's built-in logger will be used if not None
     compression_fps: int = DEFAULT_COMPRESSION_CONFIG['fps'],
     compression_bitrate: str = DEFAULT_COMPRESSION_CONFIG['video_bitrate'],
-    thumbnails_dir: Optional[str] = None, # Used to determine base output directory
+    data_base_dir: Optional[str] = None, # Base data directory (e.g., /path/to/data)
     tracker_flow_run_id: Optional[str] = None # Explicitly passed ID for ProgressTracker
 ) -> Dict[str, Any]:
     """
-    Compress the video file, store the path, and report progress.
+    Compress a video file using configurable settings and track progress.
+    
     Args:
-        data: Pipeline data containing file_path (original path of the file)
-        logger: Optional logger (Prefect provides one via get_run_logger())
-        compression_fps: Frame rate for compression
-        compression_bitrate: Bitrate for compression
-        thumbnails_dir: Base directory for run outputs (e.g., /path/to/run_id/)
-                        Used to create a 'compressed' subdirectory within it.
-        tracker_flow_run_id: The specific flow run ID (batch_uuid) to use for progress tracking.
-    Returns:
-        Dict with 'compressed_video_path'
-    """
-    actual_file_to_compress = data.get('file_path_for_processing', data.get('file_path'))
-    original_file_path_for_tracking = data.get('file_path') # This is the key for the tracker
-
-    if not actual_file_to_compress:
-        raise ValueError("Missing 'file_path_for_processing' or 'file_path' in data for compression step")
-    if not original_file_path_for_tracking:
-        raise ValueError("Missing 'file_path' for progress tracking key")
-
-    if logger is None:
-        from prefect import get_run_logger
-        logger = get_run_logger()
-
-    # Use the explicitly passed tracker_flow_run_id.
-    if not tracker_flow_run_id:
-        logger.error("CRITICAL: tracker_flow_run_id was not provided to video_compression_step. Progress tracking will be incorrect or fail.")
-        # Fallback or error based on strictness, for now log and continue, but this is bad.
-    
-    logger.info(f"video_compression_step invoked with tracker_flow_run_id: {tracker_flow_run_id}")
-
-    from ...api.progress_tracker import get_progress_tracker # Moved import here
-    progress_tracker = get_progress_tracker()
-    
-    # Capture the correct tracker_flow_run_id for the callback
-    _effective_tracker_id = tracker_flow_run_id
-
-    def compression_progress_callback(update_data: Dict[str, Any]):
-        nonlocal _effective_tracker_id # Ensure we use the captured ID
-        if not _effective_tracker_id:
-            logger.warning(f"Compression callback for {original_file_path_for_tracking}: Skipping progress update, _effective_tracker_id is missing.")
-            return
+        data: Pipeline data containing file_path, checksum, clip_id, etc.
+        logger: Optional logger
+        compression_fps: Target FPS for compression
+        compression_bitrate: Target bitrate for compression
+        data_base_dir: Base data directory for organized output structure
+        tracker_flow_run_id: Flow run ID for progress tracking
         
-        progress_tracker.update_file_step(
-            flow_run_id=_effective_tracker_id,
-            file_path=original_file_path_for_tracking,
-            step_name=update_data.get('step_name', "video_compression"),
-            step_progress=update_data.get('step_progress', 0),
-            step_status=update_data.get('step_status', "processing"),
-            compression_update=update_data.get('compression_update')
-        )
-        # logger.debug(f"Compression callback sent for {original_file_path_for_tracking} (tracker_id: {_effective_tracker_id}) data: {update_data.get('compression_update')}")
-
-    base_output_dir = None
-    if thumbnails_dir:
-        base_output_dir = os.path.dirname(thumbnails_dir)
+    Returns:
+        Dict with compressed video path and metadata
+    """
+    from ...api.progress_tracker import get_progress_tracker
+    from ...video_processor.compression import VideoCompressor
+    from prefect import get_run_logger
+    
+    if logger is None:
+        logger = get_run_logger()
+    
+    progress_tracker = get_progress_tracker()
+    file_path = data.get('file_path')
+    checksum = data.get('checksum')
+    clip_id = data.get('clip_id')
+    file_name = data.get('file_name', os.path.basename(file_path) if file_path else 'unknown')
+    
+    if not file_path:
+        raise ValueError("file_path is required in data")
+    
+    # Determine the actual file to compress (might be the original or already compressed)
+    actual_file_to_compress = file_path
+    original_file_path_for_tracking = file_path
+    
+    # Use tracker_flow_run_id if provided, otherwise try to get from context
+    _effective_tracker_id = tracker_flow_run_id
+    if not _effective_tracker_id:
+        try:
+            from prefect.context import get_run_context
+            run_context = get_run_context()
+            _effective_tracker_id = str(run_context.flow_run.id)
+        except Exception:
+            _effective_tracker_id = None
+    
+    # Progress callback for VideoCompressor
+    def compression_progress_callback(progress_data):
+        if _effective_tracker_id and original_file_path_for_tracking:
+            progress_tracker.update_file_step(
+                flow_run_id=_effective_tracker_id,
+                file_path=original_file_path_for_tracking,
+                step_name=progress_data.get('step_name', 'video_compression'),
+                step_progress=progress_data.get('step_progress', 0),
+                step_status=progress_data.get('step_status', 'processing'),
+                compression_update=progress_data.get('compression_update', {})
+            )
+    
+    # Determine output directory structure: data/clips/{filename}_{clip_id}/compressed/
+    if data_base_dir and clip_id:
+        # New organized structure
+        base_filename = os.path.splitext(file_name)[0]
+        clip_dir_name = f"{base_filename}_{clip_id}"
+        clip_base_dir = os.path.join(data_base_dir, "clips", clip_dir_name)
+        compressed_output_dir = os.path.join(clip_base_dir, "compressed")
+    elif data_base_dir:
+        # Fallback to data/compressed if no clip_id
+        compressed_output_dir = os.path.join(data_base_dir, "compressed")
     else:
+        # Final fallback - put compressed videos next to source
         base_output_dir = os.path.dirname(os.path.abspath(actual_file_to_compress))
-        logger.warning(f"thumbnails_dir not provided, using fallback output directory: {base_output_dir}")
+        compressed_output_dir = os.path.join(base_output_dir, "compressed")
+        logger.warning(f"data_base_dir not provided, using fallback output directory: {base_output_dir}")
 
-    compressed_output_dir = os.path.join(base_output_dir, "compressed")
     os.makedirs(compressed_output_dir, exist_ok=True)
 
     compression_config_overrides = {

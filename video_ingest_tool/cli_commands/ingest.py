@@ -148,12 +148,16 @@ class IngestCommand(BaseCommand):
                 logger.info("No video files found.", directory=directory)
                 return {"success": True, "data": {"message": "No video files found to process", "status": "completed", "total_files": 0}}
 
-            # Determine thumbnails_dir to use data/clips instead of output/thumbnails
-            # This ensures thumbnails are stored alongside the database in the data directory
-            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
-            thumbnails_dir = os.path.join(project_root, "data", "clips")
-            os.makedirs(thumbnails_dir, exist_ok=True)
-            logger.info(f"Thumbnails will be stored in: {thumbnails_dir}")
+            # Determine data_base_dir to use data/ directory for organized clip structure
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+            
+            data_base_dir = os.path.join(project_root, "data")
+            os.makedirs(data_base_dir, exist_ok=True)
+            logger.info(f"Data will be stored in: {data_base_dir}")
+            
+            # Create the clips subdirectory structure
+            clips_dir = os.path.join(data_base_dir, "clips")
+            os.makedirs(clips_dir, exist_ok=True)
 
             pipeline_config = get_default_pipeline_config()
             if 'ai_video_analysis_step' in pipeline_config:
@@ -187,7 +191,7 @@ class IngestCommand(BaseCommand):
                 @prefect_flow(name=f"dynamic_single_task_runner_{task_to_run.replace(' ', '_')}")
                 def single_task_execution_flow(
                     p_file_path: str,
-                    p_thumbnails_dir: str,
+                    p_data_base_dir: str,  # Fixed parameter name
                     p_config: Dict[str, Any],
                     p_compression_fps: int,
                     p_compression_bitrate: str,
@@ -200,7 +204,7 @@ class IngestCommand(BaseCommand):
                     dynamic_batch_uuid = str(uuid.uuid4())
                     return process_video_file_task(
                         file_path=p_file_path,
-                        thumbnails_dir=p_thumbnails_dir,
+                        data_base_dir=p_data_base_dir,  # Fixed parameter name
                         config=p_config,
                         compression_fps=p_compression_fps,
                         compression_bitrate=p_compression_bitrate,
@@ -215,7 +219,7 @@ class IngestCommand(BaseCommand):
                     # Prefect 3.x flows are called like regular Python functions
                     task_result_data = single_task_execution_flow(
                         p_file_path=video_files[0],
-                        p_thumbnails_dir=thumbnails_dir,
+                        p_data_base_dir=data_base_dir,  # Fixed parameter name
                         p_config=pipeline_config,
                         p_compression_fps=compression_fps,
                         p_compression_bitrate=compression_bitrate,
@@ -252,7 +256,7 @@ class IngestCommand(BaseCommand):
 
                 flow_result = process_videos_batch_flow(
                     file_list=video_files,
-                    thumbnails_dir=thumbnails_dir,
+                    data_base_dir=data_base_dir,  # Fixed parameter name
                     config=pipeline_config,
                     compression_fps=compression_fps,
                     compression_bitrate=compression_bitrate,
@@ -280,7 +284,7 @@ class IngestCommand(BaseCommand):
                         'total_files': len(video_files),
                         'files_processed': successful_count,
                         'files_failed': failed_count,
-                        'thumbnails_dir': thumbnails_dir,
+                        'clips_dir': data_base_dir,  # Fixed to use data_base_dir value
                         'results': flow_result # Optionally include detailed results
                     }
                 }

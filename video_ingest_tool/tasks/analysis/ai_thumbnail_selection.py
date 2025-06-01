@@ -127,13 +127,17 @@ def extract_frame_at_timestamp(file_path: str, timestamp: str, output_path: str,
         return None
 
 @task
-def ai_thumbnail_selection_step(data: Dict[str, Any], thumbnails_dir=None, logger=None) -> Dict[str, Any]:
+def ai_thumbnail_selection_step(
+    data: Dict[str, Any], 
+    data_base_dir: Optional[str] = None,  # Base data directory (e.g., /path/to/data)
+    logger=None
+) -> Dict[str, Any]:
     """
     Extract frames from the video at timestamps recommended by AI analysis.
     
     Args:
-        data: Pipeline data containing file_path, checksum, clip_id, and full_ai_analysis_data
-        thumbnails_dir: Base directory for thumbnails (should be data/clips)
+        data: Pipeline data containing file_path, checksum, clip_id, file_name, and full_ai_analysis_data
+        data_base_dir: Base data directory for organized output structure
         logger: Optional logger
         
     Returns:
@@ -142,13 +146,14 @@ def ai_thumbnail_selection_step(data: Dict[str, Any], thumbnails_dir=None, logge
     file_path = data.get('file_path')
     checksum = data.get('checksum')
     clip_id = data.get('clip_id')
+    file_name = data.get('file_name', os.path.basename(file_path) if file_path else 'unknown')
     analysis_results = data.get('full_ai_analysis_data', {})
     
     if not file_path or not checksum:
         raise ValueError("Missing file_path or checksum in data")
         
-    if not thumbnails_dir:
-        raise ValueError("Missing thumbnails_dir parameter")
+    if not data_base_dir:
+        raise ValueError("Missing data_base_dir parameter")
     
     if not analysis_results:
         if logger:
@@ -166,14 +171,16 @@ def ai_thumbnail_selection_step(data: Dict[str, Any], thumbnails_dir=None, logge
         logger.warning("No recommended thumbnails in analysis results")
         return {"ai_thumbnail_paths": [], "ai_thumbnail_metadata": []}
     
-    # Use clip_id if available, otherwise fall back to filename_checksum pattern
-    base_name = os.path.splitext(os.path.basename(file_path))[0]
+    # Determine output directory structure: data/clips/{filename}_{clip_id}/thumbnails/
+    base_filename = os.path.splitext(file_name)[0]
     if clip_id:
-        thumbnail_dir_for_file = os.path.join(thumbnails_dir, str(clip_id))
+        # New organized structure
+        clip_dir_name = f"{base_filename}_{clip_id}"
+        clip_base_dir = os.path.join(data_base_dir, "clips", clip_dir_name)
+        thumbnail_dir_for_file = os.path.join(clip_base_dir, "thumbnails")
     else:
-        # Fallback to old pattern if clip_id not available yet
-        thumbnail_dir_name = f"{base_name}_{checksum}"
-        thumbnail_dir_for_file = os.path.join(thumbnails_dir, thumbnail_dir_name)
+        # Fallback to data/thumbnails if no clip_id
+        thumbnail_dir_for_file = os.path.join(data_base_dir, "thumbnails", checksum)
     
     # Extract frames for each recommended thumbnail
     ai_thumbnail_paths = []
@@ -190,7 +197,7 @@ def ai_thumbnail_selection_step(data: Dict[str, Any], thumbnails_dir=None, logge
             continue
         
         # Generate AI thumbnail filename with rank
-        ai_filename = f"AI_{base_name}_{timestamp}_{rank}.jpg"
+        ai_filename = f"AI_{base_filename}_{timestamp}_{rank}.jpg"
         ai_output_path = os.path.join(thumbnail_dir_for_file, ai_filename)
         
         # Extract the frame

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { ingestApi } from '../api/client';
 import { IngestProgress } from '../types/api';
 import { evalTS, evalES } from '../lib/utils/bolt';
@@ -20,7 +20,7 @@ const IngestPanel: React.FC = () => {
   const [showProgress, setShowProgress] = useState<boolean>(false);
   
   // Use the global WebSocket connection
-  const { progress, isConnected } = useWebSocket();
+  const { progress, isConnected, subscribeToProgress } = useWebSocket();
 // State to control visibility of the progress log area
   const [showLog, setShowLog] = useState<boolean>(false);
 
@@ -51,12 +51,22 @@ const IngestPanel: React.FC = () => {
     // Clear previous errors before new attempt
     setError(null); 
     try {
-      await ingestApi.startIngest(selectedDirectory, ingestOptions);
+      const result = await ingestApi.startIngest(selectedDirectory, ingestOptions);
       
       // Show progress section and clear any errors
       setShowProgress(true);
-setShowLog(true); // Also show the log area
+      setShowLog(true); // Also show the log area
       setError(null); // Ensure error is cleared on successful start
+      
+      // Subscribe to WebSocket progress updates if we got a task run ID
+      if (result?.data?.task_run_id) {
+        console.log('Subscribing to progress for task:', result.data.task_run_id);
+        subscribeToProgress(result.data.task_run_id);
+      } else {
+        // Subscribe to general progress updates
+        console.log('Subscribing to general progress updates');
+        subscribeToProgress();
+      }
     } catch (error: any) { // Catch specific error type if known, else 'any'
       console.error('Ingest failed in IngestPanel:', error);
       // Use the error message from the caught error object
@@ -74,65 +84,81 @@ setShowLog(true); // Also show the log area
   };
 
   // Check for ongoing ingest process on load
-  useEffect(() => {
-    const checkIngestProgress = async () => {
-      setIsLoading(true);
-      setError(null);
-      
-      try {
-        // Only make an API call if WebSocket is not connected yet
-        if (!isConnected) {
-          const progressData = await ingestApi.getProgress();
-          
-          // Clear errors if we successfully got progress data
-          if (progressData) {
-            setError(null);
-          }
-          
-          // If there's an active ingest process
-          if (progressData && (progressData.status === 'running' || 
-                              progressData.status === 'scanning' || 
-                              progressData.status === 'processing')) {
-            setShowProgress(true);
-setShowLog(true); // Show log if process is ongoing
-          }
-        }
-      } catch (error) {
-        console.error('Failed to check ingest status:', error);
-        setError('Failed to check ingest status');
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  const checkIngestProgress = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
     
+    try {
+      // Always check for ongoing progress via REST API first
+      const progressData = await ingestApi.getProgress();
+      
+      // Clear errors if we successfully got progress data
+      if (progressData) {
+        setError(null);
+      }
+      
+      // If there's an active ingest process
+      if (progressData && (progressData.status === 'running' || 
+                          progressData.status === 'scanning' || 
+                          progressData.status === 'processing' ||
+                          progressData.status === 'starting')) {
+        setShowProgress(true);
+        setShowLog(true); // Show log if process is ongoing
+        
+        // IMPORTANT: Subscribe to WebSocket updates for the ongoing ingest
+        console.log('Detected ongoing ingest on load, subscribing to progress updates');
+        subscribeToProgress(); // Subscribe to general progress updates
+      }
+    } catch (error) {
+      console.error('Failed to check ingest status:', error);
+      setError('Failed to check ingest status');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [subscribeToProgress]);
+
+  useEffect(() => {
     checkIngestProgress();
-  }, [isConnected]);
+  }, [isConnected, checkIngestProgress]);
   
   // Update UI based on ingest progress from WebSocket
   useEffect(() => {
-    if (progress) {
-      // Clear any connection errors when we receive valid progress data
-      setError(null);
-      
-      // Show progress section if there's an active process
-      const activeStatuses = ['starting', 'running', 'scanning', 'processing'];
-      // const completeStatuses = ['idle', 'completed', 'failed']; // No longer needed for auto-hide
-      
-      if (activeStatuses.includes(progress.status)) {
-        setShowProgress(true);
-setShowLog(true); // Keep log visible if active
+    try {
+      if (progress) {
+        console.log('Processing progress update:', progress); // Debug log
+        
+        // Clear any connection errors when we receive valid progress data
+        setError(null);
+        
+        // Show progress section if there's an active process
+        const activeStatuses = ['starting', 'running', 'scanning', 'processing'];
+        // const completeStatuses = ['idle', 'completed', 'failed']; // No longer needed for auto-hide
+        
+        if (progress.status && activeStatuses.includes(progress.status)) {
+          setShowProgress(true);
+          setShowLog(true); // Keep log visible if active
+        }
+        
+        // // // Hide progress after a delay when process completes
+        // //      if (completeStatuses.includes(progress.status)) {
+          // //        setTimeout(() => {
+            // //          setShowProgress(false);
+          // //        }, 5000);  // Show completed status for 5 seconds
+        // //      }
+  // Ensure log stays visible if there's content, even if process completes
+        if (progress && (
+            (progress.processed_files && Array.isArray(progress.processed_files) && progress.processed_files.length > 0) || 
+            progress.message || 
+            progress.status
+          )) {
+          setShowLog(true);
+        }
       }
-      
-      // // // Hide progress after a delay when process completes
-      // //      if (completeStatuses.includes(progress.status)) {
-        // //        setTimeout(() => {
-          // //          setShowProgress(false);
-        // //        }, 5000);  // Show completed status for 5 seconds
-      // //      }
-// Ensure log stays visible if there's content, even if process completes
-      if (progress && ((progress.processed_files && progress.processed_files.length > 0) || progress.message || progress.status)) {
-        setShowLog(true);
-      }
+    } catch (error) {
+      console.error('Error processing progress update:', error);
+      console.error('Progress data that caused error:', progress);
+      // Don't crash the component, just log the error
+      setError('Error processing progress update');
     }
   }, [progress]);
 
@@ -207,14 +233,15 @@ const clearLog = () => {
           </div>
         ) : progress && (progress.status === 'running' ||
               progress.status === 'scanning' ||
-              progress.status === 'processing') && !showLog ? ( // Only show this if log isn't visible yet
+              progress.status === 'processing' ||
+              progress.status === 'starting') && !showLog ? ( // Include 'starting' status
           <div className="ingest-in-progress">
             <h3>Video Processing in Progress</h3>
             {error && <div className="error-message">{error}</div>}
           </div>
         ) : (
           // Show ingest form when not ingesting or log is not primary focus
-          (!progress || !showLog || !['running', 'scanning', 'processing'].includes(progress.status)) && (
+          (!progress || !showLog || !['running', 'scanning', 'processing', 'starting'].includes(progress.status)) && (
           <>
             <div className="directory-selection">
               <div className="directory-input-group">
@@ -278,7 +305,7 @@ const clearLog = () => {
             <button
               onClick={startIngest}
               className="start-ingest-btn"
-              disabled={!selectedDirectory || (!!progress && ['running', 'scanning', 'processing'].includes(progress.status))}
+              disabled={!selectedDirectory || (!!progress && ['running', 'scanning', 'processing', 'starting'].includes(progress.status))}
             >
               <FiPlay /> Start Ingest
             </button>
@@ -340,69 +367,86 @@ const clearLog = () => {
               </button>
             </div>
             
-            {progress?.processed_files && progress.processed_files.length > 0 ? (
+            {progress?.processed_files && Array.isArray(progress.processed_files) && progress.processed_files.length > 0 ? (
               <div className="processed-files-log">
                 <div className="file-list-inner scrollable-log"> {/* Ensure .scrollable-log is styled for scrolling */}
-                  {progress.processed_files.map((file: any, index: number) => (
-                    <div key={index} className="file-item">
-                      <span className="file-name">{file.file_name || file.path || 'Unknown file'}</span>
-                      <div className="file-status-container">
-                        <span className={`file-status ${file.status}`}>
-                          {file.status === 'skipped'
-                            ? 'Already in library'
-                            : file.status === 'failed'
-                              ? 'Failed'
-                              : file.status === 'completed'
-                                ? 'Completed'
-                                : file.status.charAt(0).toUpperCase() + file.status.slice(1)}
-                        </span>
-                        {file.status === 'failed' && file.error && (
-                          <span className="file-error" title={file.error}>{file.error}</span>
-                        )}
-                        {file.status === 'skipped' && file.error && (
-                          <span className="file-skipped-reason" title={file.error}>{file.error}</span>
-                        )}
-                        {file.status === 'processing' && file.current_step && (
-                          <span className="file-step">{file.current_step}</span>
-                        )}
-                        
-                        {/* Display compression details if available and step is video_compression */}
-                        {file.status === 'processing' && file.current_step === 'video_compression' && (
-                          <div className="compression-details">
-                            {file.compression_current_rate !== undefined && (
-                              <span className="compression-rate">Rate: {file.compression_current_rate.toFixed(2)} FPS</span>
-                            )}
-                            {file.compression_speed && (
-                              <span className="compression-speed">Speed: {file.compression_speed}</span>
-                            )}
-                            {file.compression_etr_seconds !== undefined && (
-                              <span className="compression-etr">ETR: {formatETR(file.compression_etr_seconds)}</span>
-                            )}
-                            {file.compression_processed_frames !== undefined && file.compression_total_frames !== undefined && (
-                                <span className="compression-frames">
-                                    Frames: {file.compression_processed_frames} / {file.compression_total_frames}
-                                </span>
-                            )}
+                  {progress.processed_files.map((file: any, index: number) => {
+                    // Add null checks for file data
+                    if (!file || typeof file !== 'object') {
+                      return (
+                        <div key={index} className="file-item">
+                          <span className="file-name">Invalid file data</span>
+                          <div className="file-status-container">
+                            <span className="file-status error">Error</span>
                           </div>
-                        )}
-                        {file.compression_error_detail && (
-                            <span className="file-error" title={file.compression_error_detail}>Compression Error: {file.compression_error_detail}</span>
-                        )}
+                        </div>
+                      );
+                    }
 
-                        {file.progress_percentage !== undefined && (
-                          <div className="file-progress">
-                            <div className="file-progress-bar-background">
-                              <div
-                                className={`file-progress-bar-fill ${file.status === 'failed' ? 'failed' : ''}`}
-                                style={{ width: `${file.progress_percentage}%` }}
-                              />
+                    const fileName = file.file_name || file.path || `File ${index + 1}`;
+                    const status = file.status || 'unknown';
+                    
+                    return (
+                      <div key={index} className="file-item">
+                        <span className="file-name">{fileName}</span>
+                        <div className="file-status-container">
+                          <span className={`file-status ${status}`}>
+                            {status === 'skipped'
+                              ? 'Already in library'
+                              : status === 'failed'
+                                ? 'Failed'
+                                : status === 'completed'
+                                  ? 'Completed'
+                                  : status.charAt(0).toUpperCase() + status.slice(1)}
+                          </span>
+                          {status === 'failed' && file.error && (
+                            <span className="file-error" title={file.error}>{file.error}</span>
+                          )}
+                          {status === 'skipped' && file.error && (
+                            <span className="file-skipped-reason" title={file.error}>{file.error}</span>
+                          )}
+                          {status === 'processing' && file.current_step && (
+                            <span className="file-step">{file.current_step}</span>
+                          )}
+                          
+                          {/* Display compression details if available and step is video_compression */}
+                          {status === 'processing' && file.current_step === 'video_compression' && (
+                            <div className="compression-details">
+                              {typeof file.compression_current_rate === 'number' && (
+                                <span className="compression-rate">Rate: {file.compression_current_rate.toFixed(2)} FPS</span>
+                              )}
+                              {file.compression_speed && (
+                                <span className="compression-speed">Speed: {file.compression_speed}</span>
+                              )}
+                              {typeof file.compression_etr_seconds === 'number' && (
+                                <span className="compression-etr">ETR: {formatETR(file.compression_etr_seconds)}</span>
+                              )}
+                              {typeof file.compression_processed_frames === 'number' && typeof file.compression_total_frames === 'number' && (
+                                  <span className="compression-frames">
+                                      Frames: {file.compression_processed_frames} / {file.compression_total_frames}
+                                  </span>
+                              )}
                             </div>
-                            <span className="file-progress-percentage">{file.progress_percentage}%</span>
-                          </div>
-                        )}
+                          )}
+                          {file.compression_error_detail && (
+                              <span className="file-error" title={file.compression_error_detail}>Compression Error: {file.compression_error_detail}</span>
+                          )}
+
+                          {typeof file.progress_percentage === 'number' && (
+                            <div className="file-progress">
+                              <div className="file-progress-bar-background">
+                                <div
+                                  className={`file-progress-bar-fill ${status === 'failed' ? 'failed' : ''}`}
+                                  style={{ width: `${file.progress_percentage}%` }}
+                                />
+                              </div>
+                              <span className="file-progress-percentage">{file.progress_percentage}%</span>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ) : (

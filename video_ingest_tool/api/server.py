@@ -738,12 +738,7 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
             client_sid=client_sid # Log the captured sid
         )
 
-        if not task_run_uuid:
-            logger.warning("subscribe_progress event missing task_run_id")
-            emit('progress_error', {'message': 'task_run_id is required for subscription', 'request_id': request_id}, room=client_sid)
-            return
-        
-        # Send immediate progress update
+        # Send immediate progress update (works for both specific task and general progress)
         progress_data = progress_tracker.get_progress(task_run_uuid)
         emit('ingest_progress_update', progress_data, room=client_sid)
         
@@ -754,6 +749,10 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
             'request_id': request_id,
             'timestamp': time.time()
         }, room=client_sid)
+        
+        logger.info("Progress subscription confirmed", 
+                   task_run_id=task_run_uuid, 
+                   client_sid=client_sid)
     
     @socketio.on('get_ingest_progress')
     def handle_get_ingest_progress(data):

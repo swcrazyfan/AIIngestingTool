@@ -167,39 +167,21 @@ def ai_video_analysis_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
             return output
         # Get the analysis results
         analysis_json = result.get('analysis_json', {})
-        # Create AI-specific JSON file with proper naming
+        
+        # Return the analysis data for database storage (no JSON file saving)
         if analysis_json and file_path:
             try:
-                import json
-                # Create AI analysis directory in run structure (same level as thumbnails)
-                if run_dir:
-                    ai_analysis_dir = os.path.join(run_dir, "ai_analysis")
-                    os.makedirs(ai_analysis_dir, exist_ok=True)
-                    input_basename = os.path.basename(file_path)
-                    ai_filename = f"{os.path.splitext(input_basename)[0]}_AI_analysis.json"
-                    ai_analysis_path = os.path.join(ai_analysis_dir, ai_filename)
-                    # Save the complete AI analysis to AI-specific file
-                    with open(ai_analysis_path, 'w') as f:
-                        json.dump(analysis_json, f, indent=2)
-                    if logger:
-                        logger.info(f"AI analysis saved to: {ai_analysis_path}")
-                else:
-                    # No run directory available - skip saving separate AI file
-                    ai_analysis_path = None
-                    if logger:
-                        logger.warning("No run directory available - AI analysis not saved to separate file")
-                # Create summary for main JSON (lightweight)
+                # Create summary for database storage
                 ai_summary = _create_ai_summary(analysis_json)
                 output.update({
                     'ai_analysis_summary': ai_summary,
-                    'ai_analysis_file_path': ai_analysis_path,
                     'full_ai_analysis_data': analysis_json,
                     'compressed_video_path': result.get('compressed_path'),
                 })
                 return output
             except Exception as e:
                 if logger:
-                    logger.error(f"Failed to save AI analysis files: {str(e)}")
+                    logger.error(f"Failed to process AI analysis: {str(e)}")
                 output['error'] = str(e)
                 return output
         if logger:

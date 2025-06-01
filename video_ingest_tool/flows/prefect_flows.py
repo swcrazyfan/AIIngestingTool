@@ -48,7 +48,7 @@ from video_ingest_tool.config import DEFAULT_COMPRESSION_CONFIG
 @task(cache_policy=None)
 def process_video_file_task(
     file_path: str,
-    thumbnails_dir: str,
+    data_base_dir: str,  # Base data directory (e.g., /path/to/data)
     compression_fps: int = DEFAULT_COMPRESSION_CONFIG['fps'],
     compression_bitrate: str = DEFAULT_COMPRESSION_CONFIG['video_bitrate'],
     force_reprocess: bool = False,
@@ -65,7 +65,7 @@ def process_video_file_task(
     logger = get_run_logger()
     data = {
         'file_path': file_path,
-        'thumbnails_dir': thumbnails_dir,
+        'data_base_dir': data_base_dir,
         'compression_fps': compression_fps,
         'compression_bitrate': compression_bitrate,
         # Ensure other necessary initial values are here if tasks depend on them from 'data'
@@ -142,13 +142,13 @@ def process_video_file_task(
         if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=20.0, description="Starting parallel extraction...")
 
     # Submit parallel tasks conditionally
-    if should_execute_step("compress", config_key="video_compression_step"): # Assuming 'video_compression_step' is the config key
+    if should_execute_step("compress", config_key="video_compression_step"):
         logger.info(f"Submitting video_compression_step for {file_name}")
         compression_task = video_compression_step.with_options(name=f"{label_prefix} | video_compression", tags=["video_compression_step"])
-        compression_future = compression_task.submit(data, compression_fps=compression_fps, compression_bitrate=compression_bitrate, tracker_flow_run_id=flow_run_id)
+        compression_future = compression_task.submit(data, compression_fps=compression_fps, compression_bitrate=compression_bitrate, data_base_dir=data_base_dir)
 
-    # --- Similar conditional submissions for other parallel extractors ---
-    if should_execute_step("mediainfo"): # Assuming not configurable by default or key is 'extract_mediainfo_step'
+    # Submit other parallel extraction tasks
+    if should_execute_step("mediainfo"):
         logger.info(f"Submitting extract_mediainfo_step for {file_name}")
         mediainfo_future = extract_mediainfo_step.with_options(name=f"{label_prefix} | extract_mediainfo", tags=["extract_mediainfo_step"]).submit(data)
     if should_execute_step("ffprobe"):
@@ -173,31 +173,49 @@ def process_video_file_task(
         logger.info(f"Submitting extract_subtitle_step for {file_name}")
         subtitle_future = extract_subtitle_step.with_options(name=f"{label_prefix} | extract_subtitle", tags=["extract_subtitle_step"]).submit(data)
     
-    if should_execute_step("thumbnails", config_key="generate_thumbnails_step"): # Assuming config key
+    if should_execute_step("thumbnails", config_key="generate_thumbnails_step"):
         logger.info(f"Submitting generate_thumbnails_step for {file_name}")
         thumbnails_task = generate_thumbnails_step.with_options(name=f"{label_prefix} | generate_thumbnails", tags=["generate_thumbnails_step"])
-        thumbnails_future = thumbnails_task.submit(data, thumbnails_dir=thumbnails_dir)
+        thumbnails_future = thumbnails_task.submit(data, data_base_dir=data_base_dir)
 
-    # Wait for submitted parallel tasks and update data
-    if compression_future: data.update(compression_future.result()); logger.info(f"Compression result for {file_name} processed.")
-    if mediainfo_future: data.update(mediainfo_future.result()); logger.info(f"Mediainfo result for {file_name} processed.")
-    if ffprobe_future: data.update(ffprobe_future.result()); logger.info(f"FFprobe result for {file_name} processed.")
-    if exiftool_future: data.update(exiftool_future.result()); logger.info(f"Exiftool result for {file_name} processed.")
-    if extended_exif_future: data.update(extended_exif_future.result()); logger.info(f"Extended EXIF result for {file_name} processed.")
-    if codec_future: data.update(codec_future.result()); logger.info(f"Codec result for {file_name} processed.")
-    if hdr_future: data.update(hdr_future.result()); logger.info(f"HDR result for {file_name} processed.")
-    if audio_future: data.update(audio_future.result()); logger.info(f"Audio result for {file_name} processed.")
-    if subtitle_future: data.update(subtitle_future.result()); logger.info(f"Subtitle result for {file_name} processed.")
+    # Wait for submitted parallel tasks and update data (with proper None checking)
+    if compression_future: 
+        data.update(compression_future.result())
+        logger.info(f"Compression result for {file_name} processed.")
+    if mediainfo_future: 
+        data.update(mediainfo_future.result())
+        logger.info(f"Mediainfo result for {file_name} processed.")
+    if ffprobe_future: 
+        data.update(ffprobe_future.result())
+        logger.info(f"FFprobe result for {file_name} processed.")
+    if exiftool_future: 
+        data.update(exiftool_future.result())
+        logger.info(f"Exiftool result for {file_name} processed.")
+    if extended_exif_future: 
+        data.update(extended_exif_future.result())
+        logger.info(f"Extended EXIF result for {file_name} processed.")
+    if codec_future: 
+        data.update(codec_future.result())
+        logger.info(f"Codec result for {file_name} processed.")
+    if hdr_future: 
+        data.update(hdr_future.result())
+        logger.info(f"HDR result for {file_name} processed.")
+    if audio_future: 
+        data.update(audio_future.result())
+        logger.info(f"Audio result for {file_name} processed.")
+    if subtitle_future: 
+        data.update(subtitle_future.result())
+        logger.info(f"Subtitle result for {file_name} processed.")
     
     if thumbnails_future:
         if task_to_run is None:
             progress_tracker.update_file_step(flow_run_id, file_path, "generate_thumbnails", 40, "processing")
             if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=40.0, description="Generating thumbnails...")
-        thumbnails_res = thumbnails_future.result() # This is likely a list of paths
-        data['thumbnail_paths'] = thumbnails_res # Assign directly
+        thumbnails_res = thumbnails_future.result()
+        data.update(thumbnails_res) # Now we have thumbnail_paths in data
         logger.info(f"Thumbnails generated for {file_name}: {data.get('thumbnail_paths')}")
 
-    if should_execute_step("focal_length", config_key="detect_focal_length_step"): # Assuming config key
+    if should_execute_step("focal_length", config_key="detect_focal_length_step"):
         if 'thumbnail_paths' not in data:
             logger.warning(f"Skipping focal_length for {file_name}: thumbnail_paths not found. Run 'thumbnails' task first.")
         else:
@@ -207,36 +225,27 @@ def process_video_file_task(
             logger.info(f"Submitting detect_focal_length_step for {file_name}")
             focal_length_task = detect_focal_length_step.with_options(name=f"{label_prefix} | detect_focal_length", tags=["detect_focal_length_step"])
             focal_length_future = focal_length_task.submit(data)
-            if focal_length_future: data.update(focal_length_future.result()); logger.info(f"Focal length result for {file_name} processed.")
-    
-    # Wait for all parallel steps to finish and update data
-    data.update(mediainfo_future.result())
-    data.update(ffprobe_future.result())
-    data.update(exiftool_future.result())
-    data.update(extended_exif_future.result())
-    data.update(codec_future.result())
-    data.update(hdr_future.result())
-    data.update(audio_future.result())
-    data.update(subtitle_future.result())
-    data.update(thumbnails_future.result())
-    data.update(focal_length_future.result())
-    data.update(compression_future.result())
+            if focal_length_future: 
+                data.update(focal_length_future.result())
+                logger.info(f"Focal length result for {file_name} processed.")
 
     # Step 3.5: Consolidate metadata after all extraction steps
-    if progress_artifact_id:
-        update_progress_artifact(progress_artifact_id, progress=65.0, description="Consolidating metadata...")
-    logger.info(f"Consolidating metadata for {file_name}. Current data keys: {list(data.keys())}")
-    consolidate_task = consolidate_metadata_step.with_options(
-        name=f"{label_prefix} | consolidate_metadata",
-        tags=["consolidate_metadata_step"]
-    )
-    consolidate_result = consolidate_task.submit(data)
-    data.update(consolidate_result.result())
-    logger.info(f"Metadata consolidation completed for {file_name}. Master metadata available: {'master_metadata' in data}")
+    if should_execute_step("consolidate_metadata"):
+        if task_to_run is None:
+            progress_tracker.update_file_step(flow_run_id, file_path, "consolidate_metadata", 65, "processing")
+            if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=65.0, description="Consolidating metadata...")
+        logger.info(f"Consolidating metadata for {file_name}. Current data keys: {list(data.keys())}")
+        consolidate_task = consolidate_metadata_step.with_options(
+            name=f"{label_prefix} | consolidate_metadata",
+            tags=["consolidate_metadata_step"]
+        )
+        consolidate_result = consolidate_task.submit(data)
+        data.update(consolidate_result.result())
+        logger.info(f"Metadata consolidation completed for {file_name}. Master metadata available: {'master_metadata' in data}")
 
     # Step 4: AI analysis
     if should_execute_step("ai_analysis", config_key='ai_video_analysis_step'):
-        if 'compressed_video_path' not in data: # A common dependency
+        if 'compressed_video_path' not in data:
              logger.warning(f"Skipping AI Analysis for {file_name}: 'compressed_video_path' not found. Run 'compress' task first.")
         else:
             if task_to_run is None:
@@ -249,26 +258,23 @@ def process_video_file_task(
             logger.info(f"AI analysis result for {file_name} updated.")
 
             if should_execute_step("ai_thumbnails", config_key='ai_thumbnail_selection_step'):
-                if 'ai_analysis_data' not in data or 'thumbnail_paths' not in data : # Common dependencies
-                    logger.warning(f"Skipping AI Thumbnails for {file_name}: missing 'ai_analysis_data' or 'thumbnail_paths'. Run 'ai_analysis' and 'thumbnails' first.")
+                if 'full_ai_analysis_data' not in data or 'thumbnail_paths' not in data:
+                    logger.warning(f"Skipping AI Thumbnails for {file_name}: missing 'full_ai_analysis_data' or 'thumbnail_paths'. Run 'ai_analysis' and 'thumbnails' first.")
                 else:
                     if task_to_run is None:
                         progress_tracker.update_file_step(flow_run_id, file_path, "ai_thumbnail_selection", 75, "processing")
                         if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=75.0, description="Selecting AI thumbnails...")
                     logger.info(f"Executing AI thumbnail selection step for {file_name}")
                     ai_thumbnail_task_obj = ai_thumbnail_selection_step.with_options(name=f"{label_prefix} | ai_thumbnail_selection", tags=["ai_thumbnail_selection_step"])
-                    ai_thumbnail_result_future = ai_thumbnail_task_obj.submit(data, thumbnails_dir=thumbnails_dir) # data has thumbnail_paths
+                    ai_thumbnail_result_future = ai_thumbnail_task_obj.submit(data, data_base_dir=data_base_dir)
                     data.update(ai_thumbnail_result_future.result())
                     logger.info(f"AI thumbnail selection result for {file_name} updated.")
 
-    # Step 5: Transcription (Placeholder - assuming a config_key like 'transcription_step')
-    # if should_execute_step("transcription", config_key='transcription_step'): ...
-
     # Step 6: Create output model (Consolidates data, crucial for full pipeline)
-    if should_execute_step("create_model"): # Not typically config-toggled, essential for VideoIngestOutput
+    if should_execute_step("create_model"):
         if task_to_run is None:
-            progress_tracker.update_file_step(flow_run_id, file_path, "create_model", 75, "processing")
-            if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=75.0, description="Creating output model...")
+            progress_tracker.update_file_step(flow_run_id, file_path, "create_model", 80, "processing")
+            if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=80.0, description="Creating output model...")
         logger.info(f"Creating output model for {file_name}. Current data keys: {list(data.keys())}")
         model_result_future = create_model_step.with_options(name=f"{label_prefix} | create_model", tags=["create_model_step"]).submit(data)
         model_creation_output = model_result_future.result()
@@ -277,8 +283,6 @@ def process_video_file_task(
             logger.info(f"Output model created for {file_name}: type {type(data.get('model'))}, ID {data.get('model').id if hasattr(data.get('model'), 'id') else 'N/A'}")
         else:
             logger.error(f"create_model_step for {file_name} did not return 'model'.")
-            if task_to_run == "create_model" and not (model_creation_output and 'model' in model_creation_output) : # If this specific task failed to produce model
-                 pass # Let it return the current data dict for inspection
 
     # Step 7: Embedding Generation (moved AFTER model creation)
     if should_execute_step("embeddings", config_key='generate_embeddings_step'):
@@ -304,7 +308,7 @@ def process_video_file_task(
                 if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=95.0, description="Storing data...")
             logger.info(f"Executing database storage step for {file_name}")
             storage_task = database_storage_step.with_options(name=f"{label_prefix} | database_storage", tags=["database_storage_step"])
-            storage_result_future = storage_task.submit(data) # data['model'] should exist
+            storage_result_future = storage_task.submit(data)
             data['database_storage_result'] = storage_result_future.result()
             logger.info(f"Database storage result for {file_name}: {data.get('database_storage_result')}")
 
@@ -337,13 +341,12 @@ def process_video_file_task(
             return None
     else: # Single task mode
         logger.info(f"Specific task '{task_to_run}' executed for {file_name}. Returning current data dictionary with keys: {list(data.keys())}")
-        # Consider logging parts of data if it's too verbose, e.g. json.dumps(data, indent=2, default=str)
         return data # Returns Dict[str, Any]
 
 @flow
 def process_videos_batch_flow(
     file_list: List[str],
-    thumbnails_dir: str,
+    data_base_dir: str,  # Base data directory (e.g., /path/to/data)
     config: Optional[Dict[str, bool]] = None,
     compression_fps: int = DEFAULT_COMPRESSION_CONFIG['fps'],
     compression_bitrate: str = DEFAULT_COMPRESSION_CONFIG['video_bitrate'],
@@ -365,7 +368,6 @@ def process_videos_batch_flow(
     progress_tracker = get_progress_tracker()
     
     # Initialize file details only if not running a single task mode for the whole batch
-    # (though CLI currently bypasses batch for single task)
     if task_to_run is None:
         for file_path in file_list:
             progress_tracker.update_file_step(batch_uuid, file_path, "pending", 0, "pending")
@@ -376,50 +378,51 @@ def process_videos_batch_flow(
             description=f"Processing batch of {len(file_list)} files"
         )
     else:
-        batch_progress_artifact_id = None # No batch progress artifact for single task mode via batch flow
+        batch_progress_artifact_id = None
         logger.info(f"Batch flow called with task_to_run='{task_to_run}'. Progress artifacts will be per-file if enabled in process_video_file_task.")
 
-    # Prepare lists for map
-    thumbnails_dirs = [thumbnails_dir] * len(file_list)
+    # Prepare lists for map - using the correct parameter naming
+    data_base_dirs = [data_base_dir] * len(file_list)
     compression_fps_list = [compression_fps] * len(file_list)
     compression_bitrate_list = [compression_bitrate] * len(file_list)
     force_reprocess_list = [force_reprocess] * len(file_list)
     batch_uuid_list = [batch_uuid] * len(file_list)
     config_list = [config] * len(file_list)
     file_indices = list(range(len(file_list)))
-    task_to_run_list = [task_to_run] * len(file_list) # Map task_to_run to each file task
+    task_to_run_list = [task_to_run] * len(file_list)
 
     logger.info(f"Mapping process_video_file_task for {len(file_list)} files. task_to_run for map: {task_to_run}")
 
     # Map the per-file task
     futures = process_video_file_task.map(
         file_path=file_list,
-        thumbnails_dir=thumbnails_dirs,
+        data_base_dir=data_base_dirs,
         compression_fps=compression_fps_list,
         compression_bitrate=compression_bitrate_list,
         force_reprocess=force_reprocess_list,
         batch_uuid=batch_uuid_list,
         config=config_list,
         file_index=file_indices,
-        task_to_run=task_to_run_list  # Pass the mapped task_to_run
+        task_to_run=task_to_run_list
     )
     
     # Process results
-    results: List[Any] = [None] * len(futures) # Ensure results list can hold Any type
+    results: List[Any] = [None] * len(futures)
     
     for i, future in enumerate(futures):
         try:
             result = future.result()  # This will block until the future is done
             results[i] = result
             
-            # Update batch progress
-            completed_count = i + 1
-            batch_progress = (completed_count / len(file_list)) * 100
-            update_progress_artifact(
-                batch_progress_artifact_id, 
-                progress=batch_progress,
-                description=f"Completed {completed_count}/{len(file_list)} files"
-            )
+            # Update batch progress only if we have the artifact
+            if batch_progress_artifact_id:
+                completed_count = i + 1
+                batch_progress = (completed_count / len(file_list)) * 100
+                update_progress_artifact(
+                    batch_progress_artifact_id, 
+                    progress=batch_progress,
+                    description=f"Completed {completed_count}/{len(file_list)} files"
+                )
             
         except Exception as e:
             results[i] = None
@@ -430,254 +433,13 @@ def process_videos_batch_flow(
     failed_count = len(results) - successful_count
     
     # Final batch progress update
-    update_progress_artifact(
-        batch_progress_artifact_id,
-        progress=100.0,
-        description=f"Batch completed: {successful_count} successful, {failed_count} failed"
-    )
+    if batch_progress_artifact_id:
+        update_progress_artifact(
+            batch_progress_artifact_id,
+            progress=100.0,
+            description=f"Batch completed: {successful_count} successful, {failed_count} failed"
+        )
     
     logger.info(f"Batch processing completed: {successful_count} successful, {failed_count} failed")
     
     return results
-
-@flow
-def process_video_file_flow(
-    file_path: str,
-    thumbnails_dir: str,
-    compression_fps: int = DEFAULT_COMPRESSION_CONFIG['fps'],
-    compression_bitrate: str = DEFAULT_COMPRESSION_CONFIG['video_bitrate'],
-    force_reprocess: bool = False,
-    # user_id: Optional[str] = None, # Removed user_id
-    batch_uuid: Optional[str] = None,
-    config: Optional[Dict[str, Any]] = None,
-) -> Optional[VideoIngestOutput]:
-    """
-    Prefect flow to process a single video file, orchestrating each pipeline step as a Prefect task.
-    Steps that do not depend on each other are launched in parallel for maximum efficiency.
-    Concurrency for resource-heavy steps is set via Prefect concurrency limits and tags.
-    """
-    logger = get_run_logger()
-    data = {
-        'file_path': file_path,
-        'compression_fps': compression_fps,
-        'compression_bitrate': compression_bitrate
-    }
-    file_name = os.path.basename(file_path)
-    label_prefix = f"{batch_uuid or 'batch'} | {file_name}" # Simplified label_prefix
-
-    # Step 1: Checksum
-    checksum_result = generate_checksum_step.with_options(
-        name=f"{label_prefix} | generate_checksum",
-        tags=["generate_checksum_step"]
-    ).submit(data)
-    data.update(checksum_result.result())
-    # Step 2: Duplicate check
-    duplicate_result = check_duplicate_step.with_options(
-        name=f"{label_prefix} | check_duplicate",
-        tags=["check_duplicate_step"]
-    ).submit(data, force_reprocess=force_reprocess)
-    data.update(duplicate_result.result())
-    if data.get('pipeline_stopped'):
-        logger.info('Duplicate detected, stopping pipeline.')
-        return None
-
-    # Step 3: Launch all independent steps in parallel
-    compression_task = video_compression_step.with_options(
-        name=f"{label_prefix} | video_compression",
-        tags=["video_compression_step"]
-    )
-    compression_future = compression_task.submit(data, compression_fps=compression_fps, compression_bitrate=compression_bitrate)
-    mediainfo_future = extract_mediainfo_step.with_options(
-        name=f"{label_prefix} | extract_mediainfo",
-        tags=["extract_mediainfo_step"]
-    ).submit(data)
-    ffprobe_future = extract_ffprobe_step.with_options(
-        name=f"{label_prefix} | extract_ffprobe",
-        tags=["extract_ffprobe_step"]
-    ).submit(data)
-    exiftool_future = extract_exiftool_step.with_options(
-        name=f"{label_prefix} | extract_exiftool",
-        tags=["extract_exiftool_step"]
-    ).submit(data)
-    extended_exif_future = extract_extended_exif_step.with_options(
-        name=f"{label_prefix} | extract_extended_exif",
-        tags=["extract_extended_exif_step"]
-    ).submit(data)
-    codec_future = extract_codec_step.with_options(
-        name=f"{label_prefix} | extract_codec",
-        tags=["extract_codec_step"]
-    ).submit(data)
-    hdr_future = extract_hdr_step.with_options(
-        name=f"{label_prefix} | extract_hdr",
-        tags=["extract_hdr_step"]
-    ).submit(data)
-    audio_future = extract_audio_step.with_options(
-        name=f"{label_prefix} | extract_audio",
-        tags=["extract_audio_step"]
-    ).submit(data)
-    subtitle_future = extract_subtitle_step.with_options(
-        name=f"{label_prefix} | extract_subtitle",
-        tags=["extract_subtitle_step"]
-    ).submit(data)
-    thumbnails_task = generate_thumbnails_step.with_options(
-        name=f"{label_prefix} | generate_thumbnails",
-        tags=["generate_thumbnails_step"]
-    )
-    thumbnails_future = thumbnails_task.submit(data, thumbnails_dir=thumbnails_dir)
-
-    # Wait for thumbnails to be generated and update data
-    thumbnails_result = thumbnails_future.result()
-    data['thumbnail_paths'] = thumbnails_result
-
-    # Now call focal length detection (after thumbnails are ready)
-    focal_length_task = detect_focal_length_step.with_options(
-        name=f"{label_prefix} | detect_focal_length",
-        tags=["detect_focal_length_step"]
-    )
-    focal_length_future = focal_length_task.submit(data)
-
-    # Wait for all parallel steps to finish and update data
-    data.update(mediainfo_future.result())
-    data.update(ffprobe_future.result())
-    data.update(exiftool_future.result())
-    data.update(extended_exif_future.result())
-    data.update(codec_future.result())
-    data.update(hdr_future.result())
-    data.update(audio_future.result())
-    data.update(subtitle_future.result())
-    data.update(thumbnails_result)
-    data.update(focal_length_future.result())
-    data.update(compression_future.result())
-
-    # Step 3.5: Consolidate metadata after all extraction steps
-    if progress_artifact_id:
-        update_progress_artifact(progress_artifact_id, progress=65.0, description="Consolidating metadata...")
-    logger.info(f"Consolidating metadata for {file_name}. Current data keys: {list(data.keys())}")
-    consolidate_task = consolidate_metadata_step.with_options(
-        name=f"{label_prefix} | consolidate_metadata",
-        tags=["consolidate_metadata_step"]
-    )
-    consolidate_result = consolidate_task.submit(data)
-    data.update(consolidate_result.result())
-    logger.info(f"Metadata consolidation completed for {file_name}. Master metadata available: {'master_metadata' in data}")
-
-    # Step 4: AI analysis and downstream steps that depend on compression
-    if progress_artifact_id:
-        update_progress_artifact(progress_artifact_id, progress=70.0, description="Running AI analysis...")
-    
-    if config and config.get('ai_video_analysis_step', False):
-        logger.info(f"Executing AI video analysis step for {file_name}. Config value: {config.get('ai_video_analysis_step')}")
-        ai_analysis_task = ai_video_analysis_step.with_options(
-            name=f"{label_prefix} | ai_video_analysis",
-            tags=["ai_video_analysis_step"]
-        )
-        ai_analysis_result = ai_analysis_task.submit(data)
-        data.update(ai_analysis_result.result())
-
-        # AI Thumbnail selection is often tied to AI analysis
-        if config.get('ai_thumbnail_selection_step', False):
-            logger.info(f"Executing AI thumbnail selection step for {file_name}. Config value: {config.get('ai_thumbnail_selection_step')}")
-            ai_thumbnail_task = ai_thumbnail_selection_step.with_options(
-                name=f"{label_prefix} | ai_thumbnail_selection",
-                tags=["ai_thumbnail_selection_step"]
-            )
-            ai_thumbnail_result = ai_thumbnail_task.submit(data, thumbnails_dir=thumbnails_dir)
-            data.update(ai_thumbnail_result.result())
-        else:
-            logger.info(f"Skipping AI thumbnail selection step for {file_name} based on config (config_value: {config.get('ai_thumbnail_selection_step')})")
-    else:
-        logger.info(f"Skipping AI video analysis (and AI thumbnail selection) step for {file_name} based on config (config_value: {config.get('ai_video_analysis_step')})")
-    
-    # Step 5: Transcription (not implemented yet)
-    # if progress_artifact_id:
-    #     update_progress_artifact(progress_artifact_id, progress=80.0, description="Running transcription...")
-    
-    # if config and config.get('transcription_step', False):
-    #     logger.info(f"Executing transcription step for {file_name}. Config value: {config.get('transcription_step')}")
-    #     transcription_task = transcription_step.with_options(
-    #         name=f"{label_prefix} | transcription",
-    #         tags=["transcription_step"]
-    #     )
-    #     transcription_result = transcription_task.submit(data)
-    #     data.update(transcription_result.result())
-
-    # Step 6: Create output model (Consolidates data, crucial for full pipeline)
-    if should_execute_step("create_model"): # Not typically config-toggled, essential for VideoIngestOutput
-        if task_to_run is None:
-            progress_tracker.update_file_step(flow_run_id, file_path, "create_model", 75, "processing")
-            if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=75.0, description="Creating output model...")
-        logger.info(f"Creating output model for {file_name}. Current data keys: {list(data.keys())}")
-        model_result_future = create_model_step.with_options(name=f"{label_prefix} | create_model", tags=["create_model_step"]).submit(data)
-        model_creation_output = model_result_future.result()
-        if model_creation_output and 'model' in model_creation_output:
-            data.update(model_creation_output) # data['model'] will be VideoIngestOutput
-            logger.info(f"Output model created for {file_name}: type {type(data.get('model'))}, ID {data.get('model').id if hasattr(data.get('model'), 'id') else 'N/A'}")
-        else:
-            logger.error(f"create_model_step for {file_name} did not return 'model'.")
-            if task_to_run == "create_model" and not (model_creation_output and 'model' in model_creation_output) : # If this specific task failed to produce model
-                 pass # Let it return the current data dict for inspection
-
-    # Step 7: Embedding Generation (moved AFTER model creation)
-    if should_execute_step("embeddings", config_key='generate_embeddings_step'):
-        if 'model' not in data or not isinstance(data.get('model'), VideoIngestOutput):
-            logger.warning(f"Skipping generate_embeddings_step for {file_name}: 'model' (VideoIngestOutput) not in data. Run 'create_model' first.")
-        else:
-            if task_to_run is None:
-                progress_tracker.update_file_step(flow_run_id, file_path, "generate_embeddings", 85, "processing")
-                if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=85.0, description="Generating embeddings...")
-            logger.info(f"Executing embedding generation step for {file_name}")
-            embedding_task = generate_embeddings_step.with_options(name=f"{label_prefix} | embedding_generation", tags=["generate_embeddings_step"])
-            embedding_result_future = embedding_task.submit(data)
-            data.update(embedding_result_future.result())
-            logger.info(f"Embedding generation result for {file_name} updated.")
-
-    # Step 8: Store data in database
-    if should_execute_step("db_storage", config_key='database_storage_step'):
-        if 'model' not in data or not isinstance(data.get('model'), VideoIngestOutput):
-            logger.warning(f"Skipping database_storage_step for {file_name}: 'model' (VideoIngestOutput) not in data. Run 'create_model' first.")
-        else:
-            if task_to_run is None:
-                progress_tracker.update_file_step(flow_run_id, file_path, "database_storage", 95, "processing")
-                if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=95.0, description="Storing data...")
-            logger.info(f"Executing database storage step for {file_name}")
-            storage_task = database_storage_step.with_options(
-                name=f"{label_prefix} | database_storage",
-                tags=["database_storage_step"]
-            )
-            # Pass only necessary and serializable parts of 'data'
-            storage_result = storage_task.submit(data) 
-            data['database_storage_result'] = storage_result.result()
-
-    # Step 9: Upload thumbnails
-    if should_execute_step("upload_thumbnails", config_key='upload_thumbnails_step'):
-        if 'thumbnail_paths' not in data or 'model' not in data or not hasattr(data.get('model'), 'id'):
-             logger.warning(f"Skipping upload_thumbnails_step for {file_name}: missing 'thumbnail_paths' or model.id. Run 'thumbnails' and 'create_model' first.")
-        else:
-            if task_to_run is None:
-                progress_tracker.update_file_step(flow_run_id, file_path, "upload_thumbnails", 98, "processing")
-                if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=98.0, description="Uploading thumbnails...")
-            logger.info(f"Executing upload_thumbnails step for {file_name}")
-            upload_result = upload_thumbnails_step.with_options(
-                name=f"{label_prefix} | upload_thumbnails",
-                tags=["upload_thumbnails_step"]
-            ).submit(data)
-            data.update(upload_result.result())
-
-    # Finalization
-    if task_to_run is None: # Full pipeline mode
-        if 'model' in data and isinstance(data['model'], VideoIngestOutput):
-            progress_tracker.update_file_step(flow_run_id, file_path, "completed", 100, "completed")
-            if progress_artifact_id:
-                update_progress_artifact(progress_artifact_id, progress=100.0, description="Completed successfully")
-            logger.info(f"Pipeline completed successfully for {file_name}, returning model.")
-            return data['model']
-        else:
-            logger.error(f"Pipeline for {file_name} did not produce a valid VideoIngestOutput model.")
-            progress_tracker.update_file_step(flow_run_id, file_path, "failed", 100, "failed")
-            if progress_artifact_id:
-                update_progress_artifact(progress_artifact_id, progress=100.0, description="Failed - no valid model")
-            return None
-    else: # Single task mode
-        logger.info(f"Specific task '{task_to_run}' executed for {file_name}. Returning current data dictionary with keys: {list(data.keys())}")
-        # Consider logging parts of data if it's too verbose, e.g. json.dumps(data, indent=2, default=str)
-        return data # Returns Dict[str, Any] 

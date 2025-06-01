@@ -29,19 +29,6 @@ def check_duplicate_step(data: Dict[str, Any], logger=None, force_reprocess: boo
             'reason': 'force_reprocess'
         }
     
-    from ...auth import AuthManager
-    
-    # Check if database storage is enabled (duplicate check only makes sense with database)
-    auth_manager = AuthManager()
-    if not auth_manager.get_current_session():
-        if logger:
-            logger.info("No authentication - skipping duplicate check")
-        return {
-            'is_duplicate': False,
-            'duplicate_check_skipped': True,
-            'reason': 'not_authenticated'
-        }
-    
     checksum = data.get('checksum')
     if not checksum:
         if logger:
@@ -53,41 +40,15 @@ def check_duplicate_step(data: Dict[str, Any], logger=None, force_reprocess: boo
         }
     
     try:
-        client = auth_manager.get_authenticated_client()
-        if not client:
-            if logger:
-                logger.warning("No authenticated client - skipping duplicate check")
-            return {
-                'is_duplicate': False,
-                'duplicate_check_skipped': True,
-                'reason': 'no_client'
-            }
-        
-        # Query database for existing file with same checksum
-        result = client.table('clips').select('id, file_name, file_path, processed_at').eq('file_checksum', checksum).execute()
-        
-        if result.data:
-            existing_file = result.data[0]
-            if logger:
-                logger.info(f"Found duplicate file in database", 
-                           existing_id=existing_file['id'],
-                           existing_file=existing_file['file_name'],
-                           existing_path=existing_file['file_path'],
-                           processed_at=existing_file['processed_at'])
-            
-            return {
-                'is_duplicate': True,
-                'existing_clip_id': existing_file['id'],
-                'existing_file_name': existing_file['file_name'],
-                'existing_file_path': existing_file['file_path'],
-                'existing_processed_at': existing_file['processed_at']
-            }
-        else:
-            if logger:
-                logger.info("No duplicate found - proceeding with processing")
-            return {
-                'is_duplicate': False
-            }
+        # For now, we'll skip the actual database duplicate check since auth was removed
+        # TODO: Implement direct database connection without auth when needed
+        if logger:
+            logger.info("Database duplicate check temporarily disabled - proceeding with processing")
+        return {
+            'is_duplicate': False,
+            'duplicate_check_skipped': True,
+            'reason': 'auth_removed'
+        }
             
     except Exception as e:
         if logger:
