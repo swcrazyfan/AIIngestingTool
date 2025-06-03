@@ -1,10 +1,27 @@
 {
-  "fulltext_weight": 2.5,
+  "default_match_count": 10,
+  "max_match_count": 100,
+  
   "summary_weight": 1.0,
   "keyword_weight": 0.8,
+  "similarity_threshold": 0.3,
+  
+  "fulltext_weight": 2.5,
   "rrf_k": 50,
-  "similarity_threshold": 0.6,
-  "similar_threshold": 0.6,
-  "default_match_count": 10,
-  "max_match_count": 100
+  
+  "similar_threshold": 0.3,
+  
+  "text_summary_weight": 0.5,
+  "text_keyword_weight": 0.5,
+  
+  "visual_thumb1_weight": 0.4,
+  "visual_thumb2_weight": 0.3,
+  "visual_thumb3_weight": 0.3,
+  
+  "combined_mode_text_factor": 0.6,
+  "combined_mode_visual_factor": 0.4,
+  
+  "visual_embedding_weight": 0.5,
+  "summary_embedding_weight": 0.3,
+  "keyword_embedding_weight": 0.2
 } 

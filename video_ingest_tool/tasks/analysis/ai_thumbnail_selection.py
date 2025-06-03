@@ -86,31 +86,23 @@ def extract_frame_at_timestamp(file_path: str, timestamp: str, output_path: str,
             for frame in container.decode(video=0):
                 img = frame.to_image()
                 
-                # Resize to standard 256x256 while maintaining aspect ratio with padding
+                # Resize to 512px max dimension while preserving aspect ratio (no square padding)
                 width, height = img.size
                 
-                # Determine the target size while maintaining aspect ratio
-                if width > height:
-                    new_width = 256
-                    new_height = int(height * 256 / width)
-                else:
-                    new_height = 256
-                    new_width = int(width * 256 / height)
+                # Calculate scaling factor to fit within 512px max dimension
+                max_dimension = 512
+                scale_factor = min(max_dimension / width, max_dimension / height)
                 
-                # Resize the image
-                img = img.resize((new_width, new_height), Image.LANCZOS)
+                # Only resize if the image is larger than max dimension
+                if scale_factor < 1.0:
+                    new_width = int(width * scale_factor)
+                    new_height = int(height * scale_factor)
+                    img = img.resize((new_width, new_height), Image.LANCZOS)
                 
-                # Create a new image with white background for padding
-                padded_img = Image.new("RGB", (256, 256), (255, 255, 255))
-                
-                # Paste the resized image centered on the padded image
-                paste_x = (256 - new_width) // 2
-                paste_y = (256 - new_height) // 2
-                padded_img.paste(img, (paste_x, paste_y))
-                
+                # No padding - preserve aspect ratio as-is
                 # Save the image
                 os.makedirs(os.path.dirname(output_path), exist_ok=True)
-                padded_img.save(output_path, quality=95)
+                img.save(output_path, format='JPEG', quality=95, optimize=True)
                 
                 if logger:
                     logger.info(f"Extracted frame at {timestamp} and saved to {output_path}")
@@ -189,8 +181,6 @@ def ai_thumbnail_selection_step(
     for thumbnail in recommended_thumbnails:
         timestamp = thumbnail.get("timestamp")
         rank = thumbnail.get("rank")
-        description = thumbnail.get("description")
-        detailed_visual_description = thumbnail.get("detailed_visual_description")
         reason = thumbnail.get("reason")
         
         if not timestamp or not rank:
@@ -210,8 +200,6 @@ def ai_thumbnail_selection_step(
                 "path": extracted_path,
                 "timestamp": timestamp,
                 "rank": rank,
-                "description": description,
-                "detailed_visual_description": detailed_visual_description,
                 "reason": reason
             })
             logger.info(f"Successfully processed AI thumbnail rank {rank} at path {extracted_path}")

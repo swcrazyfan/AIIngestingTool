@@ -202,7 +202,7 @@ class ServicesCommand(BaseCommand):
             ('video_compression_step', 2),
             ('ai_analysis_step', 1),
             ('transcription_step', 2),
-            ('embedding_step', 2)
+            ('embedding_step', 1)
         ]
         
         for name, limit in limits:

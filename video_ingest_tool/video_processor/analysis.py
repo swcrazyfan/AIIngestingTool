@@ -27,29 +27,71 @@ except ImportError:
 import structlog
 logger = structlog.get_logger(__name__)
 
-# Standardized vocabulary for consistent analysis
-STANDARDIZED_VOCABULARY = {
-    "person_descriptors": {
-        "age_groups": ["child", "teenager", "young adult", "middle-aged person", "older adult"],
-        "gender_neutral": ["person", "individual"],  # Prefer neutral terms
-        "hair_colors": ["blonde", "brown", "black", "red", "gray", "white", "silver"],
-        "hair_styles": ["short hair", "medium-length hair", "long hair", "curly hair", "straight hair", "wavy hair"],
-        "clothing_tops": ["t-shirt", "shirt", "blouse", "sweater", "jacket", "hoodie", "tank top"],
-        "clothing_colors": ["black", "white", "blue", "red", "green", "yellow", "purple", "orange", "gray", "pink"],
-        "poses": ["standing", "sitting", "walking", "gesturing", "speaking", "looking at camera", "profile view"]
-    },
-    "settings": {
-        "indoor_locations": ["studio", "office", "home", "classroom", "conference room", "kitchen", "living room"],
-        "outdoor_locations": ["park", "street", "garden", "beach", "forest", "mountain", "urban area"],
-        "backgrounds": ["green screen", "white background", "natural background", "indoor background", "outdoor background"]
-    },
-    "lighting": ["bright lighting", "soft lighting", "natural lighting", "studio lighting", "low lighting", "backlighting"],
-    "camera_positions": ["centered", "left side", "right side", "close-up view", "medium view", "wide view"],
-    "expressions": ["neutral expression", "smiling", "serious expression", "speaking", "listening", "concentrated"]
-}
+def load_filmmaker_vocabulary() -> Dict[str, Any]:
+    """
+    Load filmmaker-focused vocabulary from JSON file.
+    
+    Returns:
+        Dict[str, Any]: Vocabulary data with categories and terms
+    """
+    try:
+        vocab_file_path = os.path.join(os.path.dirname(__file__), 'filmmaker_vocabulary.json')
+        with open(vocab_file_path, 'r', encoding='utf-8') as f:
+            vocab_data = json.load(f)
+        return vocab_data
+    except Exception as e:
+        logger.warning(f"Could not load filmmaker vocabulary: {e}")
+        # Return fallback minimal vocabulary
+        return {
+            "categories": {
+                "people_and_roles": ["person", "subject", "presenter"],
+                "actions_and_performance": ["speaking", "demonstrating", "showing"],
+                "emotions_and_tone": ["professional", "engaged", "focused"],
+                "settings_and_environments": ["studio", "office", "indoor"],
+                "production_elements": ["interview", "presentation", "tutorial"],
+                "visual_quality": ["clear", "well-lit", "professional-grade"]
+            }
+        }
+
+def get_filmmaker_vocabulary_list() -> List[str]:
+    """
+    Get a flat list of all filmmaker vocabulary terms.
+    
+    Returns:
+        List[str]: All vocabulary terms from all categories
+    """
+    vocab_data = load_filmmaker_vocabulary()
+    all_terms = []
+    
+    for category_terms in vocab_data.get("categories", {}).values():
+        all_terms.extend(category_terms)
+    
+    return all_terms
 
 def get_vocabulary_section() -> str:
-    """Generate vocabulary section for AI prompt to ensure consistent terminology."""
+    """Generate vocabulary section for AI prompt including both standardized and filmmaker-focused terms."""
+    vocab_data = load_filmmaker_vocabulary()
+    categories = vocab_data.get("categories", {})
+    
+    filmmaker_vocab_text = """
+
+**FILMMAKER-FOCUSED VOCABULARY FOR SUMMARY AND KEYWORDS**
+
+In addition to the standardized vocabulary above, preferentially use these filmmaker-focused terms in your summary and keyword sections:
+
+"""
+    
+    for category_name, terms in categories.items():
+        category_display = category_name.replace('_', ' ').title()
+        terms_text = ', '.join(terms)
+        filmmaker_vocab_text += f"**{category_display}:** {terms_text}\n\n"
+    
+    filmmaker_vocab_text += """
+**IMPORTANT:** These filmmaker terms should be used in summary, key_activities, and content descriptions. 
+Do NOT use them in visual_analysis sections - keep existing shot types and technical quality terms unchanged.
+
+"""
+
     vocab_text = """
 **CRITICAL: STANDARDIZED VOCABULARY FOR CONSISTENCY**
 
@@ -84,7 +126,8 @@ To ensure consistency across all video analyses, you MUST use only these standar
 
 This vocabulary ensures that visually similar clips will receive similar descriptions and embeddings.
 """
-    return vocab_text
+    
+    return vocab_text + filmmaker_vocab_text
 
 class VideoAnalyzer:
     """AI-powered video analyzer using Gemini Flash 2.5."""
@@ -274,17 +317,9 @@ class VideoAnalyzer:
                                     description="Exactly 3 frames ranked by how well they represent the entire clip",
                                     items=types.Schema(
                                         type=types.Type.OBJECT,
-                                        required=["timestamp", "description", "detailed_visual_description", "reason", "rank"],
+                                        required=["timestamp", "reason", "rank"],
                                         properties={
                                             "timestamp": types.Schema(type=types.Type.STRING),
-                                            "description": types.Schema(
-                                                type=types.Type.STRING,
-                                                description="Concise 10-20 token description using format: Subject Action/Type Key-Details Context"
-                                            ),
-                                            "detailed_visual_description": types.Schema(
-                                                type=types.Type.STRING,
-                                                description="Rich, detailed 40-80 token visual description for SigLIP embeddings. Include specific: colors, textures, lighting, composition, facial expressions, poses, clothing, background elements, camera angle, and any distinctive visual features that make this frame unique. Focus on observable visual details rather than inferred meaning."
-                                            ),
                                             "reason": types.Schema(
                                                 type=types.Type.STRING,
                                                 description="Why this frame represents the video well"
@@ -554,10 +589,8 @@ Please analyze this video comprehensively and provide detailed information in al
    - **For the 'keyframe_analysis.recommended_keyframes' field (array of objects):** Beyond the three main thumbnails, if there are other notable keyframes, list them here. Each object should include 'timestamp', 'reason' (string, why this frame is recommended), and 'visual_quality' (from enum). **Use the format "5s600ms" for all timestamps.**
    - **For the 'keyframe_analysis.recommended_thumbnails' field (array of exactly 3 objects):** Select and provide details for exactly three (3) thumbnail frames, ranked by how well they represent the entire clip. These frames should be visually distinct, clear, well-composed, in-focus, and suitable as video thumbnails. For each of the 3 thumbnail objects, you must provide:
       a) 'timestamp' (string): The timestamp of the selected frame. **Use the format "5s600ms" (e.g., 5 seconds and 600 milliseconds).**
-      b) 'description' (string): **A concise, literal description of exactly what is visible in this specific frame, 10-20 tokens long, using STANDARDIZED VOCABULARY and the format: Subject Action/Type Key-Details Context. Focus only on the visual content of this single frame.**
-      c) 'detailed_visual_description' (string): **A rich, detailed 40-80 token visual description for SigLIP embeddings using ONLY STANDARDIZED VOCABULARY. Include specific: colors, textures, lighting, composition, facial expressions, poses, clothing, background elements, camera angle, and any distinctive visual features that make this frame unique. CRITICAL: This field directly impacts similarity matching - use consistent terms.**
-      d) 'reason' (string): A brief explanation of why this frame represents the video well and is suitable as a thumbnail.
-      e) 'rank' (string): The rank ("1", "2", or "3"), with "1" being the most representative frame.
+      b) 'reason' (string): A brief explanation of why this frame represents the video well and is suitable as a thumbnail.
+      c) 'rank' (string): The rank ("1", "2", or "3"), with "1" being the most representative frame.
    - Prioritize: Frames that represent the video's main subject and content, are clear, well-composed, in-focus, and diverse in representing different aspects of the video.
 
 3. For the 'audio_analysis' object in the schema, provide the following details:
@@ -784,8 +817,8 @@ Here are examples of well-formatted descriptions from previous analyses. Use the
                         reference_text += f"""
 Example {i}:
 - Summary: "{summary[:100]}..."
-- Thumbnail description: "{sample_thumbnail.get('description', 'N/A')}"
-- Detailed description: "{sample_thumbnail.get('detailed_visual_description', 'N/A')[:80]}..."
+- Thumbnail timestamp: "{sample_thumbnail.get('timestamp', 'N/A')}"
+- Thumbnail reason: "{sample_thumbnail.get('reason', 'N/A')[:80]}..."
 
 """
                 except:

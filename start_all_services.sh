@@ -193,7 +193,7 @@ echo -e "${YELLOW}Creating concurrency limits...${NC}"
 conda run -n video-ingest prefect concurrency-limit create video_compression_step 2 2>/dev/null || echo "  video_compression_step limit already exists"
 conda run -n video-ingest prefect concurrency-limit create ai_analysis_step 1 2>/dev/null || echo "  ai_analysis_step limit already exists"
 conda run -n video-ingest prefect concurrency-limit create transcription_step 2 2>/dev/null || echo "  transcription_step limit already exists"
-conda run -n video-ingest prefect concurrency-limit create embedding_step 2 2>/dev/null || echo "  embedding_step limit already exists"
+conda run -n video-ingest prefect concurrency-limit create embedding_step 1 2>/dev/null || echo "  embedding_step limit already exists"
 echo -e "${GREEN}Concurrency limits created or verified.${NC}"
 
 # Start the Prefect worker (Needs Prefect Server to be up)

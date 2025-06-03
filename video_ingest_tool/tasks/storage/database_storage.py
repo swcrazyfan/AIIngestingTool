@@ -21,6 +21,7 @@ def database_storage_step(data: Dict[str, Any]) -> Dict[str, Any]:
             - 'model': VideoIngestOutput instance
             - 'embeddings_generated': bool (optional)
             - 'data': embeddings data dict (optional)
+            - 'ai_thumbnail_metadata': simplified AI thumbnail metadata (timestamp, reason, rank, path only)
             
     Returns:
         Dict with storage results
@@ -37,8 +38,19 @@ def database_storage_step(data: Dict[str, Any]) -> Dict[str, Any]:
             'reason': 'no_output_model'
         }
     
-    # Get AI thumbnail metadata if available
+    # Get simplified AI thumbnail metadata (timestamp, reason, rank, path only - no descriptions)
     ai_thumbnail_metadata = data.get('ai_thumbnail_metadata', [])
+    
+    # Verify simplified metadata structure
+    if ai_thumbnail_metadata:
+        sample_thumb = ai_thumbnail_metadata[0] if ai_thumbnail_metadata else {}
+        logger.info(f"AI thumbnail metadata structure verification",
+            has_timestamp=bool(sample_thumb.get('timestamp')),
+            has_reason=bool(sample_thumb.get('reason')),
+            has_rank=bool(sample_thumb.get('rank')),
+            has_path=bool(sample_thumb.get('path')),
+            total_thumbnails=len(ai_thumbnail_metadata)
+        )
     
     # Store embeddings in the model if we have embeddings data
     if data.get('embeddings_generated') and 'data' in data:
@@ -77,7 +89,7 @@ def database_storage_step(data: Dict[str, Any]) -> Dict[str, Any]:
                 'reason': 'connection_failed'
             }
         
-        # Prepare clip data for database
+        # Prepare clip data for database (now handles simplified AI thumbnail metadata)
         clip_data = prepare_clip_data_for_db(output_model, ai_thumbnail_metadata)
         if not clip_data:
             logger.error("Failed to prepare clip data for database")

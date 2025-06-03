@@ -215,6 +215,15 @@ PIPELINE_STEP_DEFINITIONS = [
 ]
 
 
+# Default concurrency limits for Prefect tasks
+DEFAULT_CONCURRENCY_LIMITS = {
+    'video_compression_step': 2,
+    'ai_analysis_step': 1,
+    'transcription_step': 2,
+    'embedding_step': 1,  # Set to 1 to prevent concurrent image embedding API calls
+}
+
+
 def get_default_pipeline_config() -> Dict[str, Any]:
     """
     Get the default configuration for all pipeline steps.

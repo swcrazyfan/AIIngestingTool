@@ -218,9 +218,10 @@ def prepare_clip_data_for_db(
     Args:
         video_output: The VideoIngestOutput object (which includes an .embeddings attribute).
         ai_selected_thumbnail_metadata: Optional list of dictionaries, where each dict
-                                         contains metadata for an AI-selected thumbnail,
-                                         including 'path' and 'rank'. This comes from
-                                         the output of ai_thumbnail_selection_step.
+                                         contains simplified metadata for an AI-selected thumbnail.
+                                         Expected fields: 'timestamp', 'reason', 'rank', 'path'.
+                                         No longer includes 'description' or 'detailed_visual_description'.
+                                         This comes from the output of ai_thumbnail_selection_step.
 
     Returns:
         A dictionary formatted for the 'app_data.clips' table, or None if essential data is missing.

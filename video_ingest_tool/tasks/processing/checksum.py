@@ -75,10 +75,10 @@ def generate_checksum_step(data: Dict[str, Any], logger=None, force_reprocess: b
             }
         else:
             # Force reprocessing - continue with existing UUID
-        if logger:
+            if logger:
                 logger.info("Force reprocessing duplicate file", 
-                       clip_id=clip_id, checksum=checksum, 
-                       existing_file_name=existing_clip.get('file_name'))
+                           clip_id=clip_id, checksum=checksum, 
+                           existing_file_name=existing_clip.get('file_name'))
     else:
         # Generate new UUID for new clip
         clip_id = str(uuid.uuid4())

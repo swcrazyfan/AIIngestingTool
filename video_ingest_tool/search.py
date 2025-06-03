@@ -156,19 +156,30 @@ class VideoSearcher:
                            weights=embedding_weights,
                            mode=mode)
                 
+                # Map the weights to the correct parameter names
+                # For visual mode, use full visual weights; for combined mode, scale them
+                if mode == 'visual':
+                    # In visual mode, use standard thumbnail weights directly
+                    visual_thumb1_weight_final = 0.4
+                    visual_thumb2_weight_final = 0.3
+                    visual_thumb3_weight_final = 0.3
+                else:
+                    # In combined mode, scale by the visual embedding weight
+                    visual_thumb1_weight_final = embedding_weights['visual'] * 0.4
+                    visual_thumb2_weight_final = embedding_weights['visual'] * 0.3
+                    visual_thumb3_weight_final = embedding_weights['visual'] * 0.3
+                
                 results = duckdb_search_logic.find_similar_clips_duckdb(
                     source_clip_id=clip_id,
                     conn=con,
                     mode=mode,  # Use the provided mode parameter
                     match_count=match_count,
                     similarity_threshold=threshold,
-                    # Map the weights to the correct parameter names
                     text_summary_weight=embedding_weights['summary'],
                     text_keyword_weight=embedding_weights['keyword'],
-                    # For visual weights, we'll use the total visual weight for all thumbnail weights
-                    visual_thumb1_weight=embedding_weights['visual'] * 0.4,  # 40% of visual weight
-                    visual_thumb2_weight=embedding_weights['visual'] * 0.3,  # 30% of visual weight  
-                    visual_thumb3_weight=embedding_weights['visual'] * 0.3,  # 30% of visual weight
+                    visual_thumb1_weight=visual_thumb1_weight_final,
+                    visual_thumb2_weight=visual_thumb2_weight_final,
+                    visual_thumb3_weight=visual_thumb3_weight_final,
                     combined_mode_text_factor=0.6,
                     combined_mode_visual_factor=0.4
                 )

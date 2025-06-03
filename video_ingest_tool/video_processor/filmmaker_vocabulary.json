@@ -1,0 +1,30 @@
+{
+  "vocabulary_version": "1.0",
+  "description": "Filmmaker-focused vocabulary for AI video analysis summary and keyword sections",
+  "last_updated": "2025-06-03",
+  "categories": {
+    "people_and_roles": [
+      "talent", "subject", "presenter", "host", "speaker", "interviewer", "guest", "expert"
+    ],
+    "actions_and_performance": [
+      "presenting", "demonstrating", "teaching", "interviewing", "discussing", "explaining", "speaking", "gesturing"
+    ],
+    "emotions_and_tone": [
+      "engaged", "focused", "energetic", "professional", "conversational", "enthusiastic", "calm", "serious"
+    ],
+    "settings_and_environments": [
+      "studio", "workspace", "office", "laboratory", "classroom", "conference-room", "workshop", "outdoor"
+    ],
+    "production_elements": [
+      "interview", "presentation", "tutorial", "demonstration", "session", "meeting", "lecture", "workshop"
+    ],
+    "visual_quality": [
+      "well-lit", "natural-lighting", "cinematic", "documentary-style", "professional-grade", "high-definition", "clear", "sharp", "detailed", "polished"
+    ]
+  },
+  "usage_instructions": {
+    "purpose": "Use these terms in AI video analysis for summary and keyword sections ONLY",
+    "exclusions": "Do NOT modify visual_analysis vocabulary - keep existing shot types, technical quality terms unchanged",
+    "preference": "Prefer these standardized terms over synonyms for consistency in embeddings"
+  }
+} 

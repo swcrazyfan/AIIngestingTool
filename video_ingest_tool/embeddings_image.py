@@ -17,43 +17,38 @@ from dotenv import load_dotenv
 # Load environment variables from .env file (required for Prefect workers)
 load_dotenv()
 
-def resize_image(image_path: str, target_width: int = 512, target_height: int = 512) -> Image.Image:
+def resize_image(image_path: str, max_dimension: int = 512) -> Image.Image:
     """
-    Resize an image while maintaining aspect ratio with padding.
+    Resize an image to fit within max dimension while preserving aspect ratio.
+    No padding is applied - the image maintains its original aspect ratio.
     
     Args:
         image_path: Path to the image file
-        target_width: Target width (default: 256)
-        target_height: Target height (default: 256)
+        max_dimension: Maximum dimension (width or height) for the resized image (default: 512)
         
     Returns:
-        PIL.Image.Image: Resized image
+        PIL.Image.Image: Resized image with preserved aspect ratio
     """
     # Open the image
     img = Image.open(image_path)
     
-    # Calculate the resize dimensions to maintain aspect ratio
+    # Get current dimensions
     width, height = img.size
     
-    if width > height:
-        new_width = target_width
-        new_height = int(height * target_width / width)
-    else:
-        new_height = target_height
-        new_width = int(width * target_height / height)
+    # Calculate scaling factor to fit within max dimension
+    scale_factor = min(max_dimension / width, max_dimension / height)
     
-    # Resize the image
-    resized_img = img.resize((new_width, new_height), Image.LANCZOS)
+    # Only resize if the image is larger than max dimension
+    if scale_factor < 1.0:
+        new_width = int(width * scale_factor)
+        new_height = int(height * scale_factor)
+        img = img.resize((new_width, new_height), Image.LANCZOS)
     
-    # Create a new image with white background for padding
-    padded_img = Image.new("RGB", (target_width, target_height), (255, 255, 255))
+    # Convert to RGB if it has an alpha channel for consistency
+    if img.mode == 'RGBA':
+        img = img.convert('RGB')
     
-    # Paste the resized image centered on the padded image
-    paste_x = (target_width - new_width) // 2
-    paste_y = (target_height - new_height) // 2
-    padded_img.paste(resized_img, (paste_x, paste_y))
-    
-    return padded_img
+    return img
 
 def image_to_base64(image: Union[str, Image.Image]) -> str:
     """
@@ -87,17 +82,16 @@ def image_to_base64(image: Union[str, Image.Image]) -> str:
 
 def generate_thumbnail_embedding(
     image_path: str,
-    description: str,
     api_base: Optional[str] = None,
     api_key: Optional[str] = None, # api_key is not used by this server
     logger=None
 ) -> Optional[List[float]]:
     """
     Generate embedding for image using the SigLIP model via local API.
+    Now generates image-only embeddings instead of joint image+text embeddings.
     
     Args:
         image_path: Path to the thumbnail image
-        description: Short text description of the thumbnail
         api_base: API base URL (default: http://localhost:8001)
         api_key: API key (not required for local server)
         logger: Optional logger
@@ -126,17 +120,13 @@ def generate_thumbnail_embedding(
             base64_image = base64.b64encode(img_bytes).decode('utf-8')
             data_uri = f"data:image/{img_format};base64,{base64_image}"
 
-        logger.info(f"Generating joint image+text embedding for: {image_path}")
-        logger.info(f"With description: {description}")
+        logger.info(f"Generating image-only embedding for: {image_path}")
         logger.info(f"Using API endpoint: {api_base}/v1/embeddings")
 
-        # Send both image and text as joint input using JointInputItem format
-        # The API expects input to be a list, even for a single item
+        # Send image-only input for SigLIP image embeddings
+        # Updated payload format for image-only embeddings
         payload = {
-            "input": [{
-                "image": data_uri,
-                "text": description
-            }]
+            "input": data_uri
         }
 
         headers = {"Content-Type": "application/json"}
@@ -152,7 +142,7 @@ def generate_thumbnail_embedding(
                     embedding_data = result["data"][0]
                     if "embedding" in embedding_data:
                         embedding = embedding_data["embedding"]
-                        logger.info(f"Successfully generated joint embedding of dimension {len(embedding)}")
+                        logger.info(f"Successfully generated image-only embedding of dimension {len(embedding)}")
                         return embedding
                     else:
                         logger.error(f"'embedding' key missing in data item: {embedding_data}")
@@ -191,10 +181,12 @@ def batch_generate_thumbnail_embeddings(
     logger=None
 ) -> Dict[int, Optional[List[float]]]:
     """
-    Generate joint image+text embeddings for multiple thumbnails.
+    Generate image-only embeddings for multiple thumbnails.
+    Updated to work with simplified thumbnail metadata (no description fields).
     
     Args:
-        thumbnails: List of dictionaries with 'path', 'description', 'detailed_visual_description', and 'rank' keys
+        thumbnails: List of dictionaries with 'path', 'timestamp', 'reason', and 'rank' keys.
+                   No longer requires 'description' or 'detailed_visual_description' fields.
         api_base: API base URL (default: http://100.121.182.8:8001)
         api_key: API key (not required for direct server)
         logger: Optional logger
@@ -209,30 +201,23 @@ def batch_generate_thumbnail_embeddings(
     
     for thumbnail in thumbnails:
         path = thumbnail.get('path')
-        description = thumbnail.get('description')
-        detailed_visual_description = thumbnail.get('detailed_visual_description')
         rank = thumbnail.get('rank')
+        timestamp = thumbnail.get('timestamp', 'unknown')
+        reason = thumbnail.get('reason', 'no reason provided')
         
         if not path or rank is None:
             logger.warning(f"Missing required fields in thumbnail: {thumbnail}")
-            continue
-            
-        # Prefer detailed_visual_description over basic description for better SigLIP embeddings
-        embedding_description = detailed_visual_description if detailed_visual_description else description
-        
-        if not embedding_description:
-            logger.warning(f"No description available for thumbnail rank {rank}, skipping")
             continue
         
         # Convert rank to int if it's a string
         rank_int = int(rank) if isinstance(rank, str) else rank
         
-        logger.info(f"Processing thumbnail with rank {rank}")
-        logger.info(f"Using {'detailed' if detailed_visual_description else 'basic'} description: {embedding_description[:100]}...")
+        logger.info(f"Processing thumbnail with rank {rank} at {timestamp}")
+        logger.info(f"Reason for selection: {reason}")
+        logger.info(f"Generating image-only embedding (no text description)")
         
         embedding = generate_thumbnail_embedding(
             image_path=path,
-            description=embedding_description,
             api_base=api_base,
             api_key=api_key,
             logger=logger

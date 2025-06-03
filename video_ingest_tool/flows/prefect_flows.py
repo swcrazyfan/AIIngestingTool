@@ -308,7 +308,7 @@ def process_video_file_task(
                 progress_tracker.update_file_step(flow_run_id, file_path, "generate_embeddings", 85, "processing")
                 if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=85.0, description="Generating embeddings...")
             logger.info(f"Executing embedding generation step for {file_name}")
-            embedding_task = generate_embeddings_step.with_options(name=f"{label_prefix} | embedding_generation", tags=["generate_embeddings_step"])
+            embedding_task = generate_embeddings_step.with_options(name=f"{label_prefix} | embedding_generation", tags=["embedding_step"])
             embedding_result_future = embedding_task.submit(data)
             data.update(embedding_result_future.result())
             logger.info(f"Embedding generation result for {file_name} updated.")
