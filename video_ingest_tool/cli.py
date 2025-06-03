@@ -278,7 +278,7 @@ def search_query(
         console.print(f"[red]❌ Search failed: {result.get('error')}[/red]")
         raise typer.Exit(1)
         
-    _display_search_results(result, format_type, show_relevance=True)
+    _display_search_results(result.get('data', {}), format_type, show_relevance=True)
 
 
 @search_app.command("similar")
@@ -416,9 +416,11 @@ def _display_search_results(data: dict, format_type: str, show_relevance: bool =
         ]
         
         if show_relevance:
-            row.append(f"{result.get('relevance_score', 0):.3f}")
+            relevance_score = result.get('relevance_score') or result.get('combined_similarity') or 0
+            row.append(f"{relevance_score:.3f}")
         elif show_similarity:
-            row.append(f"{result.get('similarity_score', 0):.3f}")
+            similarity_score = result.get('similarity_score') or result.get('combined_similarity') or 0
+            row.append(f"{similarity_score:.3f}")
             
         # Display full clip_id if available, otherwise truncated
         clip_id_val = result.get('id', result.get('clip_id', 'Unknown')) # 'id' from direct clip, 'clip_id' from search

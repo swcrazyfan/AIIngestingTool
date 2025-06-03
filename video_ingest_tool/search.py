@@ -12,7 +12,7 @@ import structlog
 # AuthManager removed as authentication is being phased out for local DuckDB
 # from .auth import AuthManager
 from .embeddings import generate_embeddings
-from .search_config import get_search_params
+from .config.search_config import get_search_config  # Updated import
 from .database.duckdb import connection as duckdb_connection # For DuckDB connection
 from .database.duckdb import search_logic as duckdb_search_logic # For DuckDB search functions
 from .database.duckdb import crud as duckdb_crud # For listing/filtering if needed
@@ -58,7 +58,7 @@ class VideoSearcher:
         search_type: SearchType = "hybrid",
         match_count: int = 10,
         filters: Optional[Dict[str, Any]] = None, # Filters might be handled differently with DuckDB
-        weights: Optional[Dict[str, float]] = None
+        weights: Optional[Dict[str, Any]] = None  # Changed from Dict[str, float] to allow any override
     ) -> List[Dict[str, Any]]:
         """
         Perform search across video catalog using DuckDB.
@@ -68,32 +68,30 @@ class VideoSearcher:
             search_type: Type of search to perform
             match_count: Number of results to return
             filters: Optional filters (TODO: define how these apply to DuckDB queries)
-            weights: Optional search weights for hybrid search
+            weights: Optional search parameter overrides (weights, thresholds, etc.)
             
         Returns:
             List of matching video clips with metadata
         """
-        search_params = get_search_params(weights)
+        # Get configuration with any runtime overrides
+        config = get_search_config(weights)
         
-        # client = self._get_authenticated_client() # Removed
-        # user_id = self._get_current_user_id() # Removed
-        
-        max_count = search_params.get('max_match_count', 100)
-        if match_count > max_count:
-            logger.warning(f"Requested match count {match_count} exceeds maximum {max_count}, limiting results")
-            match_count = max_count
+        # Apply match count limits from config
+        if match_count > config.max_match_count:
+            logger.warning(f"Requested match count {match_count} exceeds maximum {config.max_match_count}, limiting results")
+            match_count = config.max_match_count
         
         # Connection will be established within each specific search method for now
         # or refactored to be passed if a single connection per VideoSearcher call is preferred.
         
         if search_type == "semantic":
-            return self._semantic_search(query, match_count, search_params, filters) # client and user_id removed
+            return self._semantic_search(query, match_count, config, filters)
         elif search_type == "fulltext":
-            return self._fulltext_search(query, match_count, filters) # client and user_id removed
+            return self._fulltext_search(query, match_count, filters)
         elif search_type == "hybrid":
-            return self._hybrid_search(query, match_count, search_params, filters) # client and user_id removed
+            return self._hybrid_search(query, match_count, config, filters)
         elif search_type == "transcripts":
-            return self._transcript_search(query, match_count, filters) # client and user_id removed
+            return self._transcript_search(query, match_count, filters)
         else:
             raise ValueError(f"Unsupported search type: {search_type}")
     
@@ -102,7 +100,7 @@ class VideoSearcher:
         clip_id: str,
         match_count: int = 5,
         similarity_threshold: Optional[float] = None,
-        weights: Optional[Dict[str, float]] = None,
+        weights: Optional[Dict[str, Any]] = None,  # Changed to allow any config override
         mode: str = 'combined'
     ) -> List[Dict[str, Any]]:
         """
@@ -112,8 +110,7 @@ class VideoSearcher:
             clip_id: ID of the source clip
             match_count: Number of similar clips to return
             similarity_threshold: Minimum similarity score (optional)
-            weights: Optional weights for different embedding types.
-                    Defaults: {'visual': 0.5, 'summary': 0.3, 'keyword': 0.2}
+            weights: Optional parameter overrides (not just weights - any config parameter)
             mode: Search mode - 'text' (text embeddings only), 'visual' (visual embeddings only), 
                   or 'combined' (multi-modal hybrid)
             
@@ -125,63 +122,37 @@ class VideoSearcher:
         if mode not in valid_modes:
             raise ValueError(f"Invalid mode '{mode}'. Must be one of: {', '.join(valid_modes)}")
         
-        # Get parameters from centralized config
-        search_params = get_search_params()
-        
-        # Set up embedding weights - balanced approach giving text embeddings meaningful contribution
-        default_weights = {
-            'visual': 0.5,      # Thumbnail embeddings (balanced weight)
-            'summary': 0.3,     # Summary embeddings (meaningful contribution)
-            'keyword': 0.2      # Keyword embeddings (meaningful contribution)
-        }
-        
+        # Build overrides dict for configuration
+        overrides = {}
         if weights:
-            # Merge user-provided weights with defaults
-            embedding_weights = {**default_weights, **weights}
-        else:
-            embedding_weights = default_weights
+            overrides.update(weights)
+        if similarity_threshold is not None:
+            overrides['similar_threshold'] = similarity_threshold
         
-        # Use higher similarity threshold or default from config
-        threshold = similarity_threshold
-        if threshold is None:
-            # Use more reasonable threshold for balanced multi-modal search
-            threshold = search_params.get('similar_threshold', 0.3)  # Lowered from 0.7 to 0.3
+        # Get configuration with overrides
+        config = get_search_config(overrides)
         
         try:
             with duckdb_connection.get_db_connection() as con:
-                logger.info("Calling duckdb_search_logic.find_similar_clips_duckdb with weighted embeddings", 
+                logger.info("Calling duckdb_search_logic.find_similar_clips_duckdb with centralized config", 
                            source_clip_id=clip_id, 
                            match_count=match_count, 
-                           threshold=threshold,
-                           weights=embedding_weights,
+                           threshold=config.similar_threshold,
                            mode=mode)
-                
-                # Map the weights to the correct parameter names
-                # For visual mode, use full visual weights; for combined mode, scale them
-                if mode == 'visual':
-                    # In visual mode, use standard thumbnail weights directly
-                    visual_thumb1_weight_final = 0.4
-                    visual_thumb2_weight_final = 0.3
-                    visual_thumb3_weight_final = 0.3
-                else:
-                    # In combined mode, scale by the visual embedding weight
-                    visual_thumb1_weight_final = embedding_weights['visual'] * 0.4
-                    visual_thumb2_weight_final = embedding_weights['visual'] * 0.3
-                    visual_thumb3_weight_final = embedding_weights['visual'] * 0.3
                 
                 results = duckdb_search_logic.find_similar_clips_duckdb(
                     source_clip_id=clip_id,
                     conn=con,
-                    mode=mode,  # Use the provided mode parameter
+                    mode=mode,
                     match_count=match_count,
-                    similarity_threshold=threshold,
-                    text_summary_weight=embedding_weights['summary'],
-                    text_keyword_weight=embedding_weights['keyword'],
-                    visual_thumb1_weight=visual_thumb1_weight_final,
-                    visual_thumb2_weight=visual_thumb2_weight_final,
-                    visual_thumb3_weight=visual_thumb3_weight_final,
-                    combined_mode_text_factor=0.6,
-                    combined_mode_visual_factor=0.4
+                    similarity_threshold=config.similar_threshold,
+                    text_summary_weight=config.text_summary_weight,
+                    text_keyword_weight=config.text_keyword_weight,
+                    visual_thumb1_weight=config.visual_thumb1_weight,
+                    visual_thumb2_weight=config.visual_thumb2_weight,
+                    visual_thumb3_weight=config.visual_thumb3_weight,
+                    combined_mode_text_factor=config.combined_mode_text_factor,
+                    combined_mode_visual_factor=config.combined_mode_visual_factor
                 )
             
             return results
@@ -237,7 +208,7 @@ class VideoSearcher:
         self,
         query: str,
         match_count: int,
-        search_params: Dict[str, Any],
+        config,  # SearchConfig object
         filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """Perform semantic search using vector embeddings with DuckDB."""
@@ -245,14 +216,14 @@ class VideoSearcher:
         
         query_summary_embedding, query_keyword_embedding = generate_embeddings(summary_content, keyword_content)
         
+        # Use centralized configuration
         duckdb_params = {
             'query_summary_embedding': query_summary_embedding,
             'query_keyword_embedding': query_keyword_embedding,
             'match_count': match_count,
-            'summary_weight': search_params.get('summary_weight', 1.0),
-            'keyword_weight': search_params.get('keyword_weight', 0.8),
-            'similarity_threshold': search_params.get('similarity_threshold', 0.4)
-            # Filters are not currently passed to duckdb_search_logic.semantic_search_clips_duckdb
+            'summary_weight': config.summary_weight,
+            'keyword_weight': config.keyword_weight,
+            'similarity_threshold': config.similarity_threshold
         }
 
         try:
@@ -263,7 +234,7 @@ class VideoSearcher:
                         weights={k: v for k, v in duckdb_params.items() if 'weight' in k or 'threshold' in k})
             
             with duckdb_connection.get_db_connection() as con:
-                results = duckdb_search_logic.semantic_search_clips_duckdb(con, **duckdb_params) # Pass con as positional
+                results = duckdb_search_logic.semantic_search_clips_duckdb(con, **duckdb_params)
             return results
             
         except Exception as e:
@@ -280,9 +251,8 @@ class VideoSearcher:
         try:
             logger.info("Performing DUCKDB full-text search", query=query, limit=match_count)
             with duckdb_connection.get_db_connection() as con:
-                # Filters are not currently passed to duckdb_search_logic.fulltext_search_clips_duckdb
                 results = duckdb_search_logic.fulltext_search_clips_duckdb(
-                    query_text=query, # Correct order
+                    query_text=query,
                     conn=con,
                     match_count=match_count
                 )
@@ -296,7 +266,7 @@ class VideoSearcher:
         self,
         query: str,
         match_count: int,
-        search_params: Dict[str, Any],
+        config,  # SearchConfig object
         filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """Perform hybrid search combining full-text and semantic search with DuckDB."""
@@ -304,17 +274,17 @@ class VideoSearcher:
 
         query_summary_embedding, query_keyword_embedding = generate_embeddings(summary_content, keyword_content)
         
+        # Use centralized configuration
         duckdb_params = {
             'query_text': query,
             'query_summary_embedding': query_summary_embedding,
             'query_keyword_embedding': query_keyword_embedding,
             'match_count': match_count,
-            'fts_weight': search_params.get('fulltext_weight', 2.5), # Changed key from fulltext_weight to fts_weight
-            'summary_weight': search_params.get('summary_weight', 1.0),
-            'keyword_weight': search_params.get('keyword_weight', 0.8),
-            'rrf_k': int(search_params.get('rrf_k', 50)), # Ensure rrf_k is int
-            'similarity_threshold': search_params.get('similarity_threshold', 0.4)
-            # Filters are not currently passed to duckdb_search_logic.hybrid_search_clips_duckdb
+            'fts_weight': config.fulltext_weight,
+            'summary_weight': config.summary_weight,
+            'keyword_weight': config.keyword_weight,
+            'rrf_k': config.rrf_k,
+            'similarity_threshold': config.similarity_threshold
         }
 
         try:
@@ -326,15 +296,6 @@ class VideoSearcher:
                                  if 'weight' in k or 'threshold' in k or 'rrf_k' in k})
             
             with duckdb_connection.get_db_connection() as con:
-                # Ensure 'conn' is not in duckdb_params to avoid conflict if it was accidentally added
-                if 'conn' in duckdb_params:
-                    logger.warning("Unexpected 'conn' in duckdb_params for hybrid_search, removing.")
-                    del duckdb_params['conn']
-                
-                # Explicitly pass conn, then unpack other params.
-                # hybrid_search_clips_duckdb expects: query_text, query_summary_embedding, query_keyword_embedding, conn, ...
-                # duckdb_params contains query_text, query_summary_embedding, query_keyword_embedding, etc.
-                
                 # Extract query_text for positional argument, remove from duckdb_params to avoid duplication
                 q_text = duckdb_params.pop('query_text')
                 q_summary_emb = duckdb_params.pop('query_summary_embedding')
@@ -344,8 +305,8 @@ class VideoSearcher:
                     q_text,
                     q_summary_emb,
                     q_keyword_emb,
-                    conn=con, # conn is now correctly passed to the 'conn' parameter
-                    **duckdb_params # The rest of the params like match_count, weights, etc.
+                    conn=con,
+                    **duckdb_params
                 )
             return results
             
@@ -363,9 +324,8 @@ class VideoSearcher:
         try:
             logger.info("Performing DUCKDB transcript search", query=query, limit=match_count)
             with duckdb_connection.get_db_connection() as con:
-                # Filters are not currently passed to duckdb_search_logic.search_transcripts_duckdb
                 results = duckdb_search_logic.search_transcripts_duckdb(
-                    query_text=query, # Correct order
+                    query_text=query,
                     conn=con,
                     match_count=match_count
                 )
@@ -415,7 +375,7 @@ def format_search_results(
             formatted.update({
                 'summary_similarity': result.get('summary_similarity'),
                 'keyword_similarity': result.get('keyword_similarity'),
-                'combined_similarity': result.get('combined_similarity')
+                'combined_similarity': result.get('combined_similarity_score') or result.get('combined_similarity')  # Handle both field names
             })
         elif search_type == "hybrid" and show_scores:
             formatted.update({
