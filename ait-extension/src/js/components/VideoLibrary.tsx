@@ -4,6 +4,7 @@ import { VideoFile, SearchType, SortField, SortOrder } from '../types/api';
 import VideoCard from './VideoCard';
 import SearchBar from './SearchBar';
 import AccordionItem from './AccordionItem';
+import { evalTS } from '../lib/utils/bolt';
 import { 
   FiSearch, FiGrid, FiList, FiFilter, FiTag, FiMapPin, FiCamera, FiStar, 
   FiEye, FiShuffle, FiGlobe, FiInfo, FiMic, FiChevronDown, FiChevronUp, 
@@ -29,7 +30,7 @@ const VideoLibrary: React.FC = () => {
   const [sortOrder, setSortOrder] = useState<SortOrder>('descending');
   const [dateStart, setDateStart] = useState<string>('');
   const [dateEnd, setDateEnd] = useState<string>('');
-  const [cardSize, setCardSize] = useState<CardSize>('medium');
+  const [cardSize, setCardSize] = useState<CardSize>('small');
   const [viewMode, setViewMode] = useState<ViewMode>('tiles');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [selectedFilter, setSelectedFilter] = useState<string>('all');

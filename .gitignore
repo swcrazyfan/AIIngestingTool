@@ -74,3 +74,4 @@ data/prefect.db-shm
 data/prefect.db-journal
 data/prefect.db-wal
 data/prefect.db-shm
+/data

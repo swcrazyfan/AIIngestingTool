@@ -6,18 +6,12 @@ This module implements the video analysis step using Gemini Flash 2.5 AI.
 
 import os
 from typing import Dict, Any, Optional
+from dotenv import load_dotenv
 from ...config import DEFAULT_COMPRESSION_CONFIG, Config
 from prefect import task
-from ...video_processor.compression import VideoCompressor # Moved import to top
 
-# Try to import VideoProcessor - it may not be available if dependencies are missing
-try:
-    from ...video_processor.processor import VideoProcessor
-    HAS_VIDEO_PROCESSOR = True
-    VIDEO_PROCESSOR_ERROR = ""
-except ImportError as e:
-    HAS_VIDEO_PROCESSOR = False
-    VIDEO_PROCESSOR_ERROR = str(e)
+# Load environment variables from .env file (required for Prefect workers)
+load_dotenv()
 
 
 def _create_ai_summary(analysis_json: Dict[str, Any]) -> Dict[str, Any]:
@@ -104,6 +98,8 @@ def ai_video_analysis_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
     """
     Run AI video analysis using Gemini Flash 2.5 AI.
     Always returns a dict with all expected keys, even in error cases.
+    
+    This step expects a compressed video to already be available from the video_compression_step.
     """
     # Default output structure
     output = {
@@ -113,12 +109,7 @@ def ai_video_analysis_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
         'compressed_video_path': data.get('compressed_video_path'),
         'ai_analysis_data': {},
     }
-    if not HAS_VIDEO_PROCESSOR:
-        if logger:
-            logger.warning(f"VideoProcessor not available: {VIDEO_PROCESSOR_ERROR}")
-        output['error'] = VIDEO_PROCESSOR_ERROR
-        return output
-
+    
     file_path = data.get('file_path')
     compressed_path = data.get('compressed_video_path')
 
@@ -128,45 +119,41 @@ def ai_video_analysis_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
         output['error'] = 'No file_path provided'
         return output
 
+    # Ensure we have a compressed video to analyze
+    if not compressed_path:
+        if logger:
+            logger.error("No compressed_video_path available for AI analysis. The video_compression_step should run first.")
+        output['error'] = 'No compressed video available for analysis. Run video_compression_step first.'
+        return output
+    
+    if not os.path.exists(compressed_path):
+        if logger:
+            logger.error(f"Compressed video file not found: {compressed_path}")
+        output['error'] = f'Compressed video file not found: {compressed_path}'
+        return output
+
     try:
         if logger:
             logger.info(f"Starting comprehensive AI analysis for: {os.path.basename(file_path)}")
-        from ...config import Config
-        # Initialize VideoProcessor with compression configuration
-        config = Config()
-        # Create compression config with custom parameters
-        compression_config = {
-            'fps': DEFAULT_COMPRESSION_CONFIG['fps'],
-            'video_bitrate': DEFAULT_COMPRESSION_CONFIG['video_bitrate']
-        }
-        video_processor = VideoProcessor(config, compression_config=compression_config)
-        # Determine output directory for compressed files
-        run_dir = None
-        if data.get('thumbnails_dir'):
-            run_dir = os.path.dirname(data['thumbnails_dir'])  # thumbnails_dir is run_dir/thumbnails
-        # Use pre-compressed video if available, otherwise compress now
-        if compressed_path and os.path.exists(compressed_path):
+            logger.info(f"Using compressed video: {compressed_path}")
+        
+        # Get FPS from compression config, with fallback to default
+        fps_for_analysis = DEFAULT_COMPRESSION_CONFIG.get('fps', 5)
+        
+        # Import and use VideoAnalyzer directly
+        from ...video_processor.analysis import VideoAnalyzer
+        analyzer = VideoAnalyzer(api_key=os.getenv('GEMINI_API_KEY'), fps=fps_for_analysis)
+        analysis_results = analyzer.analyze_video(compressed_path)
+        
+        if not analysis_results or 'error' in analysis_results:
+            error_msg = analysis_results.get('error', 'Unknown error in AI analysis') if analysis_results else 'No analysis results returned'
             if logger:
-                logger.info(f"Using pre-compressed video: {compressed_path}")
-            video_to_analyze = compressed_path
-        else:
-            if logger:
-                logger.info("No pre-compressed video found, compressing now...")
-            # Compress the video now
-            # from ...video_processor.compression import VideoCompressor # Already imported at top
-            compressor = VideoCompressor(compression_config)
-            compressed_path = compressor.compress_video(file_path, run_dir) # Corrected to compress_video
-            video_to_analyze = compressed_path
-            output['compressed_video_path'] = compressed_path
-        # Process the video (this will analyze the compressed video)
-        result = video_processor.process(video_to_analyze, run_dir)
-        if not result.get('success'):
-            if logger:
-                logger.error(f"AI analysis failed: {result.get('error', 'Unknown error')}")
-            output['error'] = result.get('error', 'Unknown error')
+                logger.error(f"AI analysis failed: {error_msg}")
+            output['error'] = error_msg
             return output
+        
         # Get the analysis results
-        analysis_json = result.get('analysis_json', {})
+        analysis_json = analysis_results  # VideoAnalyzer returns analysis directly
         
         # Return the analysis data for database storage (no JSON file saving)
         if analysis_json and file_path:
@@ -176,14 +163,17 @@ def ai_video_analysis_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:
                 output.update({
                     'ai_analysis_summary': ai_summary,
                     'full_ai_analysis_data': analysis_json,
-                    'compressed_video_path': result.get('compressed_path'),
+                    'compressed_video_path': compressed_path,  # Pass through the compressed video path
                 })
+                if logger:
+                    logger.info(f"AI analysis completed successfully")
                 return output
             except Exception as e:
                 if logger:
                     logger.error(f"Failed to process AI analysis: {str(e)}")
                 output['error'] = str(e)
                 return output
+        
         if logger:
             logger.info(f"AI analysis completed successfully")
         return output

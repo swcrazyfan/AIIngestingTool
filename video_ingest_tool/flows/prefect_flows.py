@@ -110,9 +110,19 @@ def process_video_file_task(
             progress_tracker.update_file_step(flow_run_id, file_path, "generate_checksum", 5, "processing")
             if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=5.0, description="Generating checksum...")
         logger.info(f"Running generate_checksum_step for {file_name}")
-        checksum_result_future = generate_checksum_step.with_options(name=f"{label_prefix} | generate_checksum", tags=["generate_checksum_step"]).submit(data)
-        data.update(checksum_result_future.result())
+        checksum_result_future = generate_checksum_step.with_options(name=f"{label_prefix} | generate_checksum", tags=["generate_checksum_step"]).submit(data, force_reprocess=force_reprocess)
+        checksum_result = checksum_result_future.result()
+        data.update(checksum_result)
         logger.info(f"Checksum for {file_name}: {data.get('checksum')}")
+        
+        # Check if file should be skipped due to duplicate
+        if checksum_result.get('status') == 'skipped':
+            logger.info(f"Skipping {file_name} due to duplicate checksum - use --force to reprocess")
+            if task_to_run is None:  # Only update progress for full flow
+                progress_tracker.update_file_step(flow_run_id, file_path, "generate_checksum", 100, "skipped")
+                if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=100.0, description="Skipped (duplicate)")
+                return checksum_result  # Return the skip result
+            # For single task mode, continue to return the result
 
     # Step 2: Duplicate check (Not configurable, depends on checksum)
     if should_execute_step("duplicate_check"):
@@ -245,12 +255,17 @@ def process_video_file_task(
 
     # Step 4: AI analysis
     if should_execute_step("ai_analysis", config_key='ai_video_analysis_step'):
-        if 'compressed_video_path' not in data:
-             logger.warning(f"Skipping AI Analysis for {file_name}: 'compressed_video_path' not found. Run 'compress' task first.")
+        # AI analysis requires a compressed video from the compression step
+        compressed_video_path = data.get('compressed_video_path')
+        if not compressed_video_path:
+            logger.warning(f"Skipping AI Analysis for {file_name}: no compressed video available. Enable and run 'video_compression_step' first.")
         else:
             if task_to_run is None:
                 progress_tracker.update_file_step(flow_run_id, file_path, "ai_analysis", 70, "processing")
                 if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=70.0, description="Running AI analysis...")
+            
+            logger.info(f"Using compressed video file for AI analysis: {compressed_video_path}")
+                
             logger.info(f"Executing AI video analysis step for {file_name}")
             ai_analysis_task_obj = ai_video_analysis_step.with_options(name=f"{label_prefix} | ai_video_analysis", tags=["ai_video_analysis_step"])
             ai_analysis_result_future = ai_analysis_task_obj.submit(data)

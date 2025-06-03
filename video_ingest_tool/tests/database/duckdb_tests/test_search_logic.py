@@ -101,7 +101,7 @@ def setup_search_data(db_conn_search: duckdb.DuckDBPyConnection, mocker: MagicMo
     conn = db_conn_search
     inserted_data_info = {"ids": [], "embeddings_map": {}}
     text_embedding_dim = 1024
-    image_embedding_dim = 768 # For thumbnails
+    image_embedding_dim = 1152 # For thumbnails
 
     # Create more distinct base vectors
     base_vectors_text = {

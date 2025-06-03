@@ -121,6 +121,29 @@ def get_db_connection(db_path: str = None) -> "duckdb.DuckDBPyConnection":
                     logger.error(f"Failed to load extension {ext_name} for {final_db_path_determined}.", error=str(e_load))
                     raise
         
+        # Configure more aggressive WAL checkpointing to prevent WAL files from growing too large
+        # and causing HNSW index replay issues on startup (as HNSW requires VSS extension to be loaded)
+        try:
+            con.execute("SET checkpoint_threshold = '1MB';")
+            logger.info("Set aggressive checkpoint threshold (1MB) to prevent WAL file growth issues.")
+        except Exception as e_checkpoint:
+            logger.warning(f"Failed to set checkpoint_threshold: {e_checkpoint}")
+        
+        # Use DuckDB's recommended approach: enable checkpoint on shutdown to automatically
+        # clean up WAL files and prevent HNSW extension loading issues during startup
+        try:
+            con.execute("PRAGMA enable_checkpoint_on_shutdown;")
+            logger.info("Enabled checkpoint on shutdown to automatically clean up WAL files.")
+        except Exception as e_checkpoint_shutdown:
+            logger.warning(f"Failed to enable checkpoint on shutdown: {e_checkpoint_shutdown}")
+        
+        # Enable HNSW persistence for file-based DBs (safe to run multiple times)
+        try:
+            con.execute("SET hnsw_enable_experimental_persistence=true;")
+            logger.debug("Enabled HNSW experimental persistence.")
+        except Exception as e_hnsw:
+            logger.debug(f"Could not set hnsw_enable_experimental_persistence: {e_hnsw}")
+        
         # If this is a new :memory: connection (not the test session one), wrap it if it's meant to be shared via the old global cache.
         # However, the global _CACHED_IN_MEMORY_CONN is being phased out.
         # For now, if it's a :memory: path and not the test one, it's a fresh, non-shared instance.

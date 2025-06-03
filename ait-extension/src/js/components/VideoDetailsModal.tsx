@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { PlayCircle, Camera, Volume2, FileText, Settings, X, Image } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { PlayCircle, Camera, Volume2, FileText, Settings, X, Image, Trash2 } from 'lucide-react';
 import { FiPlay, FiFolder, FiSearch, FiInfo } from 'react-icons/fi';
 import { VideoFile, TranscriptData, AnalysisData } from '../types/api';
 import { clipsApi } from '../api/client';
@@ -16,6 +16,7 @@ interface VideoDetailsCardProps {
   onAddToTimeline?: () => void;
   onFindSimilar?: () => void;
   onClose?: () => void;
+  onDelete?: (clipId: string) => void;
 }
 
 interface ClipDetailsResponse {
@@ -166,7 +167,10 @@ const fetchClipDetails = async (clipId: string | number): Promise<ClipDetailsRes
       camera_details: parseCameraDetails(clip),
       technical_metadata: typeof clip.technical_metadata === 'string' 
         ? JSON.parse(clip.technical_metadata || '{}') 
-        : (clip.technical_metadata || {})
+        : (clip.technical_metadata || {}),
+      audio_tracks: typeof clip.audio_tracks === 'string' 
+        ? JSON.parse(clip.audio_tracks || '[]') 
+        : (clip.audio_tracks || [])
     };
     
     return {
@@ -185,11 +189,17 @@ const VideoDetailsModal: React.FC<VideoDetailsCardProps> = ({
   onImport, 
   onAddToTimeline, 
   onFindSimilar,
-  onClose = () => {} // Provide a default empty function
+  onClose = () => {},
+  onDelete
 }) => {
   const [activeTab, setActiveTab] = useState('overview');
   const [mainThumbnailSrc, setMainThumbnailSrc] = useState<string | null>(null);
   const [thumbnailLoadErrors, setThumbnailLoadErrors] = useState<{[key: string]: boolean}>({});
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const queryClient = useQueryClient();
 
   const { data, isLoading, error, isError } = useQuery<ClipDetailsResponse, Error>({
     queryKey: ['clipDetails', video.id],
@@ -229,7 +239,7 @@ const VideoDetailsModal: React.FC<VideoDetailsCardProps> = ({
         }
         
         // Load main thumbnail via API proxy
-        const apiUrl = `http://localhost:8002/api/thumbnail/${clipId}`;
+        const apiUrl = `http://localhost:8001/api/thumbnail/${clipId}`;
         
         const response = await fetch(apiUrl);
         if (!response.ok) throw new Error('Failed to load thumbnail');
@@ -264,6 +274,44 @@ const VideoDetailsModal: React.FC<VideoDetailsCardProps> = ({
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
+  const handleDelete = async () => {
+    setIsDeleting(true);
+    setDeleteError(null);
+    
+    try {
+      const response = await fetch(`http://localhost:8001/api/clips/${video.id}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        // Success - close modal and notify parent
+        setShowDeleteConfirm(false);
+        onClose();
+        if (onDelete) {
+          onDelete(video.id.toString());
+        }
+        
+        // Invalidate queries to refresh the data
+        queryClient.invalidateQueries({ queryKey: ['clipDetails', video.id] });
+        queryClient.invalidateQueries({ queryKey: ['clips'] }); // Invalidate clips list if it exists
+        
+      } else {
+        // Error from API
+        setDeleteError(result.error || 'Failed to delete clip');
+      }
+    } catch (error) {
+      console.error('Delete request failed:', error);
+      setDeleteError('Network error: Failed to delete clip');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const displayClip = data?.clip || video;
 
   // Helper function to get thumbnail URL through proxy
@@ -274,7 +322,7 @@ const VideoDetailsModal: React.FC<VideoDetailsCardProps> = ({
     }
     
     // Otherwise, route through our thumbnail proxy
-    return `http://localhost:8002/api/thumbnail/${originalId}`;
+    return `http://localhost:8001/api/thumbnail/${originalId}`;
   };
 
   // Add this near the beginning of the component function, after the useQuery hook
@@ -382,40 +430,52 @@ const VideoDetailsModal: React.FC<VideoDetailsCardProps> = ({
           </div>
 
           {/* Action Buttons */}
-          <div className="action-buttons">
-            <button className="action-button action-button-blue" onClick={onImport}>
-              <FiFolder />
-              <span>Import</span>
-            </button>
-            <button className="action-button action-button-green" onClick={onAddToTimeline}>
-              <FiPlay />
-              <span>Timeline</span>
-            </button>
-            <button className="action-button action-button-purple" onClick={onFindSimilar}>
-              <FiSearch />
-              <span>Similar</span>
-            </button>
-          </div>
-
-          {/* Navigation Tabs */}
           <div className="video-actions">
-            {onAddToTimeline && (
-              <button onClick={onAddToTimeline} title="Add to Timeline">
-                <FiPlay /> Timeline
+            {onImport && (
+              <button onClick={onImport} title="Import to Project">
+                <FiFolder />
+                <span>Import</span>
               </button>
             )}
             
-            {onImport && (
-              <button onClick={onImport} title="Import to Project">
-                <FiFolder /> Import
+            {onAddToTimeline && (
+              <button onClick={onAddToTimeline} title="Add to Timeline">
+                <FiPlay />
+                <span>Timeline</span>
               </button>
             )}
             
             {onFindSimilar && (
               <button onClick={onFindSimilar} title="Find Similar">
-                <FiSearch /> Similar
+                <FiSearch />
+                <span>Similar</span>
               </button>
             )}
+            
+            <button 
+              onClick={() => setShowDeleteConfirm(true)} 
+              title="Delete Clip"
+              className="delete-button"
+              style={{
+                backgroundColor: '#dc3545',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                padding: '8px 12px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                fontSize: '14px',
+                fontWeight: '500',
+                transition: 'background-color 0.2s'
+              }}
+              onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#c82333'}
+              onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#dc3545'}
+            >
+              <Trash2 size={16} />
+              <span>Delete</span>
+            </button>
           </div>
 
           <div className="modal-tabs">
@@ -840,6 +900,129 @@ const VideoDetailsModal: React.FC<VideoDetailsCardProps> = ({
           )}
         </div>
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      {showDeleteConfirm && (
+        <div className="modal-overlay" style={{ zIndex: 1001 }}>
+          <div className="modal-content" style={{ maxWidth: '400px', padding: '20px' }}>
+            <div className="modal-header">
+              <h3 style={{ color: '#dc3545', margin: 0 }}>Confirm Deletion</h3>
+              <button 
+                onClick={() => {
+                  setShowDeleteConfirm(false);
+                  setDeleteError(null);
+                }} 
+                className="close-button" 
+                title="Cancel" 
+                aria-label="Cancel"
+              >
+                <X />
+              </button>
+            </div>
+            
+            <div className="modal-body">
+              <p style={{ marginBottom: '16px' }}>
+                Are you sure you want to delete this clip?
+              </p>
+              
+              <div style={{ 
+                backgroundColor: '#f8f9fa', 
+                padding: '12px', 
+                borderRadius: '4px', 
+                marginBottom: '16px',
+                border: '1px solid #dee2e6'
+              }}>
+                <p style={{ margin: '0 0 4px 0', fontWeight: '500' }}>
+                  {displayClip.file_name}
+                </p>
+                <p style={{ margin: 0, fontSize: '14px', color: '#6c757d' }}>
+                  Duration: {formatDuration(displayClip.duration_seconds)} • 
+                  Size: {formatFileSize(displayClip.file_size_bytes)}
+                </p>
+              </div>
+              
+              {deleteError && (
+                <div style={{
+                  backgroundColor: '#f8d7da',
+                  color: '#721c24',
+                  padding: '8px 12px',
+                  borderRadius: '4px',
+                  marginBottom: '16px',
+                  border: '1px solid #f5c6cb',
+                  fontSize: '14px'
+                }}>
+                  {deleteError}
+                </div>
+              )}
+              
+              <div style={{ 
+                display: 'flex', 
+                gap: '12px', 
+                justifyContent: 'flex-end',
+                marginTop: '20px'
+              }}>
+                <button
+                  onClick={() => {
+                    setShowDeleteConfirm(false);
+                    setDeleteError(null);
+                  }}
+                  disabled={isDeleting}
+                  style={{
+                    backgroundColor: '#6c757d',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '8px 16px',
+                    cursor: isDeleting ? 'not-allowed' : 'pointer',
+                    fontSize: '14px',
+                    opacity: isDeleting ? 0.6 : 1
+                  }}
+                >
+                  Cancel
+                </button>
+                
+                <button
+                  onClick={handleDelete}
+                  disabled={isDeleting}
+                  style={{
+                    backgroundColor: '#dc3545',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '8px 16px',
+                    cursor: isDeleting ? 'not-allowed' : 'pointer',
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    opacity: isDeleting ? 0.6 : 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}
+                >
+                  {isDeleting ? (
+                    <>
+                      <div style={{
+                        width: '16px',
+                        height: '16px',
+                        border: '2px solid #ffffff',
+                        borderTop: '2px solid transparent',
+                        borderRadius: '50%',
+                        animation: 'spin 1s linear infinite'
+                      }} />
+                      Deleting...
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 size={16} />
+                      Delete
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

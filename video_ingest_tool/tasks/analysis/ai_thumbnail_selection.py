@@ -190,6 +190,7 @@ def ai_thumbnail_selection_step(
         timestamp = thumbnail.get("timestamp")
         rank = thumbnail.get("rank")
         description = thumbnail.get("description")
+        detailed_visual_description = thumbnail.get("detailed_visual_description")
         reason = thumbnail.get("reason")
         
         if not timestamp or not rank:
@@ -210,6 +211,7 @@ def ai_thumbnail_selection_step(
                 "timestamp": timestamp,
                 "rank": rank,
                 "description": description,
+                "detailed_visual_description": detailed_visual_description,
                 "reason": reason
             })
             logger.info(f"Successfully processed AI thumbnail rank {rank} at path {extracted_path}")

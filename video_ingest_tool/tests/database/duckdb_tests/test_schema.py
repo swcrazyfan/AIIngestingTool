@@ -81,9 +81,9 @@ def test_clips_table_columns_and_types(db_connection):
         "full_ai_analysis_json": "JSON",
         "summary_embedding": "FLOAT[1024]",
         "keyword_embedding": "FLOAT[1024]",
-        "thumbnail_1_embedding": "FLOAT[768]",
-        "thumbnail_2_embedding": "FLOAT[768]",
-        "thumbnail_3_embedding": "FLOAT[768]",
+        "thumbnail_1_embedding": "FLOAT[1152]",
+        "thumbnail_2_embedding": "FLOAT[1152]",
+        "thumbnail_3_embedding": "FLOAT[1152]",
     }
     
     assert len(columns_info) == len(expected_columns), \

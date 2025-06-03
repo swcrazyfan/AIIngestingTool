@@ -285,18 +285,25 @@ def search_query(
 def search_similar(
     clip_id: str = typer.Argument(..., help="Clip ID to find similar videos for"),
     limit: int = typer.Option(10, "--limit", "-l", help="Maximum number of results"),
+    mode: str = typer.Option("combined", "--mode", "-m", help="Search mode: 'text' (text embeddings only), 'visual' (visual embeddings only), or 'combined' (multi-modal hybrid)"),
     format_type: str = typer.Option("table", "--format", "-f", help="Output format (table or json)")
 ):
     """Find videos similar to a specific clip."""
     
+    # Validate mode parameter
+    valid_modes = ['text', 'visual', 'combined']
+    if mode not in valid_modes:
+        console.print(f"[red]❌ Invalid mode '{mode}'. Must be one of: {', '.join(valid_modes)}[/red]")
+        raise typer.Exit(1)
+    
     cmd = SearchCommand()
-    result = cmd.execute(action='similar', clip_id=clip_id, limit=limit, format_type=format_type)
+    result = cmd.execute(action='similar', clip_id=clip_id, limit=limit, mode=mode, format_type=format_type)
     
     if not result.get('success'):
         console.print(f"[red]❌ Search failed: {result.get('error')}[/red]")
         raise typer.Exit(1)
         
-    _display_search_results(result, format_type, show_similarity=True)
+    _display_search_results(result.get('data', {}), format_type, show_similarity=True)
 
 
 @search_app.command("stats")
@@ -570,6 +577,62 @@ def clip_analysis(
         console.print(Panel(json.dumps(analysis_data, indent=2), title="AI Analysis", border_style="magenta"))
 
 
+@clip_app.command("delete")
+def clip_delete(
+    clip_id: str = typer.Argument(..., help="Clip ID to delete"),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt"),
+    format_type: str = typer.Option("text", "--format", help="Output format (text or json)")
+):
+    """Delete a specific video clip from the database."""
+    
+    cmd = ClipsCommand()
+    
+    # First attempt without confirmation to get clip details
+    if not force:
+        result = cmd.execute(action='delete', clip_id=clip_id, confirm=False)
+        
+        if not result.get('success'):
+            if result.get('requires_confirmation'):
+                clip_info = result.get('clip', {})
+                file_name = clip_info.get('file_name', 'Unknown')
+                duration = clip_info.get('duration_seconds', 0)
+                
+                console.print(f"\n[yellow]⚠️  About to delete clip:[/yellow]")
+                console.print(f"[cyan]File:[/cyan] {file_name}")
+                console.print(f"[cyan]ID:[/cyan] {clip_id}")
+                console.print(f"[cyan]Duration:[/cyan] {duration:.1f}s")
+                
+                # Ask for confirmation
+                if not typer.confirm("\nAre you sure you want to delete this clip?"):
+                    console.print("[yellow]Deletion cancelled.[/yellow]")
+                    raise typer.Exit(0)
+            else:
+                console.print(f"[red]❌ {result.get('error')}[/red]")
+                raise typer.Exit(1)
+    
+    # Now attempt deletion with confirmation
+    result = cmd.execute(action='delete', clip_id=clip_id, confirm=True)
+    
+    if result.get('success'):
+        data = result.get('data', {})
+        message = result.get('message', 'Clip deleted successfully')
+        
+        if format_type == "json":
+            print(json.dumps({"success": True, "message": message, "data": data}, 
+                           indent=2, default=_json_default_serializer))
+        else:
+            console.print(f"\n[green]✅ {message}[/green]")
+            if data.get('file_name'):
+                console.print(f"[dim]Deleted: {data['file_name']}[/dim]")
+    else:
+        error_msg = result.get('error', 'Failed to delete clip')
+        if format_type == "json":
+            print(json.dumps({"success": False, "error": error_msg}, indent=2))
+        else:
+            console.print(f"[red]❌ {error_msg}[/red]")
+        raise typer.Exit(1)
+
+
 # ============================================================================
 # SERVICE MANAGEMENT COMMANDS
 # ============================================================================
@@ -579,12 +642,13 @@ def start_services(
     service: str = typer.Argument("all", help="Service to start: 'prefect-server', 'prefect-worker', 'api-server', or 'all'"),
     port: Optional[int] = typer.Option(None, "--port", "-p", help="Port override (only for prefect-server or api-server)"),
     debug: bool = typer.Option(False, "--debug", help="Enable debug mode for API server"),
-    foreground: bool = typer.Option(False, "--foreground", "-f", help="Run API server in foreground (only when starting api-server)")
+    foreground: bool = typer.Option(False, "--foreground", "-f", help="Run API server in foreground (only when starting api-server)"),
+    reload: bool = typer.Option(False, "--reload", "-r", help="Enable auto-reload on file changes (useful for development)")
 ):
     """Start one or more services (Prefect server, worker, API server)."""
     
     cmd = ServicesCommand()
-    result = cmd.execute('start', service=service, port=port, debug=debug, foreground=foreground)
+    result = cmd.execute('start', service=service, port=port, debug=debug, foreground=foreground, reload=reload)
     
     if result.get('success'):
         data = result.get('data', {})
@@ -596,26 +660,32 @@ def start_services(
             table.add_column("Service", style="cyan")
             table.add_column("PID", justify="center")
             table.add_column("Port", justify="center")
-            table.add_column("Log File", style="dim")
+            table.add_column("Features", style="dim")
             
             for svc in services:
                 port_str = str(svc.get('port', 'N/A'))
-                log_file = svc.get('log_file', 'N/A')
+                features = []
                 if svc.get('foreground'):
-                    log_file = "Foreground (no log file)"
+                    features.append("Foreground")
+                if svc.get('reload'):
+                    features.append("Auto-reload")
+                if not features:
+                    features.append("Background")
                 
                 table.add_row(
                     svc.get('service', 'Unknown'),
                     str(svc.get('pid', 'N/A')),
                     port_str,
-                    log_file
+                    ", ".join(features)
                 )
             
             console.print(table)
             
-            # Special message for foreground API server
+            # Special messages
             if any(svc.get('foreground') for svc in services):
                 console.print("\n[yellow]💡 API server is running in foreground. Press Ctrl+C to stop.[/yellow]")
+            if any(svc.get('reload') for svc in services):
+                console.print("\n[blue]🔄 Auto-reload enabled - server will restart when files change.[/blue]")
         
     else:
         console.print(f"\n[red]❌ Failed to start services: {result.get('error')}[/red]")
@@ -691,12 +761,13 @@ def restart_services(
     service: str = typer.Argument("all", help="Service to restart: 'prefect-server', 'prefect-worker', 'api-server', or 'all'"),
     port: Optional[int] = typer.Option(None, "--port", "-p", help="Port override (only for prefect-server or api-server)"),
     debug: bool = typer.Option(False, "--debug", help="Enable debug mode for API server"),
-    foreground: bool = typer.Option(False, "--foreground", "-f", help="Run API server in foreground (only when restarting api-server)")
+    foreground: bool = typer.Option(False, "--foreground", "-f", help="Run API server in foreground (only when restarting api-server)"),
+    reload: bool = typer.Option(False, "--reload", "-r", help="Enable auto-reload on file changes (useful for development)")
 ):
     """Restart one or more services."""
     
     cmd = ServicesCommand()
-    result = cmd.execute('restart', service=service, port=port, debug=debug, foreground=foreground)
+    result = cmd.execute('restart', service=service, port=port, debug=debug, foreground=foreground, reload=reload)
     
     if result.get('success'):
         data = result.get('data', {})
@@ -705,7 +776,14 @@ def restart_services(
         services = data.get('services', [])
         if services:
             for svc in services:
-                console.print(f"  • Restarted {svc.get('service')} (PID: {svc.get('pid')})")
+                features = []
+                if svc.get('reload'):
+                    features.append("with auto-reload")
+                if svc.get('foreground'):
+                    features.append("in foreground")
+                
+                feature_text = f" ({', '.join(features)})" if features else ""
+                console.print(f"  • Restarted {svc.get('service')} (PID: {svc.get('pid')}){feature_text}")
         
     else:
         console.print(f"\n[red]❌ Failed to restart services: {result.get('error')}[/red]")

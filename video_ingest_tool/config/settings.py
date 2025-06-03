@@ -94,7 +94,7 @@ PIPELINE_STEP_DEFINITIONS = [
         'name': 'video_compression_step',
         'category': 'Processing', 
         'description': 'Compress video for AI analysis',
-        'enabled_by_default': False # Changed to False
+        'enabled_by_default': True # Changed to True - enable video compression
     },
     
     # Extraction steps (parallel)
@@ -170,13 +170,13 @@ PIPELINE_STEP_DEFINITIONS = [
         'name': 'ai_video_analysis_step',
         'category': 'Analysis',
         'description': 'Perform AI analysis of video content',
-        'enabled_by_default': False # Changed to False
+        'enabled_by_default': True # Changed to True - required for AI thumbnail selection
     },
     {
         'name': 'ai_thumbnail_selection_step',
         'category': 'Analysis',
         'description': 'Select best thumbnails using AI analysis',
-        'enabled_by_default': False # Changed to False
+        'enabled_by_default': True # Changed to True - enable AI thumbnail selection
     },
     
     # Final processing steps
@@ -204,7 +204,7 @@ PIPELINE_STEP_DEFINITIONS = [
         'name': 'generate_embeddings_step',
         'category': 'Storage',
         'description': 'Generate vector embeddings for semantic search',
-        'enabled_by_default': False # Changed to False
+        'enabled_by_default': True # Changed to True - enable embedding generation
     },
     {
         'name': 'upload_thumbnails_step',

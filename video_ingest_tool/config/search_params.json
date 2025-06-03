@@ -4,7 +4,7 @@
   "keyword_weight": 0.8,
   "rrf_k": 50,
   "similarity_threshold": 0.4,
-  "similar_threshold": 0.65,
+  "similar_threshold": 0.1,
   "default_match_count": 10,
   "max_match_count": 100
 } 

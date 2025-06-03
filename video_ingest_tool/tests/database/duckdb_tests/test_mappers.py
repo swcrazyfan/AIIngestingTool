@@ -154,9 +154,9 @@ def sample_embeddings() -> Dict[str, List[float]]:
     return {
         "summary_embedding": [0.1] * 1024,
         "keyword_embedding": [0.2] * 1024,
-        "thumbnail_1_embedding": [0.3] * 768,
-        "thumbnail_2_embedding": [0.4] * 768,
-        "thumbnail_3_embedding": [0.5] * 768,
+        "thumbnail_1_embedding": [0.3] * 1152,
+        "thumbnail_2_embedding": [0.4] * 1152,
+        "thumbnail_3_embedding": [0.5] * 1152,
     }
 
 # --- Test Cases ---

@@ -12,6 +12,10 @@ from typing import Dict, List, Optional, Union
 import logging
 from PIL import Image
 from openai import OpenAI
+from dotenv import load_dotenv
+
+# Load environment variables from .env file (required for Prefect workers)
+load_dotenv()
 
 def resize_image(image_path: str, target_width: int = 512, target_height: int = 512) -> Image.Image:
     """
@@ -99,14 +103,14 @@ def generate_thumbnail_embedding(
         logger: Optional logger
         
     Returns:
-        Optional[List[float]]: 768-dimensional embedding vector or None on failure
+        Optional[List[float]]: 1152-dimensional embedding vector or None on failure
     """
     if logger is None:
         logger = logging.getLogger("image_embeddings")
 
     try:
         if not api_base:
-            api_base = "http://100.121.182.8:8001" # Ensure this IP/port is correct for your server
+            api_base = "http://100.121.182.8:8001"  # Embedding service endpoint
 
         # Convert original image to base64 with data URI format.
         # The server will handle resizing and preprocessing.
@@ -127,11 +131,12 @@ def generate_thumbnail_embedding(
         logger.info(f"Using API endpoint: {api_base}/v1/embeddings")
 
         # Send both image and text as joint input using JointInputItem format
+        # The API expects input to be a list, even for a single item
         payload = {
-            "input": {
+            "input": [{
                 "image": data_uri,
                 "text": description
-            }
+            }]
         }
 
         headers = {"Content-Type": "application/json"}
@@ -189,7 +194,7 @@ def batch_generate_thumbnail_embeddings(
     Generate joint image+text embeddings for multiple thumbnails.
     
     Args:
-        thumbnails: List of dictionaries with 'path', 'description', and 'rank' keys
+        thumbnails: List of dictionaries with 'path', 'description', 'detailed_visual_description', and 'rank' keys
         api_base: API base URL (default: http://100.121.182.8:8001)
         api_key: API key (not required for direct server)
         logger: Optional logger
@@ -205,20 +210,29 @@ def batch_generate_thumbnail_embeddings(
     for thumbnail in thumbnails:
         path = thumbnail.get('path')
         description = thumbnail.get('description')
+        detailed_visual_description = thumbnail.get('detailed_visual_description')
         rank = thumbnail.get('rank')
         
-        if not path or not description or rank is None:
+        if not path or rank is None:
             logger.warning(f"Missing required fields in thumbnail: {thumbnail}")
+            continue
+            
+        # Prefer detailed_visual_description over basic description for better SigLIP embeddings
+        embedding_description = detailed_visual_description if detailed_visual_description else description
+        
+        if not embedding_description:
+            logger.warning(f"No description available for thumbnail rank {rank}, skipping")
             continue
         
         # Convert rank to int if it's a string
         rank_int = int(rank) if isinstance(rank, str) else rank
         
         logger.info(f"Processing thumbnail with rank {rank}")
+        logger.info(f"Using {'detailed' if detailed_visual_description else 'basic'} description: {embedding_description[:100]}...")
         
         embedding = generate_thumbnail_embedding(
             image_path=path,
-            description=description,
+            description=embedding_description,
             api_base=api_base,
             api_key=api_key,
             logger=logger

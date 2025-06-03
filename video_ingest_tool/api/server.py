@@ -176,10 +176,24 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
                                        'MISSING_CLIP_ID', 400)
         
         limit = request.args.get('limit', 10, type=int)
+        similarity_threshold = request.args.get('similarity_threshold', type=float)
+        mode = request.args.get('mode', 'combined').lower()
+        
+        # Validate mode parameter
+        valid_modes = ['text', 'visual', 'combined']
+        if mode not in valid_modes:
+            return create_error_response(f"Invalid mode '{mode}'. Must be one of: {', '.join(valid_modes)}", 
+                                       'INVALID_MODE', 400)
         
         from ..cli_commands import SearchCommand
         cmd = SearchCommand()
-        result = cmd.execute(action='similar', clip_id=clip_id, limit=limit)
+        result = cmd.execute(
+            action='similar', 
+            clip_id=clip_id, 
+            limit=limit,
+            similarity_threshold=similarity_threshold,
+            mode=mode
+        )
         
         if result.get('success'):
             # Standardize response structure for RESTful consistency
@@ -192,6 +206,8 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
                     "total": similar_data.get('total', len(similar_data.get('results', [])))
                 },
                 "clip_id": clip_id,
+                "mode": mode,
+                "similarity_threshold": similarity_threshold,
                 "match_count": similar_data.get('match_count', len(similar_data.get('results', [])))
             }
             return jsonify(create_success_response(standardized_response))
@@ -287,6 +303,36 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
             return jsonify(create_success_response(clip_data))
         else:
             return create_error_response(result.get('error', 'Clip not found'), 'CLIP_NOT_FOUND', 404)
+
+    @app.route('/api/clips/<clip_id>', methods=['DELETE'])
+    @log_request()
+    # @require_auth # Removed
+    @handle_errors
+    def delete_clip_rest(clip_id: str):
+        """Delete a specific clip."""
+        from ..cli_commands import ClipsCommand
+        cmd = ClipsCommand()
+        
+        # API calls always confirm deletion (confirmation handled by frontend)
+        result = cmd.execute(action='delete', clip_id=clip_id, confirm=True)
+        
+        if result.get('success'):
+            data = result.get('data', {})
+            message = result.get('message', 'Clip deleted successfully')
+            logger.info(f"Clip deleted via API: {clip_id}", 
+                       file_name=data.get('file_name'))
+            
+            return jsonify(create_success_response({
+                "deleted_clip_id": clip_id,
+                "file_name": data.get('file_name'),
+                "message": message
+            }))
+        else:
+            error_msg = result.get('error', 'Failed to delete clip')
+            status_code = 404 if 'not found' in error_msg.lower() else 500
+            error_code = 'CLIP_NOT_FOUND' if status_code == 404 else 'DELETE_ERROR'
+            
+            return create_error_response(error_msg, error_code, status_code)
 
     # /api/clips/<clip_id>/transcript endpoint removed (data consolidated)
     # /api/clips/<clip_id>/analysis endpoint removed (data consolidated)
@@ -918,6 +964,8 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
 def main():
     """Main entry point for running the API server."""
     import argparse
+    import sys
+    import os
     
     parser = argparse.ArgumentParser(description='Video Ingest Tool API Server')
     parser.add_argument('--port', type=int, default=8001, 
@@ -926,20 +974,83 @@ def main():
                        help='Host to bind to (default: localhost)')
     parser.add_argument('--debug', action='store_true',
                        help='Enable debug mode')
+    parser.add_argument('--reload', action='store_true',
+                       help='Enable auto-reload on file changes (useful for development)')
     
     args = parser.parse_args()
     
     # Create app and socketio
     app, socketio = create_app(debug=args.debug)
     
+    # More comprehensive TTY detection for auto-reload
+    def can_use_reloader():
+        """Check if we can safely use the reloader."""
+        try:
+            # Check if we have a TTY
+            if not sys.stdin.isatty():
+                return False
+            
+            # Check if we're in a subprocess that might not have proper TTY access
+            if os.getenv('_') and 'subprocess' in str(os.getenv('_')):
+                return False
+                
+            # Check if stdout/stderr are properly connected
+            if not sys.stdout.isatty() or not sys.stderr.isatty():
+                return False
+                
+            # Additional check for shell subprocess context
+            if os.getppid() == 1:  # Parent process is init, likely detached
+                return False
+                
+            return True
+        except (AttributeError, OSError):
+            return False
+    
+    # Enable auto-reload if debug mode or explicitly requested, and TTY is available
+    use_reloader = (args.debug or args.reload) and can_use_reloader()
+    
+    if (args.debug or args.reload) and not use_reloader:
+        logger.warning("⚠️  Auto-reload requested but TTY not properly available.")
+        logger.info("💡 For auto-reload to work:")
+        logger.info("   1. Run directly in terminal (not in background)")
+        logger.info("   2. Use --foreground option with restart-services")
+        logger.info("   3. Or run server directly: python -m video_ingest_tool.api.server --reload")
+    
     logger.info(f"Starting Video Ingest API Server",
                host=args.host,
                port=args.port,
                debug=args.debug,
+               auto_reload=use_reloader,
                prefect_available=PREFECT_AVAILABLE)
     
-    # Run with SocketIO support
-    socketio.run(app, host=args.host, port=args.port, debug=args.debug, allow_unsafe_werkzeug=True)
+    if use_reloader:
+        logger.info("🔄 Auto-reload enabled - server will restart when files change")
+    
+    # Run with SocketIO support and proper error handling
+    try:
+        socketio.run(
+            app, 
+            host=args.host, 
+            port=args.port, 
+            debug=args.debug,
+            use_reloader=use_reloader,
+            allow_unsafe_werkzeug=True
+        )
+    except Exception as e:
+        if "termios" in str(e) or "Input/output error" in str(e):
+            logger.warning("⚠️  Auto-reload failed due to TTY issues. Falling back to normal mode.")
+            logger.info("💡 Restart without --reload or use --foreground mode")
+            # Fallback to running without reloader
+            socketio.run(
+                app, 
+                host=args.host, 
+                port=args.port, 
+                debug=False,  # Disable debug to avoid reloader
+                use_reloader=False,
+                allow_unsafe_werkzeug=True
+            )
+        else:
+            raise
 
 
 if __name__ == '__main__':

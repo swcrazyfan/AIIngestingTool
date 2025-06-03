@@ -8,6 +8,10 @@ import openai
 import tiktoken
 from typing import List, Dict, Any, Optional, Tuple
 import structlog
+from dotenv import load_dotenv
+
+# Load environment variables from .env file (required for Prefect workers)
+load_dotenv()
 
 logger = structlog.get_logger(__name__)
 

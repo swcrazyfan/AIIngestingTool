@@ -93,11 +93,11 @@ const VideoCard: React.FC<VideoCardProps> = ({
           const aiThumb = video.all_thumbnail_urls.find(t => t.is_ai_selected);
           apiUrl = aiThumb?.url || video.all_thumbnail_urls[0].url;
         } else {
-          apiUrl = `http://localhost:8002/api/thumbnail/${clipId}`;
+          apiUrl = `http://localhost:8001/api/thumbnail/${clipId}`;
         }
         // If the URL is a local file path, proxy through the API
         if (apiUrl && !apiUrl.startsWith('http')) {
-          apiUrl = `http://localhost:8002/api/thumbnail/${clipId}`;
+          apiUrl = `http://localhost:8001/api/thumbnail/${clipId}`;
         }
         // Fetch the image as a blob
         const response = await fetch(apiUrl!);
@@ -130,17 +130,17 @@ const VideoCard: React.FC<VideoCardProps> = ({
 
   const addToTimeline = async () => {
     try {
-      await evalTS("addVideoToTimeline", video.local_path);
+      const result = await evalTS("addVideoToTimeline", video.local_path);
     } catch (error) {
-      console.error('Failed to add to timeline:', error);
+      // Silent fail
     }
   };
 
   const addToProject = async () => {
     try {
-      await evalTS("importVideoToProject", video.local_path);
+      const result = await evalTS("importVideoToProject", video.local_path);
     } catch (error) {
-      console.error('Failed to import to project:', error);
+      // Silent fail
     }
   };
 
@@ -228,20 +228,21 @@ const VideoCard: React.FC<VideoCardProps> = ({
         </div>
 
         <div className="video-actions">
-          <button onClick={addToTimeline} title="Add to Timeline">
-            <FiPlay /> {size !== 'small' && 'Timeline'}
-          </button>
-          
           <button onClick={addToProject} title="Import to Project">
-            <FiFolder /> {size !== 'small' && 'Import'}
+            <FiFolder />
+            <span>Import</span>
           </button>
-          
+          <button onClick={addToTimeline} title="Add to Timeline">
+            <FiPlay />
+            <span>Timeline</span>
+          </button>
           <button onClick={() => setShowSimilar(true)} title="Find Similar">
-            <FiSearch /> {size !== 'small' && 'Similar'}
+            <FiSearch />
+            <span>Similar</span>
           </button>
-          
           <button onClick={() => setShowDetails(true)} title="Show Details">
-            <FiInfo /> {size !== 'small' && 'Details'}
+            <FiInfo />
+            <span>Details</span>
           </button>
         </div>
       </div>
@@ -257,6 +258,14 @@ const VideoCard: React.FC<VideoCardProps> = ({
         <VideoDetailsModal
           video={video} 
           onClose={() => setShowDetails(false)}
+          onImport={addToProject}
+          onAddToTimeline={addToTimeline}
+          onFindSimilar={() => setShowSimilar(true)}
+          onDelete={(clipId) => {
+            // Close the modal and refresh the library when a clip is deleted
+            setShowDetails(false);
+            onRefresh();
+          }}
         />
       )}
     </>

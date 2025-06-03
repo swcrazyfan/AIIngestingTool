@@ -4,7 +4,6 @@ import { WebSocketProvider } from '../contexts/WebSocketContext';
 import Header from '../components/Header';
 import VideoLibrary from '../components/VideoLibrary';
 import IngestPanel from '../components/IngestPanel';
-import Dashboard from '../components/Dashboard';
 import ConnectionMonitor from '../components/ConnectionMonitor';
 import { connectionApi } from '../api/client';
 import '../styles/App.scss';
@@ -56,7 +55,7 @@ class ErrorBoundary extends Component<{children: React.ReactNode}, {hasError: bo
 const AppContent: React.FC = () => {
   console.log('📱 AppContent component rendering...');
   
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'library' | 'ingest'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'library' | 'ingest'>('library');
   const [isConnected, setIsConnected] = useState(true);
   const [loading, setLoading] = useState(true);
 
@@ -125,13 +124,6 @@ const AppContent: React.FC = () => {
         <div className="app-content">
           <div className="tab-navigation">
             <button
-              className={`tab-button ${activeTab === 'dashboard' ? 'active' : ''}`}
-              onClick={() => setActiveTab('dashboard')}
-              disabled={!isConnected}
-            >
-              Dashboard
-            </button>
-            <button
               className={`tab-button ${activeTab === 'library' ? 'active' : ''}`}
               onClick={() => setActiveTab('library')}
               disabled={!isConnected}
@@ -154,7 +146,6 @@ const AppContent: React.FC = () => {
               </div>
             ) : (
               <>
-                {activeTab === 'dashboard' && <Dashboard />}
                 {activeTab === 'library' && <VideoLibrary />}
                 {activeTab === 'ingest' && <IngestPanel />}
               </>

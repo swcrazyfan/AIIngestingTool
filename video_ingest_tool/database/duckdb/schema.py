@@ -58,9 +58,9 @@ def create_clips_table(con: "duckdb.DuckDBPyConnection"):
                 full_ai_analysis_json JSON,
                 summary_embedding FLOAT[1024],
                 keyword_embedding FLOAT[1024],
-                thumbnail_1_embedding FLOAT[768],
-                thumbnail_2_embedding FLOAT[768],
-                thumbnail_3_embedding FLOAT[768]
+                thumbnail_1_embedding FLOAT[1152],
+                thumbnail_2_embedding FLOAT[1152],
+                thumbnail_3_embedding FLOAT[1152]
             );
         """)  # Correctly terminate the f-string here
         logger.info(f"Table '{table_name}' created or already exists.")

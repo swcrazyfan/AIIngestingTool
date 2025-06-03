@@ -382,18 +382,43 @@ def find_similar_clips_duckdb(
 
         # --- Visual Mode ---
         elif mode == "visual":
+            # Improved cross-slot visual similarity comparison
+            # Instead of only comparing same slots, we'll find the best match across all available slots
+            source_visual_embeddings = []
             if source_thumb1_emb:
-                score_calculations.append(f"{visual_thumb1_weight} * array_cosine_similarity(c.thumbnail_1_embedding, ?::FLOAT[768])")
-                base_params.append(source_thumb1_emb)
+                source_visual_embeddings.append((source_thumb1_emb, visual_thumb1_weight, "thumbnail_1_embedding"))
             if source_thumb2_emb:
-                score_calculations.append(f"{visual_thumb2_weight} * array_cosine_similarity(c.thumbnail_2_embedding, ?::FLOAT[768])")
-                base_params.append(source_thumb2_emb)
+                source_visual_embeddings.append((source_thumb2_emb, visual_thumb2_weight, "thumbnail_2_embedding"))
             if source_thumb3_emb:
-                score_calculations.append(f"{visual_thumb3_weight} * array_cosine_similarity(c.thumbnail_3_embedding, ?::FLOAT[768])")
-                base_params.append(source_thumb3_emb)
-            if not score_calculations:
+                source_visual_embeddings.append((source_thumb3_emb, visual_thumb3_weight, "thumbnail_3_embedding"))
+            
+            if not source_visual_embeddings:
                 logger.warning("Source clip has no visual embeddings for 'visual' mode similarity search.", source_clip_id=source_clip_id)
                 return []
+            
+            # Build cross-slot comparison: for each source embedding, compare against all target slots
+            # Take the maximum similarity score across all combinations
+            cross_slot_comparisons = []
+            for source_emb, source_weight, source_slot in source_visual_embeddings:
+                slot_comparisons = []
+                
+                # Compare this source embedding against all possible target slots
+                slot_comparisons.append(f"COALESCE(array_cosine_similarity(c.thumbnail_1_embedding, ?::FLOAT[1152]), 0)")
+                base_params.append(source_emb)
+                slot_comparisons.append(f"COALESCE(array_cosine_similarity(c.thumbnail_2_embedding, ?::FLOAT[1152]), 0)")
+                base_params.append(source_emb)
+                slot_comparisons.append(f"COALESCE(array_cosine_similarity(c.thumbnail_3_embedding, ?::FLOAT[1152]), 0)")
+                base_params.append(source_emb)
+                
+                # Take the maximum similarity across all target slots for this source embedding
+                max_similarity_expr = f"GREATEST({', '.join(slot_comparisons)})"
+                cross_slot_comparisons.append(f"{source_weight} * {max_similarity_expr}")
+            
+            # Average the similarities from all source embeddings
+            if len(cross_slot_comparisons) == 1:
+                score_calculations.append(cross_slot_comparisons[0])
+            else:
+                score_calculations.append(f"({' + '.join(cross_slot_comparisons)}) / {len(cross_slot_comparisons)}")
 
         # --- Combined Mode ---
         elif mode == "combined":
@@ -408,16 +433,40 @@ def find_similar_clips_duckdb(
                 text_scores_parts.append(f"{text_keyword_weight} * array_cosine_similarity(c.keyword_embedding, ?::FLOAT[1024])")
                 base_params.append(source_keyword_emb)
             
-            # Visual part
+            # Visual part - use cross-slot comparison like in visual mode
+            source_visual_embeddings = []
             if source_thumb1_emb:
-                visual_scores_parts.append(f"{visual_thumb1_weight} * array_cosine_similarity(c.thumbnail_1_embedding, ?::FLOAT[768])")
-                base_params.append(source_thumb1_emb)
+                source_visual_embeddings.append((source_thumb1_emb, visual_thumb1_weight, "thumbnail_1_embedding"))
             if source_thumb2_emb:
-                visual_scores_parts.append(f"{visual_thumb2_weight} * array_cosine_similarity(c.thumbnail_2_embedding, ?::FLOAT[768])")
-                base_params.append(source_thumb2_emb)
+                source_visual_embeddings.append((source_thumb2_emb, visual_thumb2_weight, "thumbnail_2_embedding"))
             if source_thumb3_emb:
-                visual_scores_parts.append(f"{visual_thumb3_weight} * array_cosine_similarity(c.thumbnail_3_embedding, ?::FLOAT[768])")
-                base_params.append(source_thumb3_emb)
+                source_visual_embeddings.append((source_thumb3_emb, visual_thumb3_weight, "thumbnail_3_embedding"))
+            
+            if source_visual_embeddings:
+                # Build cross-slot comparison for visual similarity in combined mode
+                cross_slot_comparisons = []
+                for source_emb, source_weight, source_slot in source_visual_embeddings:
+                    slot_comparisons = []
+                    
+                    # Compare this source embedding against all possible target slots
+                    slot_comparisons.append(f"COALESCE(array_cosine_similarity(c.thumbnail_1_embedding, ?::FLOAT[1152]), 0)")
+                    base_params.append(source_emb)
+                    slot_comparisons.append(f"COALESCE(array_cosine_similarity(c.thumbnail_2_embedding, ?::FLOAT[1152]), 0)")
+                    base_params.append(source_emb)
+                    slot_comparisons.append(f"COALESCE(array_cosine_similarity(c.thumbnail_3_embedding, ?::FLOAT[1152]), 0)")
+                    base_params.append(source_emb)
+                    
+                    # Take the maximum similarity across all target slots for this source embedding
+                    max_similarity_expr = f"GREATEST({', '.join(slot_comparisons)})"
+                    cross_slot_comparisons.append(f"{source_weight} * {max_similarity_expr}")
+                
+                # Average the similarities from all source embeddings for visual component
+                if len(cross_slot_comparisons) == 1:
+                    visual_component = cross_slot_comparisons[0]
+                else:
+                    visual_component = f"({' + '.join(cross_slot_comparisons)}) / {len(cross_slot_comparisons)}"
+                
+                visual_scores_parts.append(visual_component)
 
             if text_scores_parts:
                 score_calculations.append(f"{combined_mode_text_factor} * ({' + '.join(text_scores_parts)})")

@@ -101,45 +101,78 @@ class VideoSearcher:
         self,
         clip_id: str,
         match_count: int = 5,
-        similarity_threshold: Optional[float] = None
+        similarity_threshold: Optional[float] = None,
+        weights: Optional[Dict[str, float]] = None,
+        mode: str = 'combined'
     ) -> List[Dict[str, Any]]:
         """
-        Find clips similar to a given clip.
+        Find clips similar to a given clip using multiple embedding types.
         
         Args:
             clip_id: ID of the source clip
             match_count: Number of similar clips to return
             similarity_threshold: Minimum similarity score (optional)
+            weights: Optional weights for different embedding types.
+                    Defaults: {'visual': 0.5, 'summary': 0.3, 'keyword': 0.2}
+            mode: Search mode - 'text' (text embeddings only), 'visual' (visual embeddings only), 
+                  or 'combined' (multi-modal hybrid)
             
         Returns:
             List of similar clips
         """
+        # Validate mode parameter
+        valid_modes = ['text', 'visual', 'combined']
+        if mode not in valid_modes:
+            raise ValueError(f"Invalid mode '{mode}'. Must be one of: {', '.join(valid_modes)}")
+        
         # Get parameters from centralized config
         search_params = get_search_params()
         
-        # Use provided threshold or default from config
+        # Set up embedding weights - balanced approach giving text embeddings meaningful contribution
+        default_weights = {
+            'visual': 0.5,      # Thumbnail embeddings (balanced weight)
+            'summary': 0.3,     # Summary embeddings (meaningful contribution)
+            'keyword': 0.2      # Keyword embeddings (meaningful contribution)
+        }
+        
+        if weights:
+            # Merge user-provided weights with defaults
+            embedding_weights = {**default_weights, **weights}
+        else:
+            embedding_weights = default_weights
+        
+        # Use higher similarity threshold or default from config
         threshold = similarity_threshold
         if threshold is None:
-            threshold = search_params.get('similar_threshold', 0.65)
+            # Use more reasonable threshold for balanced multi-modal search
+            threshold = search_params.get('similar_threshold', 0.3)  # Lowered from 0.7 to 0.3
         
         try:
             with duckdb_connection.get_db_connection() as con:
-                logger.info("Calling duckdb_search_logic.find_similar_clips_duckdb", source_clip_id=clip_id, match_count=match_count, threshold=threshold)
+                logger.info("Calling duckdb_search_logic.find_similar_clips_duckdb with weighted embeddings", 
+                           source_clip_id=clip_id, 
+                           match_count=match_count, 
+                           threshold=threshold,
+                           weights=embedding_weights,
+                           mode=mode)
+                
                 results = duckdb_search_logic.find_similar_clips_duckdb(
-                    con, # Pass con as positional argument
                     source_clip_id=clip_id,
+                    conn=con,
+                    mode=mode,  # Use the provided mode parameter
                     match_count=match_count,
-                    # Assuming the duckdb function handles the threshold internally or has a similar param
-                    # The current duckdb_search_logic.find_similar_clips_duckdb signature might need adjustment
-                    # if it expects different/more parameters (e.g. weights, mode) as per duckdb_migration_plan.md
-                    # For now, passing what's available and aligns with the old RPC call's intent.
-                    # The plan mentions: mode ('text' | 'visual' | 'combined'), various weights.
-                    # These are not currently passed from SearchCommand.find_similar.
-                    # This might be a point for future enhancement or alignment.
-                    # Passing threshold directly if the duckdb function supports it.
-                    # Let's assume it takes similarity_threshold for now.
-                    similarity_threshold=threshold
+                    similarity_threshold=threshold,
+                    # Map the weights to the correct parameter names
+                    text_summary_weight=embedding_weights['summary'],
+                    text_keyword_weight=embedding_weights['keyword'],
+                    # For visual weights, we'll use the total visual weight for all thumbnail weights
+                    visual_thumb1_weight=embedding_weights['visual'] * 0.4,  # 40% of visual weight
+                    visual_thumb2_weight=embedding_weights['visual'] * 0.3,  # 30% of visual weight  
+                    visual_thumb3_weight=embedding_weights['visual'] * 0.3,  # 30% of visual weight
+                    combined_mode_text_factor=0.6,
+                    combined_mode_visual_factor=0.4
                 )
+            
             return results
             
         except Exception as e:
@@ -363,7 +396,7 @@ def format_search_results(
             'camera_make': result.get('camera_make'),
             'camera_model': result.get('camera_model'),
             'content_category': result.get('content_category'),
-            'processed_at': result.get('processed_at')
+            'processed_at': result.get('processed_at') or result.get('created_at')  # Handle both field names
         }
         
         # Add search-specific fields
@@ -391,8 +424,10 @@ def format_search_results(
                 'fts_rank': result.get('fts_rank') if show_scores else None
             })
         elif search_type == "similar" and show_scores:
+            # Handle the actual field name returned by find_similar_clips_duckdb
+            similarity_score = result.get('combined_similarity_score') or result.get('similarity_score')
             formatted.update({
-                'similarity_score': result.get('similarity_score')
+                'similarity_score': similarity_score
             })
         
         formatted_results.append(formatted)

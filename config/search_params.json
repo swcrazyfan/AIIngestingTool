@@ -1,0 +1,10 @@
+{
+  "fulltext_weight": 2.5,
+  "summary_weight": 1.0,
+  "keyword_weight": 0.8,
+  "rrf_k": 50,
+  "similarity_threshold": 0.6,
+  "similar_threshold": 0.6,
+  "default_match_count": 10,
+  "max_match_count": 100
+} 

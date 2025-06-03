@@ -238,22 +238,33 @@ class SearchCommand(BaseCommand):
             }
     
     def find_similar(self, clip_id: str, match_count: int = 5, 
-                     similarity_threshold: Optional[float] = None, **kwargs) -> Dict[str, Any]:
+                     similarity_threshold: Optional[float] = None, 
+                     mode: str = 'combined', **kwargs) -> Dict[str, Any]:
         """Find similar clips.
         
         Args:
             clip_id: ID of the source clip
             match_count: Number of similar clips to return
             similarity_threshold: Minimum similarity score
+            mode: Search mode ('text', 'visual', or 'combined')
             
         Returns:
             Dict with similar clips and metadata
         """
+        # Validate mode parameter
+        valid_modes = ['text', 'visual', 'combined']
+        if mode not in valid_modes:
+            return {
+                "success": False,
+                "error": f"Invalid mode '{mode}'. Must be one of: {', '.join(valid_modes)}"
+            }
+        
         try:
             results = self.searcher.find_similar(
                 clip_id=clip_id,
                 match_count=match_count,
-                similarity_threshold=similarity_threshold
+                similarity_threshold=similarity_threshold,
+                mode=mode
             )
             
             # Format results for API response
@@ -266,7 +277,8 @@ class SearchCommand(BaseCommand):
                     "total": len(formatted_results),
                     "clip_id": clip_id,
                     "match_count": match_count,
-                    "similarity_threshold": similarity_threshold
+                    "similarity_threshold": similarity_threshold,
+                    "mode": mode
                 }
             }
             

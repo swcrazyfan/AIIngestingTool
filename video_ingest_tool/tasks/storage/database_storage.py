@@ -46,20 +46,23 @@ def database_storage_step(data: Dict[str, Any]) -> Dict[str, Any]:
         logger.info("Found embeddings data, will be embedded in the model")
         
         # Update the model's embeddings attribute with the generated embeddings
-        if hasattr(output_model, 'embeddings') and embeddings_data:
+        if embeddings_data:
             # Import the embeddings model
             from ...models import Embeddings
+            
+            # Extract image embeddings with correct keys (ranks 1, 2, 3)
+            image_embeddings = embeddings_data.get('image_embeddings', {})
             
             # Create embeddings data object from the generated embeddings
             embeddings_obj = Embeddings(
                 summary_embedding=embeddings_data.get('summary_embedding'),
                 keyword_embedding=embeddings_data.get('keyword_embedding'),
-                thumbnail_1_embedding=embeddings_data.get('image_embeddings', {}).get('thumbnail_1'),
-                thumbnail_2_embedding=embeddings_data.get('image_embeddings', {}).get('thumbnail_2'),
-                thumbnail_3_embedding=embeddings_data.get('image_embeddings', {}).get('thumbnail_3')
+                thumbnail_1_embedding=image_embeddings.get(1),  # Fixed: use rank 1
+                thumbnail_2_embedding=image_embeddings.get(2),  # Fixed: use rank 2
+                thumbnail_3_embedding=image_embeddings.get(3)   # Fixed: use rank 3
             )
             output_model.embeddings = embeddings_obj
-            logger.info("Successfully embedded embeddings data in model")
+            logger.info(f"Successfully embedded embeddings data in model. Thumbnail embeddings: {len([e for e in [image_embeddings.get(1), image_embeddings.get(2), image_embeddings.get(3)] if e is not None])}/3")
     else:
         logger.info("No embeddings data found, storing without embeddings")
     

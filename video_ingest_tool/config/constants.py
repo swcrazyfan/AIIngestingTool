@@ -18,14 +18,15 @@ DEFAULT_COMPRESSION_CONFIG = {
     'max_dimension': 854,  # Scale longest dimension to this size
     'fps': 5,
     'video_bitrate': '1000k', # Target bitrate for hardware encoding (e.g., h264_videotoolbox)
-    'audio_bitrate': '32k',
+    'audio_bitrate': '16k',   # Compress audio to 16kbps
     'audio_channels': 1,
     'use_hardware_accel': True,  # Enable hardware acceleration
-    # Prioritize VideoToolbox, then software fallbacks
-    'codec_priority': ['h264_videotoolbox', 'hevc_videotoolbox', 'libx265', 'libx264'], 
-    'crf_value': '23',  # Retain for software fallback (libx264/libx265)
-    'preset': 'ultrafast',  # Retain for software fallback (libx264/libx265), may not apply to all HW encoders
-    'audio_copy': True,     # Use -c:a copy
+    # Prioritize libx265 software encoding, then libx264, then VideoToolbox as fallback
+    'codec_priority': ['libx265', 'libx264', 'h264_videotoolbox', 'hevc_videotoolbox'], 
+    'crf_value': '23',  # CRF value for software encoders (libx264/libx265)
+    'preset': 'ultrafast',  # Preset for software encoders (libx264/libx265)
+    'audio_copy': False,    # Compress audio instead of copying
+    'use_conditional_scaling': True,  # Use if(gte(iw,ih),854,-2) scaling logic
     # Note: The VideoCompressor class in compression.py already adds '-allow_sw 1' 
     # for videotoolbox codecs.
 }

@@ -107,9 +107,8 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   const [results, setResults] = useState<any[]>([]);
 
   useEffect(() => {
-    // Get the current API configuration to determine the correct port
-    const config = connectionApi.getCurrentConfig();
-    const port = config.port || 8001; // Fallback to 8001 to match current server
+    // Always use port 8001 for WebSocket connections to match the server
+    const port = 8001;
     
     console.log(`Initializing WebSocket connection to localhost:${port}`);
     

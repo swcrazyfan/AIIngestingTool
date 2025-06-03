@@ -226,11 +226,11 @@ class ServicesCommand(BaseCommand):
         
         # Start server
         log_file = self.logs_dir / "prefect_server.log"
+        cmd_str = f"source ~/.zshrc && conda activate video-ingest && prefect server start --port {port}"
+        
         try:
             with open(log_file, 'w') as f:
-                process = subprocess.Popen([
-                    'prefect', 'server', 'start', '--port', str(port)
-                ], stdout=f, stderr=subprocess.STDOUT)
+                process = subprocess.Popen(cmd_str, shell=True, executable='/bin/zsh', stdout=f, stderr=subprocess.STDOUT)
             
             # Wait for health check
             health_url = f"http://127.0.0.1:{port}/api/health"
@@ -258,13 +258,11 @@ class ServicesCommand(BaseCommand):
         self._kill_service_processes('prefect-worker')
         
         log_file = self.logs_dir / "prefect_worker.log"
+        cmd_str = "source ~/.zshrc && conda activate video-ingest && prefect worker start --pool video-processing-pool --type process"
+        
         try:
             with open(log_file, 'w') as f:
-                process = subprocess.Popen([
-                    'prefect', 'worker', 'start', 
-                    '--pool', 'video-processing-pool',
-                    '--type', 'process'
-                ], stdout=f, stderr=subprocess.STDOUT)
+                process = subprocess.Popen(cmd_str, shell=True, executable='/bin/zsh', stdout=f, stderr=subprocess.STDOUT)
             
             # Give it a moment to start
             time.sleep(2)
@@ -280,21 +278,37 @@ class ServicesCommand(BaseCommand):
         except Exception as e:
             return {"success": False, "error": f"Failed to start Prefect worker: {str(e)}"}
     
-    def _start_api_server(self, port: int, debug: bool = False, foreground: bool = False) -> Dict[str, Any]:
+    def _start_api_server(self, port: int, debug: bool = False, foreground: bool = False, reload: bool = False) -> Dict[str, Any]:
         """Start API server."""
         # Clear existing processes
         if not self._clear_port(port, 'api-server'):
             return {"success": False, "error": f"Port {port} is in use by another process"}
         
+        # Auto-reload requires foreground mode for TTY access
+        if reload and not foreground:
+            logger.info("Auto-reload requires foreground mode for TTY access.")
+            logger.info("💡 Enabling foreground mode automatically for auto-reload to work.")
+            foreground = True
+        
         log_file = self.logs_dir / "api_server.log"
-        cmd = ['python', '-m', 'video_ingest_tool.api.server', '--port', str(port)]
+        # Use shell command with conda activation
+        cmd_parts = ['source ~/.zshrc && conda activate video-ingest && python -m video_ingest_tool.api.server --port', str(port)]
         if debug:
-            cmd.append('--debug')
+            cmd_parts.append('--debug')
+        if reload:
+            cmd_parts.append('--reload')
+        
+        # Join as shell command string
+        cmd_str = ' '.join(cmd_parts)
         
         try:
             if foreground:
                 # Run in foreground with live output
-                process = subprocess.Popen(cmd)
+                logger.info(f"Starting API server in foreground mode on port {port}")
+                if reload:
+                    logger.info("🔄 Auto-reload enabled - server will restart when files change")
+                    logger.info("💡 Auto-reload requires foreground mode for proper TTY access")
+                process = subprocess.Popen(cmd_str, shell=True, executable='/bin/zsh')
                 return {
                     "success": True,
                     "data": {
@@ -302,13 +316,18 @@ class ServicesCommand(BaseCommand):
                         "pid": process.pid,
                         "port": port,
                         "foreground": True,
+                        "reload": reload,
                         "message": "API server running in foreground. Press Ctrl+C to stop."
                     }
                 }
             else:
                 # Run in background
+                if reload:
+                    logger.warning("⚠️  Auto-reload requested but running in background mode.")
+                    logger.info("💡 Auto-reload may not work properly in background. Use --foreground for best results.")
+                
                 with open(log_file, 'w') as f:
-                    process = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT)
+                    process = subprocess.Popen(cmd_str, shell=True, executable='/bin/zsh', stdout=f, stderr=subprocess.STDOUT)
                 
                 # Wait for health check
                 health_url = f"http://127.0.0.1:{port}/api/health"
@@ -321,6 +340,7 @@ class ServicesCommand(BaseCommand):
                         "service": "api-server",
                         "pid": process.pid,
                         "port": port,
+                        "reload": reload,
                         "log_file": str(log_file)
                     }
                 }
@@ -356,7 +376,7 @@ class ServicesCommand(BaseCommand):
         logger.info(f"Port configuration written to {config_file} and {env_file}")
     
     def _start_services(self, service: str = 'all', port: Optional[int] = None, 
-                       debug: bool = False, foreground: bool = False) -> Dict[str, Any]:
+                       debug: bool = False, foreground: bool = False, reload: bool = False) -> Dict[str, Any]:
         """Start one or more services."""
         results = []
         
@@ -380,7 +400,7 @@ class ServicesCommand(BaseCommand):
                 return result
         
         if service in ['api-server', 'all']:
-            result = self._start_api_server(api_port, debug, foreground)
+            result = self._start_api_server(api_port, debug, foreground, reload)
             results.append(result)
             if not result['success'] and service == 'api-server':
                 return result

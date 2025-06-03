@@ -335,15 +335,23 @@ export const searchApi = {
     }
   },
 
-  async findSimilar(clipId: string, limit: number = 5): Promise<SearchResults> {
+  async findSimilar(clipId: string, limit: number = 5, threshold?: number, mode?: string): Promise<SearchResults> {
     try {
       // Backend /api/search/similar endpoint
-      const response = await apiClient.get('/search/similar', {
-        params: {
-          clip_id: clipId,
-          limit
-        }
-      });
+      const params: any = {
+        clip_id: clipId,
+        limit
+      };
+      
+      // Add optional parameters for better control
+      if (threshold !== undefined) {
+        params.similarity_threshold = threshold;
+      }
+      if (mode) {
+        params.mode = mode;
+      }
+      
+      const response = await apiClient.get('/search/similar', { params });
       
       // Extract data from standardized success response
       if (response.data.success) {

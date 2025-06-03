@@ -106,6 +106,7 @@ def upsert_clip_data(
         if result and result[0]:
             upserted_id = str(result[0])
             logger.info(f"Successfully upserted clip data. Resulting ID: {upserted_id} (checksum: {checksum})")
+            
             return upserted_id
         else:
             logger.error(f"Upsert operation did not return an ID for checksum {checksum}.")

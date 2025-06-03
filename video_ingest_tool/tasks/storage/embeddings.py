@@ -6,7 +6,11 @@ for video metadata to enable semantic search functionality.
 """
 
 from typing import Any, Dict, List, Optional
+from dotenv import load_dotenv
 from prefect import task
+
+# Load environment variables from .env file (required for Prefect workers)
+load_dotenv()
 
 @task
 def generate_embeddings_step(data: Dict[str, Any], logger=None) -> Dict[str, Any]:

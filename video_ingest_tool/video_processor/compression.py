@@ -222,23 +222,31 @@ class VideoCompressor:
                 if longest_dimension > max_dimension:
                     needs_scaling = True
                     
-                    # Calculate scaling to fit longest dimension
-                    scale_factor = max_dimension / longest_dimension
-                    target_width = int(input_width * scale_factor)
-                    target_height = int(input_height * scale_factor)
-                    
-                    # Make sure dimensions are even (required for many codecs)
-                    target_width = target_width if target_width % 2 == 0 else target_width - 1
-                    target_height = target_height if target_height % 2 == 0 else target_height - 1
-                    
-                    scale_filter = f"scale={target_width}:{target_height}"
-                    self.logger.info(f"Scaling down from {input_width}x{input_height} to {target_width}x{target_height} (longest dimension: {longest_dimension} → {max_dimension})")
+                    if self.config.get('use_conditional_scaling', False):
+                        # Use conditional scaling filter like: scale='if(gte(iw,ih),854,-2)':'if(gte(ih,iw),854,-2)'
+                        scale_filter = f"scale='if(gte(iw,ih),{max_dimension},-2)':'if(gte(ih,iw),{max_dimension},-2)'"
+                        self.logger.info(f"Using conditional scaling from {input_width}x{input_height} with max dimension {max_dimension}px")
+                    else:
+                        # Calculate scaling to fit longest dimension (original method)
+                        scale_factor = max_dimension / longest_dimension
+                        target_width = int(input_width * scale_factor)
+                        target_height = int(input_height * scale_factor)
+                        
+                        # Make sure dimensions are even (required for many codecs)
+                        target_width = target_width if target_width % 2 == 0 else target_width - 1
+                        target_height = target_height if target_height % 2 == 0 else target_height - 1
+                        
+                        scale_filter = f"scale={target_width}:{target_height}"
+                        self.logger.info(f"Scaling down from {input_width}x{input_height} to {target_width}x{target_height} (longest dimension: {longest_dimension} → {max_dimension})")
                 else:
                     self.logger.info(f"Resolution {input_width}x{input_height} fits within {max_dimension}px, compressing without scaling")
             else:
                 # If we can't detect resolution, use default scaling as fallback
                 needs_scaling = True
-                scale_filter = f"scale={max_dimension}:{max_dimension}"
+                if self.config.get('use_conditional_scaling', False):
+                    scale_filter = f"scale='if(gte(iw,ih),{max_dimension},-2)':'if(gte(ih,iw),{max_dimension},-2)'"
+                else:
+                    scale_filter = f"scale={max_dimension}:{max_dimension}"
                 self.logger.warning(f"Could not detect resolution, using default scaling to {max_dimension}px")
             
             # Select the best available codec
@@ -269,6 +277,12 @@ class VideoCompressor:
                 cmd.extend(["-vf", scale_filter])
             
             cmd.extend(["-r", str(self.config['fps'])])
+            
+            # Ensure faststart for web playback (move moov atom to beginning)
+            cmd.extend(["-movflags", "+faststart"])
+            
+            # Ensure universally compatible pixel format
+            cmd.extend(["-pix_fmt", "yuv420p"])
             
             if self.config.get('audio_copy', False):
                 cmd.extend(["-c:a", "copy"])
