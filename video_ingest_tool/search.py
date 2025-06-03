@@ -398,10 +398,10 @@ def format_search_results(
             #     formatted['match_type'] = result.get('match_type')
 
         elif search_type == "fulltext" and show_scores:
-            # fts_rank is provided by fulltext_search_clips_duckdb
-            fts_rank_val = result.get('fts_rank')
-            if fts_rank_val is not None:
-                formatted['fts_rank'] = fts_rank_val
+            # fts_score is provided by fulltext_search_clips_duckdb (not fts_rank)
+            fts_score_val = result.get('fts_score')
+            if fts_score_val is not None:
+                formatted['fts_rank'] = fts_score_val
 
         elif search_type == "transcripts":
             formatted.update({
