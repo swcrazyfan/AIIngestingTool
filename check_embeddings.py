@@ -29,7 +29,7 @@ for i, clip in enumerate(clips):
     print(f'   Thumb1:   {"✓" if has_thumb1 else "✗"} ({len(thumb1_emb) if thumb1_emb else 0} dims)')
     print(f'   Thumb2:   {"✓" if has_thumb2 else "✗"} ({len(thumb2_emb) if thumb2_emb else 0} dims)')
     print(f'   Thumb3:   {"✓" if has_thumb3 else "✗"} ({len(thumb3_emb) if thumb3_emb else 0} dims)')
-    print()
+print()
 
 print('Summary:')
 total_clips = len(clips)

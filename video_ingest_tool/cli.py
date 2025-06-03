@@ -383,9 +383,9 @@ def _display_search_results(data: dict, format_type: str, show_relevance: bool =
     table.add_column("Processed At", justify="center", max_width=12) # Clarified name
     
     if show_relevance:
-        table.add_column("Relevance", justify="center", max_width=10)
+        table.add_column("Relevance", justify="center", max_width=10) # For 'search query'
     elif show_similarity:
-        table.add_column("Similarity", justify="center", max_width=10)
+        table.add_column("Similarity", justify="center", max_width=10) # For 'search similar'
         
     table.add_column("Clip ID", style="dim", max_width=38) # Increased width for full UUID
     
@@ -408,25 +408,46 @@ def _display_search_results(data: dict, format_type: str, show_relevance: bool =
         duration_display = f"{duration:.1f}s" if duration is not None else "N/A"
         size_mb_display = f"{size_mb:.1f}MB" if size_mb is not None else "N/A"
 
-        row = [
+        row_items = [ # Changed variable name from 'row' to 'row_items' to avoid conflict
             file_name,
             duration_display,
             size_mb_display,
             processed_at_display
         ]
         
+        # Add score column data
+        score_display_value = "N/A"
         if show_relevance:
-            relevance_score = result.get('relevance_score') or result.get('combined_similarity') or 0
-            row.append(f"{relevance_score:.3f}")
+            # For 'search query' command
+            # Priority: hybrid's relevance_score, then semantic's combined_similarity, then fts_rank
+            relevance_val = result.get('relevance_score')  # From hybrid (RRF score)
+            if relevance_val is not None:
+                score_display_value = f"{relevance_val:.3f}"
+            else:
+                combined_sim_val = result.get('combined_similarity')  # From semantic
+                if combined_sim_val is not None:
+                    score_display_value = f"{combined_sim_val:.3f}"
+                else:
+                    fts_rank_val = result.get('fts_rank')  # From fulltext or transcript search
+                    if fts_rank_val is not None:
+                        score_display_value = str(fts_rank_val) # Rank is usually int
+            row_items.append(score_display_value)
+            
         elif show_similarity:
-            similarity_score = result.get('similarity_score') or result.get('combined_similarity') or 0
-            row.append(f"{similarity_score:.3f}")
+            # For 'search similar' command
+            similarity_val = result.get('similarity_score') # From find_similar
+            if similarity_val is not None:
+                score_display_value = f"{similarity_val:.3f}"
+            # Fallback, though 'similarity_score' should be primary for this path
+            elif result.get('combined_similarity') is not None: 
+                score_display_value = f"{result.get('combined_similarity'):.3f}"
+            row_items.append(score_display_value)
             
         # Display full clip_id if available, otherwise truncated
         clip_id_val = result.get('id', result.get('clip_id', 'Unknown')) # 'id' from direct clip, 'clip_id' from search
-        row.append(str(clip_id_val))
+        row_items.append(str(clip_id_val))
         
-        table.add_row(*row)
+        table.add_row(*row_items)
         
     console.print(table)
     console.print()

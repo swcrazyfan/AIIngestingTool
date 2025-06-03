@@ -372,34 +372,53 @@ def format_search_results(
         
         # Add search-specific fields
         if search_type == "semantic" and show_scores:
-            formatted.update({
-                'summary_similarity': result.get('summary_similarity'),
-                'keyword_similarity': result.get('keyword_similarity'),
-                'combined_similarity': result.get('combined_similarity_score') or result.get('combined_similarity')  # Handle both field names
-            })
+            # combined_similarity_score is the primary score from semantic_search_clips_duckdb
+            cs_score = result.get('combined_similarity_score')
+            if cs_score is not None:
+                formatted['combined_similarity'] = cs_score # Standardized field for formatted output
+            
+            # Optional: include components if they exist
+            summary_sim = result.get('summary_similarity')
+            if summary_sim is not None:
+                formatted['summary_similarity'] = summary_sim
+            keyword_sim = result.get('keyword_similarity')
+            if keyword_sim is not None:
+                formatted['keyword_similarity'] = keyword_sim
+                
         elif search_type == "hybrid" and show_scores:
-            formatted.update({
-                'similarity_score': result.get('similarity_score'),
-                'search_rank': result.get('search_rank'),
-                'match_type': result.get('match_type')
-            })
+            # 'rrf_score' from hybrid_search_clips_duckdb is the RRF score.
+            # We'll call it 'relevance_score' for clarity in formatted output,
+            # distinguishing it from pure vector similarity.
+            rrf_score = result.get('rrf_score')
+            if rrf_score is not None:
+                formatted['relevance_score'] = rrf_score
+            # 'match_type' and 'search_rank' are not currently provided by hybrid_search_clips_duckdb.
+            # If they were, they could be added here:
+            # if result.get('match_type') is not None:
+            #     formatted['match_type'] = result.get('match_type')
+
         elif search_type == "fulltext" and show_scores:
-            formatted.update({
-                'fts_rank': result.get('fts_rank')
-            })
+            # fts_rank is provided by fulltext_search_clips_duckdb
+            fts_rank_val = result.get('fts_rank')
+            if fts_rank_val is not None:
+                formatted['fts_rank'] = fts_rank_val
+
         elif search_type == "transcripts":
             formatted.update({
                 'clip_id': result.get('clip_id'),
                 'full_text': result.get('full_text'),
                 'transcript_preview': result.get('transcript_preview'),
-                'fts_rank': result.get('fts_rank') if show_scores else None
             })
+            if show_scores:
+                fts_rank_val = result.get('fts_rank')
+                if fts_rank_val is not None:
+                    formatted['fts_rank'] = fts_rank_val
+                    
         elif search_type == "similar" and show_scores:
-            # Handle the actual field name returned by find_similar_clips_duckdb
-            similarity_score = result.get('combined_similarity_score') or result.get('similarity_score')
-            formatted.update({
-                'similarity_score': similarity_score
-            })
+            # find_similar_clips_duckdb aliases its output score as 'similarity_score'
+            sim_score = result.get('similarity_score')
+            if sim_score is not None:
+                formatted['similarity_score'] = sim_score
         
         formatted_results.append(formatted)
     

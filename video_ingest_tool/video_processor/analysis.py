@@ -769,7 +769,7 @@ Please be thorough but concise in your descriptions. Organize the analysis accor
                 'error': str(e),
                 'analysis_status': 'failed',
                 'analysis_timestamp': time.time()
-            }
+            } 
 
     def _get_reference_examples(self, video_content_hints: List[str] = None) -> str:
         """

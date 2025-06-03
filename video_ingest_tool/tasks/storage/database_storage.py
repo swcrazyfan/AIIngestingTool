@@ -29,6 +29,7 @@ def database_storage_step(data: Dict[str, Any]) -> Dict[str, Any]:
     from ...database.duckdb.connection import get_db_connection
     from ...database.duckdb.mappers import prepare_clip_data_for_db
     from ...database.duckdb.crud import upsert_clip_data
+    from ...database.duckdb.schema import create_fts_index_for_clips
     
     output_model = data.get('model')
     if not output_model:
@@ -102,6 +103,17 @@ def database_storage_step(data: Dict[str, Any]) -> Dict[str, Any]:
         stored_clip_id = upsert_clip_data(clip_data, conn)
         if stored_clip_id:
             logger.info(f"Successfully stored clip data with ID: {stored_clip_id}")
+            
+            # Rebuild FTS index after successful upsert
+            try:
+                logger.info(f"Rebuilding FTS index for app_data.clips after upserting clip ID: {stored_clip_id}")
+                create_fts_index_for_clips(conn)
+                logger.info(f"Successfully rebuilt FTS index for app_data.clips.")
+            except Exception as fts_e:
+                logger.error(f"Failed to rebuild FTS index after upserting clip ID: {stored_clip_id}", error=str(fts_e), exc_info=True)
+                # Decide if this is critical. For now, log error and continue.
+                # The main operation (upsert) was successful.
+
             return {
                 'database_storage_success': True,
                 'clip_id': stored_clip_id,

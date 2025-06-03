@@ -84,13 +84,13 @@ class ClipsCommand(BaseCommand):
             kwargs['clip_id'] = clip_id # Store stripped version
             
             if action == 'show':
-            show_transcript = kwargs.get('show_transcript', False)
-            show_analysis = kwargs.get('show_analysis', False)
+                show_transcript = kwargs.get('show_transcript', False)
+                show_analysis = kwargs.get('show_analysis', False)
             
-            if not isinstance(show_transcript, bool):
-                kwargs['show_transcript'] = str(show_transcript).lower() in ['true', '1', 'yes']
-            if not isinstance(show_analysis, bool):
-                kwargs['show_analysis'] = str(show_analysis).lower() in ['true', '1', 'yes']
+                if not isinstance(show_transcript, bool):
+                    kwargs['show_transcript'] = str(show_transcript).lower() in ['true', '1', 'yes']
+                if not isinstance(show_analysis, bool):
+                    kwargs['show_analysis'] = str(show_analysis).lower() in ['true', '1', 'yes']
             
             elif action == 'delete':
                 confirm = kwargs.get('confirm', False)

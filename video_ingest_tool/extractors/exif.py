@@ -5,7 +5,9 @@ Contains functions for extracting EXIF metadata using ExifTool.
 """
 
 import exiftool
-from typing import Any, Dict
+import json
+import datetime
+from typing import Any, Dict, Optional
 
 from ..utils import categorize_focal_length, parse_datetime_string, map_exposure_mode, map_white_balance
 from ..config import FOCAL_LENGTH_RANGES

@@ -7,9 +7,13 @@ Contains functions for scanning directories and identifying video files.
 import os
 from typing import List
 from rich.progress import Progress
+import magic
+import logging
 
 from .config import console
 from .utils import is_video_file
+# from .models import VideoFile, IngestConfig # Removed unused import
+# from .config import SUPPORTED_EXTENSIONS, EXCLUDED_SUBSTRINGS # Removed unused import
 
 def scan_directory(directory: str, recursive: bool = True, logger=None, has_polyfile: bool = False) -> List[str]:
     """
