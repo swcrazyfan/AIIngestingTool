@@ -37,6 +37,7 @@ from .ingest import IngestCommand
 from .system import SystemCommand
 from .clips import ClipsCommand
 from .services import ServicesCommand
+from .categories import CategoryCommand
 
 # Export all command classes
 __all__ = [
@@ -46,5 +47,6 @@ __all__ = [
     'IngestCommand',
     'SystemCommand',
     'ClipsCommand',
-    'ServicesCommand'
+    'ServicesCommand',
+    'CategoryCommand'
 ]

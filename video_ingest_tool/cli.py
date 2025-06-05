@@ -20,7 +20,7 @@ from pathlib import Path
 # Load environment variables from .env file
 load_dotenv()
 
-from .cli_commands import SearchCommand, IngestCommand, SystemCommand, ClipsCommand, ServicesCommand # Added ServicesCommand
+from .cli_commands import SearchCommand, IngestCommand, SystemCommand, ClipsCommand, ServicesCommand, CategoryCommand
 from .config import console
 from .config.settings import PIPELINE_STEP_DEFINITIONS # Import step definitions
 
@@ -40,10 +40,12 @@ app = typer.Typer(
 # auth_app = typer.Typer(help="Authentication commands") # Removed
 search_app = typer.Typer(help="Search and discovery commands")
 clip_app = typer.Typer(help="Individual clip operations")
+category_app = typer.Typer(help="Category operations")
 
 # app.add_typer(auth_app, name="auth") # Removed
 app.add_typer(search_app, name="search")
 app.add_typer(clip_app, name="clip")
+app.add_typer(category_app, name="category")
 
 
 # ============================================================================
@@ -235,21 +237,6 @@ def check_progress(
 # SEARCH COMMANDS
 # ============================================================================
 
-@search_app.command("recent")
-def search_recent(
-    limit: int = typer.Option(10, "--limit", "-l", help="Number of recent videos to show"),
-    format_type: str = typer.Option("table", "--format", "-f", help="Output format (table or json)")
-):
-    """List recently processed videos."""
-    
-    cmd = SearchCommand()
-    result = cmd.execute(action='recent', limit=limit, format_type=format_type)
-    
-    if not result.get('success'):
-        console.print(f"[red]❌ Search failed: {result.get('error')}[/red]")
-        raise typer.Exit(1) # Corrected indentation
-        
-    _display_search_results(result, format_type)
 
 
 @search_app.command("query")
@@ -654,6 +641,180 @@ def clip_delete(
         else:
             console.print(f"[red]❌ {error_msg}[/red]")
         raise typer.Exit(1)
+
+
+# ============================================================================
+# CATEGORY COMMANDS
+# ============================================================================
+
+@category_app.command("list")
+def category_list(
+    format_type: str = typer.Option("table", "--format", "-f", help="Output format (table or json)")
+):
+    """List all categories with statistics."""
+    
+    cmd = CategoryCommand()
+    result = cmd.execute(action='list')
+    
+    if not result.get('success'):
+        console.print(f"[red]❌ Category listing failed: {result.get('error')}[/red]")
+        raise typer.Exit(1)
+    
+    data = result.get('data', {})
+    categories = data.get('categories', [])
+    
+    if format_type == "json":
+        print(json.dumps(result, indent=2, default=_json_default_serializer))
+    else:
+        if not categories:
+            console.print("[yellow]No categories found[/yellow]")
+            return
+            
+        table = Table(title="Video Categories")
+        table.add_column("Category", style="cyan", no_wrap=True)
+        table.add_column("Clips", justify="right", style="magenta")
+        table.add_column("Avg Duration", justify="right", style="green")
+        table.add_column("Total Size", justify="right", style="blue")
+        table.add_column("Date Range", style="dim")
+        
+        for category in categories:
+            # Format duration
+            avg_duration = category.get('avg_duration_seconds', 0)
+            if avg_duration > 0:
+                duration_str = f"{int(avg_duration // 60)}:{int(avg_duration % 60):02d}"
+            else:
+                duration_str = "0:00"
+            
+            # Format size
+            size_bytes = category.get('total_size_bytes', 0)
+            if size_bytes > 1024 * 1024 * 1024:
+                size_str = f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+            elif size_bytes > 1024 * 1024:
+                size_str = f"{size_bytes / (1024 * 1024):.1f} MB"
+            else:
+                size_str = f"{size_bytes / 1024:.1f} KB"
+            
+            # Format date range
+            earliest = category.get('earliest_clip')
+            latest = category.get('latest_clip')
+            if earliest and latest:
+                earliest_date = earliest.split('T')[0] if 'T' in earliest else earliest[:10]
+                latest_date = latest.split('T')[0] if 'T' in latest else latest[:10]
+                if earliest_date == latest_date:
+                    date_range = earliest_date
+                else:
+                    date_range = f"{earliest_date} - {latest_date}"
+            else:
+                date_range = "Unknown"
+            
+            # Show hierarchy with indentation
+            name = category['name']
+            if category.get('subcategory'):
+                name = f"  └─ {category['subcategory']}"
+            
+            table.add_row(
+                name,
+                str(category['clip_count']),
+                duration_str,
+                size_str,
+                date_range
+            )
+        
+        console.print(table)
+        console.print(f"\n[dim]Total: {data.get('total_categories', 0)} categories, {data.get('total_clips', 0)} clips[/dim]")
+
+
+@category_app.command("show")
+def category_show(
+    category: str = typer.Argument(..., help="Category name to show details for"),
+    limit: int = typer.Option(20, "--limit", "-l", help="Maximum number of clips to show"),
+    offset: int = typer.Option(0, "--offset", help="Number of clips to skip"),
+    format_type: str = typer.Option("table", "--format", "-f", help="Output format (table or json)")
+):
+    """Show detailed information about a specific category."""
+    
+    cmd = CategoryCommand()
+    result = cmd.execute(action='show', category=category, limit=limit, offset=offset)
+    
+    if not result.get('success'):
+        console.print(f"[red]❌ Category show failed: {result.get('error')}[/red]")
+        raise typer.Exit(1)
+    
+    if format_type == "json":
+        print(json.dumps(result, indent=2, default=_json_default_serializer))
+    else:
+        data = result.get('data', {})
+        stats = data.get('stats', {})
+        clips_data = data.get('clips', {})
+        clips = clips_data.get('clips', [])
+        
+        # Show category stats
+        console.print(f"\n[bold cyan]Category: {category}[/bold cyan]")
+        console.print(f"Total clips: [magenta]{stats.get('total_clips', 0)}[/magenta]")
+        console.print(f"Average duration: [green]{stats.get('avg_duration_seconds', 0):.1f}s[/green]")
+        
+        size_bytes = stats.get('total_size_bytes', 0)
+        if size_bytes > 1024 * 1024 * 1024:
+            size_str = f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+        elif size_bytes > 1024 * 1024:
+            size_str = f"{size_bytes / (1024 * 1024):.1f} MB"
+        else:
+            size_str = f"{size_bytes / 1024:.1f} KB"
+        console.print(f"Total size: [blue]{size_str}[/blue]")
+        
+        if stats.get('earliest_clip') and stats.get('latest_clip'):
+            earliest = stats['earliest_clip'].split('T')[0]
+            latest = stats['latest_clip'].split('T')[0]
+            console.print(f"Date range: [dim]{earliest} to {latest}[/dim]")
+        
+        # Show clips
+        if clips:
+            console.print(f"\n[bold]Clips (showing {len(clips)} of {stats.get('total_clips', 0)}):[/bold]")
+            
+            table = Table()
+            table.add_column("File Name", style="cyan", no_wrap=True)
+            table.add_column("Duration", justify="right", style="green")
+            table.add_column("Created", style="dim")
+            table.add_column("Size", justify="right", style="blue")
+            
+            for clip in clips:
+                duration_sec = clip.get('duration_seconds', 0)
+                if duration_sec:
+                    duration_str = f"{int(duration_sec // 60)}:{int(duration_sec % 60):02d}"
+                else:
+                    duration_str = "Unknown"
+                
+                created_at = clip.get('created_at', '')
+                if created_at:
+                    created_str = created_at.split('T')[0] if 'T' in created_at else created_at[:10]
+                else:
+                    created_str = "Unknown"
+                
+                size_bytes = clip.get('file_size_bytes', 0)
+                if size_bytes > 1024 * 1024:
+                    size_str = f"{size_bytes / (1024 * 1024):.1f} MB"
+                else:
+                    size_str = f"{size_bytes / 1024:.1f} KB"
+                
+                table.add_row(
+                    clip.get('file_name', 'Unknown'),
+                    duration_str,
+                    created_str,
+                    size_str
+                )
+            
+            console.print(table)
+            
+            pagination = clips_data.get('pagination', {})
+            total = pagination.get('total', 0)
+            current_offset = pagination.get('offset', 0)
+            current_limit = pagination.get('limit', limit)
+            
+            if total > current_offset + current_limit:
+                console.print(f"\n[dim]Showing {current_offset + 1}-{min(current_offset + current_limit, total)} of {total} clips[/dim]")
+                console.print(f"[dim]Use --offset {current_offset + current_limit} to see more[/dim]")
+        else:
+            console.print("\n[yellow]No clips found in this category[/yellow]")
 
 
 # ============================================================================

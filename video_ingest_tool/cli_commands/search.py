@@ -52,8 +52,6 @@ class SearchCommand(BaseCommand):
                 return self.search(**kwargs)
             elif action == 'list':
                 return self.list_videos(**kwargs)
-            elif action == 'recent':
-                return self.list_recent(**kwargs)
             elif action == 'similar':
                 return self.find_similar(**kwargs)
             # 'stats' action removed as user-specific stats are being phased out
@@ -289,22 +287,6 @@ class SearchCommand(BaseCommand):
                 "error": f"Similar search failed: {str(e)}"
             }
     
-    def list_recent(self, limit: int = 20, **kwargs) -> Dict[str, Any]:
-        """List recent videos (special case of list_videos sorted by processed_at desc).
-        
-        Args:
-            limit: Number of recent videos to return
-            
-        Returns:
-            Dict with recent videos and metadata
-        """
-        return self.list_videos(
-            sort_by='processed_at',
-            sort_order='descending', 
-            limit=limit,
-            offset=0,
-            **kwargs
-        )
     
     # get_stats method removed as user-specific stats are being phased out.
     # The corresponding 'stats' action has also been removed from the execute method.

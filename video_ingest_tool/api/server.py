@@ -241,6 +241,9 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
         if offset < 0:
             return create_error_response("Offset must be a non-negative integer.", "INVALID_INPUT", 400)
 
+        # Handle category filter as a simple query parameter
+        category = request.args.get('category', None)
+        
         filters_json_str = request.args.get('filters', None)
         parsed_filters = None
         if filters_json_str:
@@ -253,6 +256,12 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
                 logger.warning(f"Invalid filters JSON string provided: {filters_json_str}", error=str(e))
                 return create_error_response(f"Invalid 'filters' format: {str(e)} Must be a valid JSON object string.",
                                            'INVALID_FILTERS', 400)
+        
+        # Merge category filter with other filters
+        if category:
+            if parsed_filters is None:
+                parsed_filters = {}
+            parsed_filters['content_category'] = category
         
         from ..cli_commands import ClipsCommand # Use ClipsCommand for listing
         cmd = ClipsCommand()
@@ -336,6 +345,72 @@ def create_app(debug: bool = False) -> tuple[Flask, SocketIO]:
 
     # /api/clips/<clip_id>/transcript endpoint removed (data consolidated)
     # /api/clips/<clip_id>/analysis endpoint removed (data consolidated)
+    
+    @app.route('/api/clips/categories', methods=['GET'])
+    @log_request()
+    @handle_errors
+    def get_categories():
+        """Get category statistics and hierarchy for all clips."""
+        from ..database.duckdb import connection as duckdb_connection
+        
+        try:
+            conn = duckdb_connection.get_db_connection()
+            
+            # Get all categories with counts
+            query = """
+            SELECT 
+                content_category,
+                COUNT(*) as clip_count,
+                AVG(duration_seconds) as avg_duration,
+                SUM(file_size_bytes) as total_size
+            FROM app_data.clips 
+            WHERE content_category IS NOT NULL 
+              AND TRIM(content_category) != ''
+            GROUP BY content_category
+            ORDER BY content_category
+            """
+            
+            result = conn.execute(query).fetchall()
+            
+            # Build hierarchical structure
+            categories = []
+            total_clips = 0
+            
+            for category_name, clip_count, avg_duration, total_size in result:
+                if not category_name:
+                    continue
+                    
+                category_data = {
+                    "name": category_name,
+                    "clip_count": clip_count,
+                    "avg_duration_seconds": round(avg_duration, 2) if avg_duration else 0,
+                    "total_size_bytes": total_size or 0
+                }
+                
+                # Handle hierarchical categories (split by /)
+                if '/' in category_name:
+                    parts = category_name.split('/')
+                    category_data["parent"] = parts[0].strip()
+                    category_data["subcategory"] = '/'.join(parts[1:]).strip()
+                else:
+                    category_data["parent"] = None
+                    category_data["subcategory"] = None
+                
+                categories.append(category_data)
+                total_clips += clip_count
+            
+            response_data = {
+                "categories": categories,
+                "total_categories": len(categories),
+                "total_clips": total_clips
+            }
+            
+            return jsonify(create_success_response(response_data))
+            
+        except Exception as e:
+            logger.error(f"Error getting categories: {str(e)}")
+            return create_error_response(f"Failed to get categories: {str(e)}", 
+                                       'CATEGORIES_ERROR', 500)
     
     # ========================================================================
     # INGEST ENDPOINTS (Following Prefect Best Practices)
