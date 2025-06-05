@@ -39,7 +39,8 @@ from video_ingest_tool.tasks.processing import (
 from video_ingest_tool.tasks.storage import (
     create_model_step,
     database_storage_step,
-    generate_embeddings_step,
+    generate_text_embeddings_step,
+    generate_image_embeddings_step,
     upload_thumbnails_step
 )
 from video_ingest_tool.models import VideoIngestOutput
@@ -92,9 +93,9 @@ def process_video_file_task(
         step_is_enabled_by_config = True
         if config_key:
             if config:
-                step_is_enabled_by_config = config.get(config_key, False)
+                step_is_enabled_by_config = config.get(config_key, True)  # Default to True if key not found
             else:
-                step_is_enabled_by_config = False # Configurable but no config provided
+                step_is_enabled_by_config = True  # Default to enabled when no config provided
         
         if is_the_target_task:
             logger.info(f"Specific task '{step_key}' requested. Will run if config enabled (if applicable). Config enabled: {step_is_enabled_by_config if config_key else 'N/A'}")
@@ -255,16 +256,26 @@ def process_video_file_task(
 
     # Step 4: AI analysis
     if should_execute_step("ai_analysis", config_key='ai_video_analysis_step'):
-        # AI analysis requires a compressed video from the compression step
+        # AI analysis prefers compressed video but can use original if needed
         compressed_video_path = data.get('compressed_video_path')
-        if not compressed_video_path:
-            logger.warning(f"Skipping AI Analysis for {file_name}: no compressed video available. Enable and run 'video_compression_step' first.")
+        analysis_video_path = compressed_video_path or file_path  # Fallback to original file
+        
+        if not analysis_video_path:
+            logger.warning(f"Skipping AI Analysis for {file_name}: no video file available for analysis.")
         else:
             if task_to_run is None:
                 progress_tracker.update_file_step(flow_run_id, file_path, "ai_analysis", 70, "processing")
                 if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=70.0, description="Running AI analysis...")
             
-            logger.info(f"Using compressed video file for AI analysis: {compressed_video_path}")
+            if compressed_video_path:
+                logger.info(f"Using compressed video file for AI analysis: {compressed_video_path}")
+                # Check if compression was skipped due to existing file
+                if data.get('compression_skipped'):
+                    logger.info(f"Compression was skipped (reason: {data.get('skip_reason')}), using existing compressed file")
+            else:
+                logger.info(f"No compressed video available, using original file for AI analysis: {file_path}")
+                # Update data to include the analysis path for consistency
+                data['compressed_video_path'] = file_path
                 
             logger.info(f"Executing AI video analysis step for {file_name}")
             ai_analysis_task_obj = ai_video_analysis_step.with_options(name=f"{label_prefix} | ai_video_analysis", tags=["ai_video_analysis_step"])
@@ -299,19 +310,51 @@ def process_video_file_task(
         else:
             logger.error(f"create_model_step for {file_name} did not return 'model'.")
 
-    # Step 7: Embedding Generation (moved AFTER model creation)
-    if should_execute_step("embeddings", config_key='generate_embeddings_step'):
+    # Step 7: Embedding Generation (Text and Image in parallel - moved AFTER model creation)
+    text_embedding_future, image_embedding_future = None, None
+    
+    # Submit both embedding tasks concurrently if their dependencies are met
+    if should_execute_step("text_embeddings", config_key='generate_text_embeddings_step'):
         if 'model' not in data or not isinstance(data.get('model'), VideoIngestOutput):
-            logger.warning(f"Skipping generate_embeddings_step for {file_name}: 'model' (VideoIngestOutput) not in data. Run 'create_model' first.")
+            logger.warning(f"Skipping generate_text_embeddings_step for {file_name}: 'model' (VideoIngestOutput) not in data. Run 'create_model' first.")
         else:
             if task_to_run is None:
-                progress_tracker.update_file_step(flow_run_id, file_path, "generate_embeddings", 85, "processing")
-                if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=85.0, description="Generating embeddings...")
-            logger.info(f"Executing embedding generation step for {file_name}")
-            embedding_task = generate_embeddings_step.with_options(name=f"{label_prefix} | embedding_generation", tags=["embedding_step"])
-            embedding_result_future = embedding_task.submit(data)
-            data.update(embedding_result_future.result())
-            logger.info(f"Embedding generation result for {file_name} updated.")
+                progress_tracker.update_file_step(flow_run_id, file_path, "generate_text_embeddings", 85, "processing")
+                if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=85.0, description="Generating text embeddings...")
+            logger.info(f"Submitting text embedding generation step for {file_name}")
+            text_embedding_task = generate_text_embeddings_step.with_options(name=f"{label_prefix} | text_embedding_generation", tags=["text_embedding_step"])
+            text_embedding_future = text_embedding_task.submit(data)
+
+    if should_execute_step("image_embeddings", config_key='generate_image_embeddings_step'):
+        if 'ai_thumbnail_metadata' not in data:
+            logger.warning(f"Skipping generate_image_embeddings_step for {file_name}: 'ai_thumbnail_metadata' not in data. Run 'ai_thumbnails' step first.")
+        else:
+            if task_to_run is None:
+                progress_tracker.update_file_step(flow_run_id, file_path, "generate_image_embeddings", 87, "processing")
+                if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=87.0, description="Generating image embeddings...")
+            logger.info(f"Submitting image embedding generation step for {file_name}")
+            image_embedding_task = generate_image_embeddings_step.with_options(name=f"{label_prefix} | image_embedding_generation", tags=["image_embedding_step"])
+            image_embedding_future = image_embedding_task.submit(data)
+
+    # Wait for embedding results
+    text_embedding_result, image_embedding_result = None, None
+    
+    if text_embedding_future:
+        text_embedding_result = text_embedding_future.result()
+        logger.info(f"Text embedding generation result for {file_name} updated.")
+    
+    if image_embedding_future:
+        image_embedding_result = image_embedding_future.result()
+        logger.info(f"Image embedding generation result for {file_name} updated.")
+    
+    # Store embedding results separately to avoid data key overwriting
+    if text_embedding_result:
+        data['text_embeddings_generated'] = text_embedding_result.get('text_embeddings_generated', False)
+        data['text_embeddings_data'] = text_embedding_result.get('data', {})
+        
+    if image_embedding_result:
+        data['image_embeddings_generated'] = image_embedding_result.get('image_embeddings_generated', False)
+        data['image_embeddings_data'] = image_embedding_result.get('data', {})
 
     # Step 8: Store data in database
     if should_execute_step("db_storage", config_key='database_storage_step'):
@@ -319,8 +362,8 @@ def process_video_file_task(
             logger.warning(f"Skipping database_storage_step for {file_name}: 'model' (VideoIngestOutput) not in data. Run 'create_model' first.")
         else:
             if task_to_run is None:
-                progress_tracker.update_file_step(flow_run_id, file_path, "database_storage", 95, "processing")
-                if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=95.0, description="Storing data...")
+                progress_tracker.update_file_step(flow_run_id, file_path, "database_storage", 90, "processing")
+                if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=90.0, description="Storing data...")
             logger.info(f"Executing database storage step for {file_name}")
             storage_task = database_storage_step.with_options(name=f"{label_prefix} | database_storage", tags=["database_storage_step"])
             storage_result_future = storage_task.submit(data)
@@ -333,8 +376,8 @@ def process_video_file_task(
              logger.warning(f"Skipping upload_thumbnails_step for {file_name}: missing 'thumbnail_paths' or model.id. Run 'thumbnails' and 'create_model' first.")
         else:
             if task_to_run is None:
-                progress_tracker.update_file_step(flow_run_id, file_path, "upload_thumbnails", 98, "processing")
-                if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=98.0, description="Uploading thumbnails...")
+                progress_tracker.update_file_step(flow_run_id, file_path, "upload_thumbnails", 95, "processing")
+                if progress_artifact_id: update_progress_artifact(progress_artifact_id, progress=95.0, description="Uploading thumbnails...")
             logger.info(f"Executing upload_thumbnails step for {file_name}")
             upload_result = upload_thumbnails_step.with_options(
                 name=f"{label_prefix} | upload_thumbnails",

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 import structlog
 from . import BaseCommand
+from ..config.settings import DEFAULT_CONCURRENCY_LIMITS
 
 logger = structlog.get_logger(__name__)
 
@@ -198,14 +199,7 @@ class ServicesCommand(BaseCommand):
     
     def _create_concurrency_limits(self):
         """Create Prefect concurrency limits."""
-        limits = [
-            ('video_compression_step', 2),
-            ('ai_analysis_step', 1),
-            ('transcription_step', 2),
-            ('embedding_step', 1)
-        ]
-        
-        for name, limit in limits:
+        for name, limit in DEFAULT_CONCURRENCY_LIMITS.items():
             try:
                 result = subprocess.run([
                     'prefect', 'concurrency-limit', 'create', name, str(limit)

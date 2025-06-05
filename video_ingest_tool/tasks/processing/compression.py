@@ -94,6 +94,43 @@ def video_compression_step(
 
     os.makedirs(compressed_output_dir, exist_ok=True)
 
+    # Check if compressed file already exists (for re-ingest optimization)
+    input_basename = os.path.basename(actual_file_to_compress)
+    expected_compressed_filename = f"{os.path.splitext(input_basename)[0]}_compressed.mp4"
+    expected_compressed_path = os.path.join(compressed_output_dir, expected_compressed_filename)
+    
+    # Check if this is a re-ingest and compressed file already exists
+    is_reprocessing = data.get('is_reprocessing', False)
+    if is_reprocessing and os.path.exists(expected_compressed_path):
+        # Existing compressed file found - skip compression and use existing file
+        logger.info(f"Re-ingest detected and compressed file already exists: {expected_compressed_path}")
+        logger.info(f"Skipping video compression, using existing compressed file for AI analysis")
+        
+        # Update progress to completed immediately
+        if _effective_tracker_id and original_file_path_for_tracking:
+            progress_tracker.update_file_step(
+                flow_run_id=_effective_tracker_id,
+                file_path=original_file_path_for_tracking,
+                step_name="video_compression",
+                step_progress=100,
+                step_status="completed",
+                compression_update={'skipped': True, 'reason': 'existing_compressed_file_found'}
+            )
+        
+        return {
+            'compressed_video_path': expected_compressed_path,
+            'original_file_path': original_file_path_for_tracking,
+            'compression_skipped': True,
+            'skip_reason': 'existing_compressed_file_found'
+        }
+    
+    # Log whether we're compressing new or re-processing
+    if is_reprocessing:
+        logger.info(f"Re-ingest detected but no existing compressed file found at: {expected_compressed_path}")
+        logger.info(f"Proceeding with video compression")
+    else:
+        logger.info(f"New file detected, proceeding with video compression")
+
     compression_config_overrides = {
         'fps': compression_fps,
         'video_bitrate': compression_bitrate

@@ -75,3 +75,7 @@ data/prefect.db-journal
 data/prefect.db-wal
 data/prefect.db-shm
 /data
+data/ai_ingest_local.duckdb
+data/ai_ingest_local.duckdb-wal
+data/ai_ingest_local.duckdb-shm
+data/ai_ingest_local.duckdb-journal

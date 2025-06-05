@@ -9,6 +9,7 @@ import tiktoken
 from typing import List, Dict, Any, Optional, Tuple
 import structlog
 from dotenv import load_dotenv
+import asyncio
 
 # Load environment variables from .env file (required for Prefect workers)
 load_dotenv()
@@ -18,6 +19,13 @@ logger = structlog.get_logger(__name__)
 def get_embedding_client():
     """Get OpenAI client configured for DeepInfra API."""
     return openai.OpenAI(
+        api_key=os.getenv("DEEPINFRA_API_KEY"),
+        base_url="https://api.deepinfra.com/v1/openai"
+    )
+
+def get_async_embedding_client():
+    """Get async OpenAI client configured for DeepInfra API."""
+    return openai.AsyncOpenAI(
         api_key=os.getenv("DEEPINFRA_API_KEY"),
         base_url="https://api.deepinfra.com/v1/openai"
     )
@@ -406,36 +414,53 @@ def prepare_embedding_content(video_data) -> Tuple[str, str, Dict[str, Any]]:
     
     return summary_content, keyword_content, metadata
 
+async def generate_embeddings_async(
+    summary_content: str,
+    keyword_content: str,
+    logger=None
+) -> Tuple[List[float], List[float]]:
+    """Generate embeddings concurrently using BAAI/bge-m3 via DeepInfra."""
+    try:
+        client = get_async_embedding_client()
+        
+        # Create both requests concurrently
+        summary_task = client.embeddings.create(
+            input=summary_content,
+            model="BAAI/bge-m3",
+            encoding_format="float"
+        )
+        
+        keyword_task = client.embeddings.create(
+            input=keyword_content,
+            model="BAAI/bge-m3",
+            encoding_format="float"
+        )
+        
+        # Wait for both to complete
+        summary_response, keyword_response = await asyncio.gather(summary_task, keyword_task)
+        
+        summary_embedding = summary_response.data[0].embedding
+        keyword_embedding = keyword_response.data[0].embedding
+        
+        if logger:
+            logger.info(f"Generated embeddings concurrently - Summary: {len(summary_embedding)}D, Keywords: {len(keyword_embedding)}D")
+        
+        return summary_embedding, keyword_embedding
+        
+    except Exception as e:
+        if logger:
+            logger.error(f"Failed to generate embeddings: {str(e)}")
+        raise
+
 def generate_embeddings(
     summary_content: str,
     keyword_content: str,
     logger=None
 ) -> Tuple[List[float], List[float]]:
-    """Generate embeddings using BAAI/bge-m3 via DeepInfra."""
+    """Generate embeddings using BAAI/bge-m3 via DeepInfra. Now uses concurrent requests."""
     try:
-        client = get_embedding_client()
-        
-        # Generate summary embedding
-        summary_response = client.embeddings.create(
-            input=summary_content,
-            model="BAAI/bge-m3",
-            encoding_format="float"
-        )
-        summary_embedding = summary_response.data[0].embedding
-        
-        # Generate keyword embedding
-        keyword_response = client.embeddings.create(
-            input=keyword_content,
-            model="BAAI/bge-m3",
-            encoding_format="float"
-        )
-        keyword_embedding = keyword_response.data[0].embedding
-        
-        if logger:
-            logger.info(f"Generated embeddings - Summary: {len(summary_embedding)}D, Keywords: {len(keyword_embedding)}D")
-        
-        return summary_embedding, keyword_embedding
-        
+        # Use the async version but run it in sync context
+        return asyncio.run(generate_embeddings_async(summary_content, keyword_content, logger))
     except Exception as e:
         if logger:
             logger.error(f"Failed to generate embeddings: {str(e)}")

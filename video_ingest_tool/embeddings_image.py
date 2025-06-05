@@ -6,11 +6,13 @@ This module handles image preparation for embedding generation using the SigLIP 
 
 import os
 import base64
-from io import BytesIO
-import requests
-from typing import Dict, List, Optional, Union
 import logging
+import requests
+from typing import List, Dict, Any, Optional, Union
+from io import BytesIO
 from PIL import Image
+import asyncio
+import aiohttp
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -104,7 +106,7 @@ def generate_thumbnail_embedding(
 
     try:
         if not api_base:
-            api_base = "http://100.121.182.8:8001"  # Embedding service endpoint
+            api_base = "http://localhost:9005"  # Embedding service endpoint
 
         # Convert original image to base64 with data URI format.
         # The server will handle resizing and preprocessing.
@@ -173,22 +175,99 @@ def generate_thumbnail_embedding(
         logger.error(traceback.format_exc())
         return None
 
+async def generate_thumbnail_embedding_async(
+    image_path: str,
+    session: aiohttp.ClientSession,
+    api_base: Optional[str] = None,
+    api_key: Optional[str] = None,
+    logger=None
+) -> Optional[List[float]]:
+    """
+    Generate embedding for image using the SigLIP model via local API (async version).
+    
+    Args:
+        image_path: Path to the thumbnail image
+        session: aiohttp ClientSession for making requests
+        api_base: API base URL (default: http://localhost:9005)
+        api_key: API key (not required for local server)
+        logger: Optional logger
+        
+    Returns:
+        Optional[List[float]]: 1152-dimensional embedding vector or None on failure
+    """
+    if logger is None:
+        logger = logging.getLogger("image_embeddings")
 
-def batch_generate_thumbnail_embeddings(
+    try:
+        if not api_base:
+            api_base = "http://localhost:9005"  # Embedding service endpoint
+
+        # Convert original image to base64 with data URI format
+        with open(image_path, "rb") as image_file:
+            img_bytes = image_file.read()
+            # Determine image format for data URI
+            if image_path.lower().endswith((".jpg", ".jpeg")):
+                img_format = "jpeg"
+            elif image_path.lower().endswith(".png"):
+                img_format = "png"
+            else:
+                img_format = "jpeg"  # Default fallback
+            base64_image = base64.b64encode(img_bytes).decode('utf-8')
+            data_uri = f"data:image/{img_format};base64,{base64_image}"
+
+        logger.info(f"Generating image-only embedding for: {image_path}")
+
+        # Send image-only input for SigLIP image embeddings
+        payload = {
+            "input": data_uri
+        }
+
+        headers = {"Content-Type": "application/json"}
+        
+        async with session.post(f"{api_base}/v1/embeddings", json=payload, headers=headers, timeout=30) as response:
+            logger.info(f"Response status code: {response.status}")
+
+            if response.status == 200:
+                result = await response.json()
+                
+                if "data" in result and isinstance(result["data"], list) and len(result["data"]) > 0:
+                    embedding_data = result["data"][0]
+                    if "embedding" in embedding_data:
+                        embedding = embedding_data["embedding"]
+                        logger.info(f"Successfully generated image-only embedding of dimension {len(embedding)}")
+                        return embedding
+                    else:
+                        logger.error(f"'embedding' key missing in data item: {embedding_data}")
+                else:
+                    logger.error(f"Unexpected response structure or empty data: {result}")
+            else:
+                response_text = await response.text()
+                logger.error(f"API request failed: Status {response.status}, Response: {response_text}")
+                
+        return None
+
+    except asyncio.TimeoutError:
+        logger.error("API request timed out after 30 seconds")
+        return None
+    except Exception as e:
+        logger.error(f"Error generating image embedding: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
+async def batch_generate_thumbnail_embeddings_async(
     thumbnails: List[Dict], 
     api_base: Optional[str] = None,
     api_key: Optional[str] = None,
     logger=None
 ) -> Dict[int, Optional[List[float]]]:
     """
-    Generate image-only embeddings for multiple thumbnails.
-    Updated to work with simplified thumbnail metadata (no description fields).
+    Generate image-only embeddings for multiple thumbnails concurrently.
     
     Args:
-        thumbnails: List of dictionaries with 'path', 'timestamp', 'reason', and 'rank' keys.
-                   No longer requires 'description' or 'detailed_visual_description' fields.
-        api_base: API base URL (default: http://100.121.182.8:8001)
-        api_key: API key (not required for direct server)
+        thumbnails: List of dictionaries with 'path', 'timestamp', 'reason', and 'rank' keys
+        api_base: API base URL (default: http://localhost:8005)
+        api_key: API key (not required for local server)
         logger: Optional logger
         
     Returns:
@@ -199,30 +278,85 @@ def batch_generate_thumbnail_embeddings(
         
     embeddings = {}
     
-    for thumbnail in thumbnails:
-        path = thumbnail.get('path')
-        rank = thumbnail.get('rank')
-        timestamp = thumbnail.get('timestamp', 'unknown')
-        reason = thumbnail.get('reason', 'no reason provided')
+    if not thumbnails:
+        return embeddings
+    
+    # Create async tasks for all thumbnails
+    async with aiohttp.ClientSession() as session:
+        tasks = []
+        thumbnail_ranks = []
         
-        if not path or rank is None:
-            logger.warning(f"Missing required fields in thumbnail: {thumbnail}")
-            continue
+        for thumbnail in thumbnails:
+            path = thumbnail.get('path')
+            rank = thumbnail.get('rank')
+            timestamp = thumbnail.get('timestamp', 'unknown')
+            reason = thumbnail.get('reason', 'no reason provided')
+            
+            if not path or rank is None:
+                logger.warning(f"Missing required fields in thumbnail: {thumbnail}")
+                continue
+            
+            # Convert rank to int if it's a string
+            rank_int = int(rank) if isinstance(rank, str) else rank
+            
+            logger.info(f"Queuing thumbnail with rank {rank} at {timestamp}")
+            logger.info(f"Reason for selection: {reason}")
+            
+            # Create async task for this thumbnail
+            task = generate_thumbnail_embedding_async(
+                image_path=path,
+                session=session,
+                api_base=api_base,
+                api_key=api_key,
+                logger=logger
+            )
+            tasks.append(task)
+            thumbnail_ranks.append(rank_int)
         
-        # Convert rank to int if it's a string
-        rank_int = int(rank) if isinstance(rank, str) else rank
-        
-        logger.info(f"Processing thumbnail with rank {rank} at {timestamp}")
-        logger.info(f"Reason for selection: {reason}")
-        logger.info(f"Generating image-only embedding (no text description)")
-        
-        embedding = generate_thumbnail_embedding(
-            image_path=path,
-            api_base=api_base,
-            api_key=api_key,
-            logger=logger
-        )
-        
-        embeddings[rank_int] = embedding
+        if tasks:
+            logger.info(f"Sending {len(tasks)} image embedding requests concurrently...")
+            # Execute all tasks concurrently
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Collect results
+            for rank, result in zip(thumbnail_ranks, results):
+                if isinstance(result, Exception):
+                    logger.error(f"Error generating embedding for rank {rank}: {result}")
+                    embeddings[rank] = None
+                else:
+                    embeddings[rank] = result
+            
+            successful_count = sum(1 for result in results if not isinstance(result, Exception) and result is not None)
+            logger.info(f"Completed concurrent embedding generation: {successful_count}/{len(tasks)} successful")
     
     return embeddings
+
+def batch_generate_thumbnail_embeddings(
+    thumbnails: List[Dict], 
+    api_base: Optional[str] = None,
+    api_key: Optional[str] = None,
+    logger=None
+) -> Dict[int, Optional[List[float]]]:
+    """
+    Generate image-only embeddings for multiple thumbnails.
+    Now uses concurrent requests for better performance.
+    
+    Args:
+        thumbnails: List of dictionaries with 'path', 'timestamp', 'reason', and 'rank' keys.
+                   No longer requires 'description' or 'detailed_visual_description' fields.
+        api_base: API base URL (default: http://localhost:8005)
+        api_key: API key (not required for direct server)
+        logger: Optional logger
+        
+    Returns:
+        Dict[int, Optional[List[float]]]: Dictionary mapping thumbnail ranks to embeddings
+    """
+    try:
+        # Use the async version but run it in sync context
+        return asyncio.run(batch_generate_thumbnail_embeddings_async(
+            thumbnails, api_base, api_key, logger
+        ))
+    except Exception as e:
+        if logger:
+            logger.error(f"Failed to generate batch thumbnail embeddings: {str(e)}")
+        return {}

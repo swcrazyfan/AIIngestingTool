@@ -220,7 +220,7 @@ DEFAULT_CONCURRENCY_LIMITS = {
     'video_compression_step': 2,
     'ai_analysis_step': 1,
     'transcription_step': 2,
-    'embedding_step': 1,  # Set to 1 to prevent concurrent image embedding API calls
+    'database_storage_step': 1,  # Set to 1 to prevent DuckDB lock conflicts
 }
 
 

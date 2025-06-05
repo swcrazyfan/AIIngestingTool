@@ -11,7 +11,7 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-@task
+@task(tags=["database_storage_step"])
 def database_storage_step(data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Store video metadata and embeddings in DuckDB database.
@@ -54,30 +54,71 @@ def database_storage_step(data: Dict[str, Any]) -> Dict[str, Any]:
         )
     
     # Store embeddings in the model if we have embeddings data
-    if data.get('embeddings_generated') and 'data' in data:
-        embeddings_data = data['data']
-        logger.info("Found embeddings data, will be embedded in the model")
+    # Updated to handle separate text and image embedding results
+    text_embeddings_available = data.get('text_embeddings_generated', False)
+    image_embeddings_available = data.get('image_embeddings_generated', False)
+    
+    embeddings_data = None
+    
+    if text_embeddings_available or image_embeddings_available:
+        logger.info("Found embedding data from separate embedding steps")
+        
+        # Extract text embeddings if available
+        # Text embeddings are now stored in 'text_embeddings_data' key
+        summary_embedding = None
+        keyword_embedding = None
+        
+        if text_embeddings_available:
+            # Try to get text embeddings from the separate data key
+            text_data = data.get('text_embeddings_data', {})
+            if text_data and ('summary_embedding' in text_data or 'keyword_embedding' in text_data):
+                summary_embedding = text_data.get('summary_embedding')
+                keyword_embedding = text_data.get('keyword_embedding')
+                logger.info("Extracted text embeddings from 'text_embeddings_data' key")
+            else:
+                logger.warning("text_embeddings_generated=True but no text embeddings found in 'text_embeddings_data' key")
+        
+        # Extract image embeddings if available  
+        image_embedding_data = {}
+        if image_embeddings_available:
+            # Image embeddings are now stored in 'image_embeddings_data' key
+            image_data = data.get('image_embeddings_data', {})
+            if image_data and 'image_embeddings' in image_data:
+                image_embedding_data = image_data.get('image_embeddings', {})
+                logger.info("Extracted image embeddings from 'image_embeddings_data' key")
+            else:
+                logger.warning("image_embeddings_generated=True but no image embeddings found in 'image_embeddings_data' key")
+            
+        # Combine embeddings into the format expected by the model
+        combined_embeddings = {
+            'summary_embedding': summary_embedding,
+            'keyword_embedding': keyword_embedding,
+            'image_embeddings': image_embedding_data
+        }
+        
+        embeddings_data = combined_embeddings
         
         # Update the model's embeddings attribute with the generated embeddings
-        if embeddings_data:
+        if embeddings_data and any([summary_embedding, keyword_embedding, image_embedding_data]):
             # Import the embeddings model
             from ...models import Embeddings
             
-            # Extract image embeddings with correct keys (ranks 1, 2, 3)
-            image_embeddings = embeddings_data.get('image_embeddings', {})
-            
             # Create embeddings data object from the generated embeddings
             embeddings_obj = Embeddings(
-                summary_embedding=embeddings_data.get('summary_embedding'),
-                keyword_embedding=embeddings_data.get('keyword_embedding'),
-                thumbnail_1_embedding=image_embeddings.get(1),  # Fixed: use rank 1
-                thumbnail_2_embedding=image_embeddings.get(2),  # Fixed: use rank 2
-                thumbnail_3_embedding=image_embeddings.get(3)   # Fixed: use rank 3
+                summary_embedding=summary_embedding,
+                keyword_embedding=keyword_embedding,
+                thumbnail_1_embedding=image_embedding_data.get(1),  # Use rank 1
+                thumbnail_2_embedding=image_embedding_data.get(2),  # Use rank 2
+                thumbnail_3_embedding=image_embedding_data.get(3)   # Use rank 3
             )
             output_model.embeddings = embeddings_obj
-            logger.info(f"Successfully embedded embeddings data in model. Thumbnail embeddings: {len([e for e in [image_embeddings.get(1), image_embeddings.get(2), image_embeddings.get(3)] if e is not None])}/3")
+            
+            # Log what we found
+            text_count = sum(1 for e in [summary_embedding, keyword_embedding] if e is not None)
+            image_count = len([e for e in [image_embedding_data.get(1), image_embedding_data.get(2), image_embedding_data.get(3)] if e is not None])
+            logger.info(f"Successfully embedded embeddings data in model. Text embeddings: {text_count}/2, Image embeddings: {image_count}/3")
     else:
-        logger.info("No embeddings data found, storing without embeddings")
+        logger.info("No embeddings data found from either text or image embedding steps, storing without embeddings")
     
     conn = None
     try:

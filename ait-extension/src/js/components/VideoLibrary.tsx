@@ -9,7 +9,7 @@ import {
   FiSearch, FiGrid, FiList, FiFilter, FiTag, FiMapPin, FiCamera, FiStar, 
   FiEye, FiShuffle, FiGlobe, FiInfo, FiMic, FiChevronDown, FiChevronUp, 
   FiBookmark, FiPlus, FiSettings, FiClock, FiVideo, FiRefreshCw, FiFilm,
-  FiFolder, FiTrendingUp, FiActivity, FiHeart, FiPlay, FiSquare
+  FiFolder, FiTrendingUp, FiActivity, FiHeart, FiPlay, FiSquare, FiX
 } from 'react-icons/fi';
 import { BsGrid3X3, BsGrid3X2, BsGrid1X2, BsGrid } from 'react-icons/bs';
 import '../styles/VideoLibrary.scss';
@@ -142,6 +142,21 @@ const VideoLibrary: React.FC = () => {
     }
   };
 
+  // Handle reset - clear all filters and searches
+  const handleReset = () => {
+    setCurrentSearchTerm('');
+    setActiveSearchType('hybrid');
+    setSortBy('processed_at');
+    setSortOrder('descending');
+    setDateStart('');
+    setDateEnd('');
+    setSelectedFilter('all');
+    setShowAdvancedFilters(false);
+    
+    // Reload original data
+    loadVideoData();
+  };
+
   return (
     <div className="video-library">
       <div className="search-bar-container">
@@ -203,6 +218,13 @@ const VideoLibrary: React.FC = () => {
           </div>
         )}
         
+        <button
+          className="reset-button"
+          onClick={handleReset}
+          title="Clear all filters and searches"
+        >
+          <FiX />
+        </button>
         <button
           className={`refresh-button ${refreshing ? 'refreshing' : ''}`}
           onClick={handleRefresh}
